@@ -69,7 +69,7 @@ Tarefas correspondentes: T-040 a T-053 em `.ai/TASKS.md`.
 | 4 | `WhatsAppProvider` é singleton com `authDir` fixo | Impossível ter 2 números. Ver ADR-006. |
 | 5 | `sync()` faz `updateMany` global desativando grupos | Com 2 sessões, sincronizar B derruba os grupos de A. Ver ADR-005. |
 | 6 | `Group.externalId @unique` global | Duas sessões no mesmo grupo sequestram a linha uma da outra. |
-| 7 | Rate-limit na campanha, não no número | 3 campanhas no mesmo número disparam a cada ~60s com intervalo de 180s. Ver ADR-006. |
+| 7 | Rate-limit na campanha, não no número | 3 campanhas no mesmo número não se coordenam: o piso de intervalo do número não existe. Ver ADR-006. |
 | 8 | Lock Redis `campaign:worker-owner` | Só 1 worker no sistema inteiro. |
 | 9 | Redis sem senha em `0.0.0.0` | Alcançável pela LAN; `DEL` da chave derruba o worker (A2). |
 | 10 | Validação de entrada manual e espalhada | Sem schema declarativo; fácil divergir. |

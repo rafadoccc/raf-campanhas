@@ -4,6 +4,7 @@
 > para mudar de ideia, escreva uma ADR nova que substitui a anterior (`Substitui: ADR-00X`).
 >
 > **Nenhum agente pode contrariar uma ADR aceita sem autorização do usuário humano.**
+> ADRs com status "proposta" ainda não foram confirmadas pelo dono: são a recomendação atual, não regra.
 
 ---
 
@@ -30,7 +31,7 @@ infraestrutura demais para dois agentes que já compartilham um working tree.
 
 ## ADR-002 — O backend permanece em TypeScript/Node
 
-**Data:** 2026-09-20 · **Autor:** claude · **Status:** aceita
+**Data:** 2026-09-20 · **Autor:** claude · **Status:** proposta (aguarda confirmação do dono)
 
 **Contexto.** Foi levantado migrar o backend para Python ou Java.
 
@@ -85,7 +86,7 @@ e de um mecanismo de deduplicação do lado do WhatsApp — que não existe.
 
 ## ADR-004 — Multi-tenancy por coluna `organizationId` com FKs compostas
 
-**Data:** 2026-09-20 · **Autor:** claude · **Status:** aceita
+**Data:** 2026-09-20 · **Autor:** claude · **Status:** proposta (aguarda confirmação do dono)
 
 **Contexto.** O sistema precisa suportar várias organizações, vários usuários por
 organização e vários números de WhatsApp por organização. Hoje nenhuma tabela tem escopo.
@@ -122,7 +123,7 @@ regulatório de isolamento físico.
 
 ## ADR-005 — O grupo pertence à sessão, não ao sistema
 
-**Data:** 2026-09-20 · **Autor:** claude · **Status:** aceita
+**Data:** 2026-09-20 · **Autor:** claude · **Status:** proposta (aguarda confirmação do dono)
 
 **Contexto.** `Group.externalId` é `@unique` global. O JID de um grupo
 (`1203...@g.us`) é único no WhatsApp inteiro, mas **não** identifica uma relação: dois
@@ -150,7 +151,7 @@ sozinha não corrige o `updateMany`. `recordRead` deixa de casar por
 
 ## ADR-006 — O rate-limit pertence ao número, não à campanha
 
-**Data:** 2026-09-20 · **Autor:** claude · **Status:** aceita
+**Data:** 2026-09-20 · **Autor:** claude · **Status:** proposta (aguarda confirmação do dono)
 
 **Contexto.** `nextAvailableAt` e o lock `FOR UPDATE` vivem na `Campaign`. Isso é correto
 enquanto existe exatamente um número conectado.
@@ -162,7 +163,7 @@ entre workers.
 
 **Justificativa.** O WhatsApp restringe o **número**, não a campanha. Com o modelo atual,
 três campanhas ativas no mesmo número, cada uma com intervalo de 180 s, tomam locks
-diferentes e disparam a cada ~60 s pelo mesmo número — exatamente o padrão que provoca
+diferentes e podem chegar a um envio a cada ~60 s pelo mesmo número (se escalonadas) ou a várias mensagens em sequência limitadas só pelo limiter global (se coincidirem) — exatamente o padrão que provoca
 banimento. Hoje isso está mascarado pelo limiter global `max: 1 / 1500 ms` do BullMQ, que
 só funciona porque existe um único worker e um único número.
 
@@ -181,7 +182,7 @@ com supervisor. A fronteira de refatoração é a mesma nos dois casos, então m
 
 ## ADR-007 — Credenciais de sessão saem da árvore do projeto
 
-**Data:** 2026-09-20 · **Autor:** claude · **Status:** aceita
+**Data:** 2026-09-20 · **Autor:** claude · **Status:** proposta (aguarda confirmação do dono)
 
 **Contexto.** `.sessions/whatsapp/creds.json` guarda, em texto claro, `noiseKey`,
 `signedIdentityKey`, `advSecretKey` e `signalIdentities`. Esse conjunto **é** a sessão:

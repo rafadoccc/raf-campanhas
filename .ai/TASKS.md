@@ -74,6 +74,22 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [ ] T-033  Deploy reprodutível (Dockerfile por serviço)           owner: —        since: —
 ```
 
+## Fase 5 — Deploy em VPS
+
+```
+[ ] T-060  Config por env: hosts/origens/URL da API (remover hardcode de localhost)  owner: —        since: —
+[ ] T-061  Web fala com a API por rota same-origin (/api), sem NEXT_PUBLIC_API_URL   owner: —        since: —
+[ ] T-062  Dockerfile multi-stage por serviço (api, worker, web)                     owner: —        since: —
+[ ] T-063  docker-compose.prod.yml: rede interna, sem portas de DB/Redis publicadas   owner: —        since: —
+[ ] T-064  Caddy como reverse proxy com HTTPS automático                              owner: —        since: —
+[ ] T-065  Remover ReferenceClock; usar NTP do host e now() do Postgres              owner: —        since: —
+[ ] T-066  Avaliar trocar BullMQ/Redis por fila em Postgres (SKIP LOCKED)            owner: —        since: —
+[ ] T-067  Migrations no release (migrate deploy) e healthchecks reais               owner: —        since: —
+[ ] T-068  Backup diário do Postgres + volume de sessões, com restore testado        owner: —        since: —
+[ ] T-069  CI/CD: build de imagens no GitHub Actions e deploy por SSH                owner: —        since: —
+[ ] T-070  Hardening da VPS: firewall, SSH por chave, fail2ban, updates automáticos  owner: —        since: —
+```
+
 ---
 
 ## Regras

@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-20T23:10Z · claude
+
+**Fiz:** validei a sessão anterior contra o código. Correção de rótulo: as ADR-002, 004, 005, 006 e 007 estavam marcadas "aceita" sem decisão do dono; agora são "proposta". A entrada anterior afirma o contrário — vale esta. Removi a quarentena `.trash/` (autorizado). Acrescentei a Fase 5 (deploy em VPS) ao backlog.
+**Arquivos:** .ai/DECISIONS.md, .ai/STATE.md, .ai/TASKS.md
+**Tarefas:** T-060 a T-070 criadas.
+**Estado:** compila · lint limpo · 23/23 testes passam.
+**Armadilhas:** ADR-001 (protocolo) e ADR-003 (formaliza comportamento já implementado) seguem aceitas. O restante só vira regra quando o dono confirmar.
+**Próximo passo sugerido:** o dono confirmar as ADR propostas; depois T-042 (autenticação na API).
+
 ## 2026-09-20T22:30Z · claude
 
 **Fiz:** estabeleci o protocolo multi-agente (AGENTS.md + CLAUDE.md + `.ai/`), rodei
