@@ -21,7 +21,7 @@ export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
 export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
   now ??= await currentTime();
   const at = now;
-  return db.$transaction(async tx => {
+  return db.$transaction(async (tx: Prisma.TransactionClient) => {
     const candidate = await tx.delivery.findUnique({ where: { id } });
     if (!candidate) return null;
     await lockCampaign(tx, candidate.campaignId);
@@ -39,7 +39,7 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
 export async function finishDelivery(db: PrismaClient, id: string, outcome: { providerId: string } | { error: string }, now?: Date) {
   now ??= await currentTime();
   const at = now;
-  return db.$transaction(async tx => {
+  return db.$transaction(async (tx: Prisma.TransactionClient) => {
     const delivery = await tx.delivery.findUnique({ where: { id } });
     if (!delivery) return;
     await lockCampaign(tx, delivery.campaignId);

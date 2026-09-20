@@ -16,3 +16,7 @@ work/
 *.tsbuildinfo
 *.log
 packages/database/prisma/dev.db
+
+# Saida temporaria de testes e ferramentas
+.tmp/
+.trash/

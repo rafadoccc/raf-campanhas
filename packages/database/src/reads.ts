@@ -37,5 +37,5 @@ export async function campaignReads(db: PrismaClient, campaignId: string) {
     JOIN "Delivery" d ON d.id = r."deliveryId"
     WHERE d."campaignId" = ${campaignId} AND d.provider = 'baileys' AND d.status = 'SENT'
     GROUP BY d."groupId"`;
-  return rows.map(row => ({ groupId: row.groupId, count: Number(row.count) }));
+  return rows.map((row: { groupId: string; count: bigint }) => ({ groupId: row.groupId, count: Number(row.count) }));
 }
