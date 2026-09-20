@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CANCELLED
+  COMPLETED
+}
+
+enum DeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  externalId String?  @unique
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deliveries Delivery[]
+  campaigns CampaignGroup[]
+}
+
+model Campaign {
+  mediaId String?
+  media CampaignMedia? @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  id        String         @id @default(cuid())
+  name      String
+  startsAt  DateTime
+  endsAt    DateTime
+  status    CampaignStatus @default(DRAFT)
+  provider  String         @default("simulator")
+  accountJid String?
+  mode       String         @default("SCHEDULED")
+  intervalSeconds Int       @default(180)
+  nextAvailableAt DateTime?
+  pausedAt   DateTime?
+  deletedAt  DateTime?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  messages  CampaignMessage[]
+  schedules CampaignSchedule[]
+  deliveries Delivery[]
+  groups     CampaignGroup[]
+}
+
+model CampaignGroup {
+  campaignId String
+  groupId    String
+  position   Int @default(0)
+  createdAt  DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  group      Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, groupId])
+  @@index([groupId])
+}
+
+model CampaignMessage {
+  id         String   @id @default(cuid())
+  campaignId String
+  content    String
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model CampaignSchedule {
+  id         String   @id @default(cuid())
+  campaignId String
+  time       String
+  timezone   String   @default("America/Sao_Paulo")
+  createdAt  DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model Delivery {
+  id          String         @id @default(cuid())
+  campaignId  String
+  groupId     String
+  messageBody String
+  scheduledAt DateTime
+  sentAt      DateTime?
+  status      DeliveryStatus @default(PENDING)
+  provider    String         @default("simulator")
+  providerId  String?
+  error       String?
+  sequence    Int            @default(0)
+  attemptedAt DateTime?
+  reads       DeliveryRead[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  group       Group          @relation(fields: [groupId], references: [id])
+
+  @@index([status, scheduledAt])
+  @@index([campaignId, scheduledAt])
+  @@unique([campaignId, groupId, scheduledAt])
+  @@unique([campaignId, sequence])
+  @@index([providerId])
+}
+
+model CampaignMedia {
+  id String @id @default(cuid())
+  name String
+  mimeType String
+  kind String
+  size Int
+  data Bytes
+  createdAt DateTime @default(now())
+  campaigns Campaign[]
+}
+
+model PendingRead {
+  id String @id
+  messageId String
+  groupJid String
+  accountJid String
+  participant String
+  readAt DateTime
+  nextAttemptAt DateTime @default(now())
+  @@index([nextAttemptAt])
+}
+
+model DeliveryRead {
+  id String @id @default(cuid())
+  deliveryId String
+  recipientHash String
+  readAt DateTime
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  @@unique([deliveryId, recipientHash])
+  @@index([readAt])
+}

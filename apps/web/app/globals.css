@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+body { margin: 0; background: #f7f8fc; color: #18212f; font-family: Arial, Helvetica, sans-serif; }

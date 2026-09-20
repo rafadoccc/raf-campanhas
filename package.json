@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-campaign-manager",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "start:local": "node scripts/start-local.cjs",
+    "db:deploy": "prisma migrate deploy --schema=packages/database/prisma/schema.prisma",
+    "dev:web": "npm run dev --workspace=@campaign/web",
+    "dev:api": "npm run dev --workspace=@campaign/api",
+    "dev:worker": "npm run dev --workspace=@campaign/worker",
+    "build": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/api && npm run build --workspace=@campaign/worker && npm run build --workspace=@campaign/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/api && npm run build --workspace=@campaign/worker && node --test apps/api/dist/schedule.test.js apps/api/dist/clock.test.js apps/worker/dist/whatsapp.test.js && npm run test:polling",
+    "test:polling": "tsc --target ES2022 --module commonjs --esModuleInterop --skipLibCheck --outDir outputs/polling-tests apps/web/components/visible-polling.ts apps/web/components/visible-polling.test.ts && node --test outputs/polling-tests/visible-polling.test.js",
+    "test:integration": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/api && node --env-file=.env scripts/test-integration.cjs",
+    "db:generate": "prisma generate --schema=packages/database/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema=packages/database/prisma/schema.prisma"
+  },
+  "engines": { "node": ">=22" }
+}
