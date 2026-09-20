@@ -26,15 +26,24 @@ Pré-requisitos: **Node.js 22+** e **PostgreSQL 18** instalado localmente, com o
    & "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres main_db
    ```
 
-3. Instale, aplique as migrations e suba:
+3. Instale e confira a conexão:
 
    ```powershell
    npm install
-   npm run db:deploy
-   npm run db:generate
-   npm run build
+   npm run db:check
+   ```
+
+   O diagnóstico diz se o serviço responde, cria o schema `campanhas` se faltar e
+   avisa se as migrations ainda não foram aplicadas. Ele nunca imprime a senha.
+
+4. Aplique as migrations, gere o client e suba:
+
+   ```powershell
+   npm run setup:local
    npm run start:local
    ```
+
+   `setup:local` roda diagnóstico, migrations, geração do client Prisma e build.
 
 Abra <http://localhost:3000/configuracoes>. O comando `start:local` mantém API, worker e
 painel ativos; `Ctrl+C` encerra os três. Se o painel ou o worker antigos estiverem abertos
