@@ -45,6 +45,24 @@ Pré-requisitos: **Node.js 22+** e **PostgreSQL 18** instalado localmente, com o
 
    `setup:local` roda diagnóstico, migrations, geração do client Prisma e build.
 
+### Atalho na área de trabalho (.exe)
+
+```powershell
+npm.cmd run build:exe -- --desktop
+```
+
+Gera "Central de Campanhas.exe" e o copia para a área de trabalho. Um duplo clique:
+
+1. confere Node, `.env`, PostgreSQL e portas 3000-3002;
+2. aplica migrations pendentes;
+3. recompila **só se o código mudou** (compara o conteúdo, não a data dos arquivos);
+4. sobe API, worker e painel e abre o navegador.
+
+Se algo estiver errado, a janela fica aberta explicando o que corrigir. Fechar a janela
+encerra o sistema. O executável guarda o caminho desta pasta: se você a mover, rode
+`build:exe` de novo. Não é assinado digitalmente, então o Windows pode exibir um aviso do
+SmartScreen na primeira vez ("Mais informações" > "Executar assim mesmo").
+
 Abra <http://localhost:3000/configuracoes>. O comando `start:local` mantém API, worker e
 painel ativos; `Ctrl+C` encerra os três. Se o painel ou o worker antigos estiverem abertos
 em outro terminal, encerre-os antes. `npm test` executa os testes sem WhatsApp.

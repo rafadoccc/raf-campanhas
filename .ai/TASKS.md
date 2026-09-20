@@ -74,6 +74,14 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [ ] T-033  Deploy reprodutível (Dockerfile por serviço)           owner: —        since: —
 ```
 
+## Fase 1b — Inicialização local
+
+```
+[x] T-071  Executável de duplo clique com pré-voo e build incremental   owner: —        since: —
+[x] T-072  Lease do worker sem armadilha de fuso, com teste             owner: —        since: —
+[ ] T-073  Ícone e assinatura do .exe (evita aviso do SmartScreen)      owner: —        since: —
+```
+
 ## Fase 5 — Deploy em VPS
 
 ```

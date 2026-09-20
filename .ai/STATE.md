@@ -96,6 +96,8 @@ npm run db:deploy           # aplica migrations
 npm run db:generate         # gera o client Prisma
 npm run build
 npm run start:local         # sobe os três serviços
+npm run build:exe -- --desktop   # gera o .exe de duplo clique (pré-voo + build só se mudou)
+npm run db:check            # diagnóstico do PostgreSQL local
 npm test                    # testes sem WhatsApp
 npm run test:integration    # schema Postgres descartável
 npm run lint                # tsc --noEmit em tudo

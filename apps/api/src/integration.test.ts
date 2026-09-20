@@ -1,6 +1,6 @@
 import { test, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { prisma, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { app } from './server';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
@@ -322,4 +322,27 @@ test('groups with zero reads remain visible and disconnected activation creates 
     assert.equal((await deliveries(id)).length, 0);
     assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id } })).status, 'DRAFT');
   } finally { disconnected.mock.restore(); }
+});
+
+// Regressão: a comparação do vencimento não pode depender do fuso da sessão do
+// Postgres. Com SQL bruto, um lease vencido só era reconhecido 3 h depois (UTC-3),
+// e um worker morto bloqueava o sistema. Aqui o vencimento é de apenas 31 s.
+test('worker lease: exclusive while live, taken over 31 seconds after expiry, released only by its owner', async () => {
+  const ttl = 30_000;
+  const t0 = new Date();
+  assert.equal(await acquireLease(prisma, 'A', ttl, t0), true, 'primeiro processo toma a posse');
+  assert.equal(await acquireLease(prisma, 'B', ttl, t0), false, 'segundo é recusado enquanto A está vivo');
+  assert.equal(await acquireLease(prisma, 'B', ttl, new Date(t0.getTime() + 29_000)), false, 'ainda dentro do TTL');
+  assert.equal(await renewLease(prisma, 'A', ttl, new Date(t0.getTime() + 10_000)), true, 'A renova');
+  assert.equal(await renewLease(prisma, 'B', ttl, t0), false, 'quem não é dono não renova');
+
+  // A parou de renovar em t0+10s (expira em t0+40s). Em t0+41s deve ser assumível.
+  assert.equal(await acquireLease(prisma, 'B', ttl, new Date(t0.getTime() + 41_000)), true, 'lease vencido há 1 s é assumido, não 3 h depois');
+  assert.equal(await renewLease(prisma, 'A', ttl, new Date(t0.getTime() + 42_000)), false, 'A perdeu a posse');
+
+  await releaseLease(prisma, 'A'); // não é o dono: não pode liberar
+  assert.equal(await acquireLease(prisma, 'A', ttl, new Date(t0.getTime() + 43_000)), false, 'release de não-dono não libera');
+  await releaseLease(prisma, 'B');
+  assert.equal(await acquireLease(prisma, 'A', ttl, new Date(t0.getTime() + 44_000)), true, 'após release do dono, livre');
+  await releaseLease(prisma, 'A');
 });

@@ -5,6 +5,32 @@
 
 ---
 
+## 2026-09-21T00:20Z · claude
+
+**Fiz:** criei o executável de duplo clique (launcher/Launcher.cs + scripts/launcher.mjs +
+scripts/build-exe.mjs), copiado para a área de trabalho do dono. Ele faz pré-voo, aplica
+migrations, recompila só se o conteúdo dos fontes mudou e abre o navegador. Testei subindo o
+sistema de verdade pelo .exe e batendo em API, painel e worker.
+**Arquivos:** launcher/Launcher.cs, scripts/{launcher,build-exe}.mjs,
+packages/database/src/lease.ts (novo), apps/worker/src/index.ts, apps/api/src/integration.test.ts,
+package.json, README.md, .ai/*
+**Tarefas:** T-071 e T-072 concluídas. T-073 aberta.
+**Estado:** compila · lint limpo · 23/23 unitários · **21/21 de integração contra o
+PostgreSQL local** (primeira vez que rodou de verdade) · sistema sobe e responde 200.
+**Armadilhas:**
+- **Bug real que eu introduzi e corrigi:** o lease do worker comparava datas em SQL bruto e o
+  fuso da sessão (UTC-3) fazia um lease vencido parecer válido por 3 h. Ver adendo da ADR-008.
+  Não compare TIMESTAMP em SQL bruto.
+- **Datas de arquivo não são confiáveis aqui:** apps/api/src/dashboard.ts e
+  apps/web/app/page.tsx tinham mtime 7 h no futuro. Por isso o launcher compara hash de
+  conteúdo. Alguém (OneDrive ou outro agente) grava datas com fuso errado nesses arquivos.
+- Existe um processo do Codex em execução nesta máquina (runtimes/cua_node). Se o Codex também
+  subir o sistema, os dois brigam pelas portas 3000-3002 e pelo lease do worker.
+- O .exe fica no .gitignore (contém o caminho da máquina). Recompile com npm run build:exe.
+- O shell desta ferramenta reduz "\\" e engole escapes em heredocs: use a ferramenta de
+  edição ou String.fromCharCode em vez de regex com barras.
+**Próximo passo sugerido:** T-042 (autenticação na API), agora que o ambiente local está estável.
+
 ## 2026-09-21T00:05Z · claude
 
 **Fiz:** removi Docker e Redis do projeto (decisão do dono, ADR-008). O worker agora varre

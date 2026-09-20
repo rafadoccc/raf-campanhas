@@ -245,3 +245,13 @@ ambiente local.
   não em `public`.
 
 **Substitui:** a parte de infraestrutura local da ADR-001 do README original.
+
+**Adendo (2026-09-21) — armadilha de fuso no lease.** A primeira versão do lease comparava o
+vencimento em SQL bruto (`"expiresAt" < $1`). A coluna é TIMESTAMP sem fuso e o Prisma grava
+UTC, mas a comparação converte a coluna pelo fuso da sessão do Postgres (America/Sao_Paulo,
+UTC-3): um lease só parecia vencido 3 horas depois, e um worker morto bloqueava o sistema.
+Foi observado de verdade, com o worker esperando 7 minutos por um lease já vencido.
+Agora `packages/database/src/lease.ts` usa a API de modelo do Prisma, com teste de regressão
+(vencimento de 31 s). **Regra: não compare datas em SQL bruto contra colunas TIMESTAMP.**
+Além disso, o worker espera até 40 s por um lease órfão, porque fechar a janela do console no
+Windows mata o processo sem rodar shutdown().

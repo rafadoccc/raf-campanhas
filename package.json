@@ -22,7 +22,8 @@
     "db:generate": "prisma generate --schema=packages/database/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=packages/database/prisma/schema.prisma",
     "db:check": "node --env-file=.env scripts/check-db.mjs",
-    "setup:local": "npm run db:check && npm run db:deploy && npm run db:generate && npm run build"
+    "setup:local": "npm run db:check && npm run db:deploy && npm run db:generate && npm run build",
+    "build:exe": "node scripts/build-exe.mjs"
   },
   "engines": {
     "node": ">=22"

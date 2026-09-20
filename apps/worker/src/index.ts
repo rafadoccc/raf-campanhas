@@ -1,13 +1,12 @@
 import Fastify from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { prisma, claimDelivery, finishDelivery, completeFinished, currentTime } from '@campaign/database';
+import { prisma, claimDelivery, finishDelivery, completeFinished, currentTime, acquireLease, renewLease, releaseLease } from '@campaign/database';
 import { WhatsAppProvider } from './whatsapp';
 
 // O PostgreSQL é a fila. Não há Redis nem BullMQ: a correção do envio sempre
 // veio de claimDelivery (reserva transacional sob lock da campanha), não do
 // despachante. Ver ADR-008.
-const LEASE_ID = 'worker';
 const LEASE_TTL_MS = 30_000;
 const LEASE_RENEW_MS = 10_000;
 const SCAN_INTERVAL_MS = 5_000;
@@ -35,28 +34,6 @@ app.get('/status', async () => provider.status());
 app.post('/connect', async () => provider.connect());
 app.post('/disconnect', async () => provider.disconnect());
 app.post('/sync', async () => provider.sync());
-
-// Um processador por vez. A linha é tomada apenas se estiver livre, vencida ou
-// já for nossa; o UPDATE condicional torna a disputa atômica no banco.
-async function acquireLease() {
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
-  const rows = await prisma.$executeRaw`
-    INSERT INTO "WorkerLease" ("id", "ownerId", "expiresAt", "updatedAt")
-    VALUES (${LEASE_ID}, ${owner}, ${expiresAt}, ${now})
-    ON CONFLICT ("id") DO UPDATE
-       SET "ownerId" = ${owner}, "expiresAt" = ${expiresAt}, "updatedAt" = ${now}
-     WHERE "WorkerLease"."expiresAt" < ${now} OR "WorkerLease"."ownerId" = ${owner}`;
-  return rows > 0;
-}
-
-async function renewLease() {
-  const renewed = await prisma.workerLease.updateMany({
-    where: { id: LEASE_ID, ownerId: owner },
-    data: { expiresAt: new Date(Date.now() + LEASE_TTL_MS) }
-  });
-  return renewed.count > 0;
-}
 
 async function send(id: string) {
   if (stopping) return;
@@ -111,14 +88,23 @@ async function shutdown() {
   stopping = true; clearInterval(scanTimer); clearInterval(leaseTimer);
   await provider.stop();
   await app.close();
-  await prisma.workerLease.deleteMany({ where: { id: LEASE_ID, ownerId: owner } }).catch(() => {});
+  await releaseLease(prisma, owner).catch(() => {});
   await prisma.$disconnect();
 }
 
 async function main() {
-  if (!await acquireLease()) throw new Error('Já existe um worker ativo. Encerre-o antes de iniciar outro.');
+  // Fechar a janela do console no Windows mata o processo sem rodar shutdown(),
+  // deixando o lease órfão por até LEASE_TTL_MS. Um worker vivo renova a cada
+  // LEASE_RENEW_MS e nunca expira; então esperar só atrasa o caso órfão.
+  const deadline = Date.now() + LEASE_TTL_MS + LEASE_RENEW_MS;
+  let announced = false;
+  while (!await acquireLease(prisma, owner, LEASE_TTL_MS)) {
+    if (Date.now() > deadline) throw new Error('Já existe um worker ativo. Encerre-o antes de iniciar outro.');
+    if (!announced) { console.log('Aguardando o worker anterior liberar a posse (até 40 s)…'); announced = true; }
+    await delay(2_000);
+  }
   leaseTimer = setInterval(() => {
-    void renewLease().then(ok => { if (!ok) return shutdown(); }).catch(() => { void shutdown(); });
+    void renewLease(prisma, owner, LEASE_TTL_MS).then(ok => { if (!ok) return shutdown(); }).catch(() => { void shutdown(); });
   }, LEASE_RENEW_MS);
   // Só depois do lease: a posse é a prova de que nenhum outro processo está
   // enviando. Uma reserva órfã nunca é repetida — o resultado é incerto.
