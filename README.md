@@ -1,34 +1,44 @@
 # Central de Campanhas
 
-Painel local em Next.js, API Fastify, PostgreSQL/Prisma e worker BullMQ.
+Painel em Next.js, API Fastify, worker de envio e PostgreSQL via Prisma.
 Conector WhatsApp com Baileys e provedor simulado separados.
+
+Sem Docker e sem Redis: o PostgreSQL instalado na máquina é o banco **e** a fila.
 
 ## Iniciar no Windows
 
-Abra o Docker Desktop. No PowerShell, entre na pasta raiz deste projeto.
-Se o painel/worker antigos estiverem abertos em outros terminais, encerre-os com Ctrl+C.
-Não substitua um arquivo .env existente.
+Pré-requisitos: **Node.js 22+** e **PostgreSQL 18** instalado localmente, com o serviço
+`postgresql-x64-18` em execução.
 
-1. Na primeira instalação, copie .env.example para .env e configure a senha/URL do banco.
-2. Execute:
+1. Na primeira instalação, copie `.env.example` para `.env` e coloque a senha do seu
+   usuário do PostgreSQL em `DATABASE_URL`. Não substitua um `.env` existente.
 
-```powershell
-docker compose up -d
-npm install
-npm run db:deploy
-npm run db:generate
-npm run build
-npm run start:local
-```
+   ```
+   DATABASE_URL=postgresql://postgres:SUA_SENHA@localhost:5432/main_db?schema=campanhas
+   ```
 
-Se docker não estiver no PATH, use:
-```powershell
-& "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin\docker.exe" compose up -d
-```
+   As tabelas ficam no schema `campanhas` dentro de `main_db`, isoladas de qualquer
+   outra coisa que você já use nesse banco.
 
-Abra http://localhost:3000/configuracoes. O comando start:local mantém API,
-worker e painel ativos. Ctrl+C encerra os serviços. PostgreSQL e Redis continuam
-no Docker. Node.js 22 ou superior é necessário. npm test executa testes sem WhatsApp.
+2. Crie o banco, se ainda não existir (pelo pgAdmin, ou pela linha de comando):
+
+   ```powershell
+   & "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres main_db
+   ```
+
+3. Instale, aplique as migrations e suba:
+
+   ```powershell
+   npm install
+   npm run db:deploy
+   npm run db:generate
+   npm run build
+   npm run start:local
+   ```
+
+Abra <http://localhost:3000/configuracoes>. O comando `start:local` mantém API, worker e
+painel ativos; `Ctrl+C` encerra os três. Se o painel ou o worker antigos estiverem abertos
+em outro terminal, encerre-os antes. `npm test` executa os testes sem WhatsApp.
 
 ## Conectar WhatsApp
 
@@ -88,9 +98,10 @@ Mostra hoje e ontem no fuso de São Paulo. Simulações não entram em sucesso/e
 
 ### Idempotência e resultados incertos
 
-PostgreSQL controla a reserva PENDING → PROCESSING antes da chamada externa. IDs de jobs
-BullMQ são os IDs das entregas. O worker valida novamente estado, ordem e intervalo sob
-lock da campanha; jobs antigos não contornam pausa/encerramento. PROCESSING encontrado
+PostgreSQL controla a reserva PENDING → PROCESSING antes da chamada externa, e é também
+a fila: o worker varre o banco a cada 5 segundos, sem serviço externo. Ele valida estado,
+ordem e intervalo sob lock da campanha, então uma varredura atrasada não contorna
+pausa/encerramento. Um lease em WorkerLease garante um processador por vez. PROCESSING encontrado
 ao reiniciar vira FAILED com aviso de resultado incerto e nunca é repetido automaticamente.
 Não existe promessa de exactly-once através do WhatsApp: uma queda entre o envio e a
 resposta pode deixar o resultado desconhecido. Por segurança, esta versão NÃO oferece
@@ -104,6 +115,7 @@ Tentar novamente para falhas; não é possível provar que uma mensagem não foi
 - apps/worker: fila, controle local do conector e adaptador Baileys.
 - packages/database: modelo Prisma e migrações versionadas.
 - scripts/start-local.cjs: inicia os serviços a partir da raiz, carregando .env.
+- Não há Docker nem Redis: PostgreSQL local é banco e fila (ver .ai/DECISIONS.md, ADR-008).
 
 Versão local, um número e um worker. API, worker e painel iniciam no endereço
 de loopback. Não publique esses serviços na internet sem implementar autenticação,
@@ -118,7 +130,7 @@ Não há mecanismos de evasão de restrições, criação de grupos ou adição 
 
 ## Testar e atualizar
 
-Antes de atualizar, pare API/worker/painel com Ctrl+C; mantenha Docker ativo.
+Antes de atualizar, pare API/worker/painel com Ctrl+C; mantenha o serviço do PostgreSQL ativo.
 Execute `npm run db:deploy`, `npm run db:generate`, `npm run build` e `npm run start:local`.
 A migração interval_queue é aditiva; não exclui dados. Não rode uma versão antiga do
 worker junto da nova. Não há autenticação: mantenha acesso somente local.

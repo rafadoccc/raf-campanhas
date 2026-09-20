@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-21T00:05Z · claude
+
+**Fiz:** removi Docker e Redis do projeto (decisão do dono, ADR-008). O worker agora varre
+o PostgreSQL diretamente; o lock que vivia no Redis virou a tabela `WorkerLease`.
+Reescrevi a configuração para PostgreSQL 18 nativo, banco `main_db`, schema `campanhas`.
+**Arquivos:** apps/worker/src/index.ts (reescrito), apps/worker/package.json,
+apps/api/package.json, packages/database/prisma/schema.prisma,
+migrations/20260921000100_worker_lease, docker-compose.yml (removido), .env.example,
+.env, README.md, INICIAR.cmd, .ai/{STATE,TASKS,DECISIONS}.md
+**Tarefas:** T-066 e T-046 concluídas (Redis removido resolve as duas).
+**Estado:** compila · lint limpo · 23/23 testes passam. **As migrations ainda NÃO foram
+aplicadas** — `DATABASE_URL` está com `<SENHA>` de placeholder, aguardando o dono.
+**Armadilhas:**
+- `bullmq` e `ioredis` também eram dependências de `apps/api`, sem nenhum uso no código.
+  Removidas das duas.
+- O piso de 1,5 s entre envios era o `limiter` do BullMQ; agora é `SEND_SPACING_MS`
+  explícito no laço. Se alguém remover isso, o número perde a proteção de cadência.
+- A limpeza de `PROCESSING` órfão no boot agora roda **depois** de obter o lease. Não
+  mova de volta para antes: sem o lease não há prova de que outro processo não está enviando.
+- O banco antigo (`campaign_manager`) continua no volume do Docker, intacto. Nada foi
+  migrado nem apagado. O `.env` antigo está em `.env.docker-backup` (ignorado pelo Git).
+- `main_db` é compartilhado com outras coisas do dono, por isso o schema `campanhas`.
+**Próximo passo sugerido:** o dono preencher a senha no `.env` e rodar `npm run db:deploy`.
+Depois, decidir se migra as campanhas antigas do volume Docker ou começa limpo.
+
 ## 2026-09-20T23:10Z · claude
 
 **Fiz:** validei a sessão anterior contra o código. Correção de rótulo: as ADR-002, 004, 005, 006 e 007 estavam marcadas "aceita" sem decisão do dono; agora são "proposta". A entrada anterior afirma o contrário — vale esta. Removi a quarentena `.trash/` (autorizado). Acrescentei a Fase 5 (deploy em VPS) ao backlog.

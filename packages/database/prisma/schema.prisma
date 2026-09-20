@@ -144,3 +144,12 @@ model DeliveryRead {
   @@unique([deliveryId, recipientHash])
   @@index([readAt])
 }
+
+// Substitui o lock Redis `campaign:worker-owner`. Linha única (id = "worker"):
+// garante um processador por vez sem depender de um serviço externo.
+model WorkerLease {
+  id        String   @id
+  ownerId   String
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+}

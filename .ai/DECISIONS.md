@@ -203,3 +203,45 @@ A proteção por permissão de arquivo que o código tenta aplicar não existe n
 diretório existente. As duas sessões revogadas presentes hoje devem ser apagadas e os
 aparelhos correspondentes desvinculados pelo celular — o `logout()` está dentro de um
 `catch` silencioso, então não há garantia de que foram revogadas de fato.
+
+---
+
+## ADR-008 — O PostgreSQL é a fila; Redis e Docker saem do projeto
+
+**Data:** 2026-09-20 · **Autor:** claude · **Status:** aceita (decisão do dono)
+
+**Contexto.** O ambiente local usava Docker Compose para subir PostgreSQL e Redis. O dono
+passou a ter PostgreSQL 18 instalado nativamente no Windows e pediu a remoção do Docker.
+Redis não tem build oficial para Windows, então tirar o Docker tira o Redis junto — e o
+BullMQ depende dele.
+
+**Decisão.** Remover `bullmq`, `ioredis` e `docker-compose.yml`. O worker passa a varrer o
+PostgreSQL diretamente a cada 5 segundos. O lock `campaign:worker-owner` que vivia no
+Redis vira a tabela `WorkerLease` (linha única, `ownerId` + `expiresAt`, TTL de 30 s
+renovado a cada 10 s).
+
+**Justificativa.** O BullMQ nunca foi responsável pela correção do envio. Quem garante
+não-duplicação é `claimDelivery`: reserva transacional `PENDING → PROCESSING` sob
+`SELECT ... FOR UPDATE` da campanha, com verificação de cabeça de fila, estado e intervalo.
+O worker já revalidava tudo contra o banco, e o próprio README dizia que "Redis pode ser
+reconstruído a partir do banco". Com vazão de **uma mensagem a cada 1,5 s**, Redis não
+resolvia problema nenhum.
+
+Remover elimina de uma vez: o achado A2 da auditoria (Redis sem senha exposto na LAN),
+a classe de bugs de "job velho no Redis contornando pausa", e um serviço inteiro do
+ambiente local.
+
+**Consequências.**
+- O piso de 1,5 s entre chamadas externas, antes no `limiter` do BullMQ, passa a ser
+  explícito (`SEND_SPACING_MS`) no laço de varredura.
+- A deduplicação que vinha de `jobId` passa a vir do banco: `claimDelivery` faz
+  `updateMany where status = 'PENDING'` e devolve zero se outro já reservou.
+- A limpeza de `PROCESSING` órfão no boot agora roda **depois** de obter o lease —
+  a posse é a prova de que nenhum outro processo está enviando.
+- A latência máxima para iniciar um envio devido é o intervalo de varredura (5 s),
+  igual ao que já era.
+- Perde-se o painel do BullMQ e o retry automático — que a ADR-003 já proibia de propósito.
+- `main_db` é compartilhado, então as tabelas do projeto ficam no schema `campanhas`,
+  não em `public`.
+
+**Substitui:** a parte de infraestrutura local da ADR-001 do README original.

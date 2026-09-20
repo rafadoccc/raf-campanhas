@@ -21,7 +21,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [ ] T-043  (C) Parar de serializar o QR sem autenticação         owner: —        since: —
 [ ] T-044  (A) Token compartilhado no worker (porta 3002)        owner: —        since: —
 [ ] T-045  (A) Bind de Postgres e Redis em 127.0.0.1             owner: —        since: —
-[ ] T-046  (A) requirepass no Redis                              owner: —        since: —
+[x] T-046  (A) requirepass no Redis — resolvido: Redis removido     owner: —        since: —
 [ ] T-047  (A) select explícito em /deliveries (vaza messageBody)  owner: —       since: —
 [ ] T-048  (A) bodyLimit por tipo e streaming de mídia           owner: —        since: —
 [ ] T-049  (A) npm audit fix para deepmerge-ts via prisma        owner: —        since: —
@@ -83,7 +83,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [ ] T-063  docker-compose.prod.yml: rede interna, sem portas de DB/Redis publicadas   owner: —        since: —
 [ ] T-064  Caddy como reverse proxy com HTTPS automático                              owner: —        since: —
 [ ] T-065  Remover ReferenceClock; usar NTP do host e now() do Postgres              owner: —        since: —
-[ ] T-066  Avaliar trocar BullMQ/Redis por fila em Postgres (SKIP LOCKED)            owner: —        since: —
+[x] T-066  Trocar BullMQ/Redis por fila em Postgres                  owner: —        since: —
 [ ] T-067  Migrations no release (migrate deploy) e healthchecks reais               owner: —        since: —
 [ ] T-068  Backup diário do Postgres + volume de sessões, com restore testado        owner: —        since: —
 [ ] T-069  CI/CD: build de imagens no GitHub Actions e deploy por SSH                owner: —        since: —

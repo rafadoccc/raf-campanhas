@@ -29,9 +29,9 @@ Fases planejadas:
 ```
 apps/web      Next.js 15 (App Router, React 19, Tailwind)   → porta 3000
 apps/api      Fastify 5                                      → porta 3001
-apps/worker   BullMQ + Baileys (conector WhatsApp)           → porta 3002
-packages/database  Prisma 6 + PostgreSQL 16
-infra         Docker Compose: postgres:16-alpine, redis:7-alpine
+apps/worker   Baileys + varredura do PostgreSQL              → porta 3002
+packages/database  Prisma 6 + PostgreSQL 18 (nativo no Windows)
+infra         nenhuma. Sem Docker, sem Redis. Ver ADR-008.
 ```
 
 Os três serviços sobem juntos por `scripts/start-local.cjs`, todos em `127.0.0.1`.
@@ -41,7 +41,7 @@ Os três serviços sobem juntos por `scripts/start-local.cjs`, todos em `127.0.0
 1. Usuário cria campanha (`DRAFT`) escolhendo grupos, mensagens, intervalo e modo.
 2. Ao ativar, `apps/api/src/schedule.ts::planDeliveries` materializa **todas** as
    entregas no Postgres com `sequence` fixa. Isso só acontece na primeira ativação.
-3. O worker varre a cada 5s, enfileira no BullMQ o **primeiro pendente** de cada campanha.
+3. O worker varre o PostgreSQL a cada 5s e pega o **primeiro pendente** de cada campanha.
 4. `claimDelivery` reserva PENDING→PROCESSING sob lock da campanha (`SELECT ... FOR UPDATE`).
 5. Envio via Baileys ou simulador. `finishDelivery` grava SENT/FAILED e empurra
    `nextAvailableAt` em `intervalSeconds`.
@@ -70,8 +70,7 @@ Tarefas correspondentes: T-040 a T-053 em `.ai/TASKS.md`.
 | 5 | `sync()` faz `updateMany` global desativando grupos | Com 2 sessões, sincronizar B derruba os grupos de A. Ver ADR-005. |
 | 6 | `Group.externalId @unique` global | Duas sessões no mesmo grupo sequestram a linha uma da outra. |
 | 7 | Rate-limit na campanha, não no número | 3 campanhas no mesmo número não se coordenam: o piso de intervalo do número não existe. Ver ADR-006. |
-| 8 | Lock Redis `campaign:worker-owner` | Só 1 worker no sistema inteiro. |
-| 9 | Redis sem senha em `0.0.0.0` | Alcançável pela LAN; `DEL` da chave derruba o worker (A2). |
+| 8 | Lease único em `WorkerLease` | Só 1 worker no sistema inteiro (por ora, correto). |
 | 10 | Validação de entrada manual e espalhada | Sem schema declarativo; fácil divergir. |
 | 11 | Sem logs estruturados, métricas ou tracing | Impossível operar às cegas. |
 | 12 | Mídia como `Bytes` no Postgres, sem cota nem exclusão | Crescimento ilimitado; 128 MB de RAM por request (A5). |
@@ -91,7 +90,7 @@ Tarefas correspondentes: T-040 a T-053 em `.ai/TASKS.md`.
 ## Comandos que você vai precisar
 
 ```bash
-docker compose up -d        # Postgres + Redis
+# PostgreSQL 18 nativo; nenhum container é necessário.
 npm install
 npm run db:deploy           # aplica migrations
 npm run db:generate         # gera o client Prisma
