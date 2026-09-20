@@ -1,0 +1,11 @@
+# Normaliza fim de linha no repositório. Sem isso, Claude e Codex geram diffs
+# sujos um no outro ao editar o mesmo arquivo em máquinas/ferramentas distintas.
+* text=auto eol=lf
+
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.mp4  binary
+*.zip  binary
