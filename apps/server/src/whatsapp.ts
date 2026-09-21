@@ -231,10 +231,15 @@ export class WhatsAppProvider {
     const sock = this.connected();
     if (accountJid !== this.data.accountJid) throw new Error('Número conectado difere do número da campanha.');
     if (!groupJid.endsWith('@g.us')) throw new Error('Destino não é um grupo.');
-    // O metadata não bloqueia nada aqui: registra a situação do grupo (membro, admin, só
-    // admins enviam) para explicar uma eventual recusa do servidor.
+    // Registra a situação do grupo (membro, admin, só admins enviam) para explicar uma
+    // eventual recusa do servidor.
     const group = describeGroupForSend(await sock.groupMetadata(groupJid), { id: sock.user?.id, lid: sock.user?.lid });
-    if (group.adminOnlyWithoutPermission) console.warn('[WhatsApp] Grupo só para administradores e a conta não é admin:', groupJid);
+    // Grupo só para administradores e a conta comprovadamente não é admin: o WhatsApp
+    // aceita o pedido mas a mensagem nunca aparece (teste real, 2026-09-21). Falha ANTES de
+    // enviar — nada saiu, então não há risco de duplicar.
+    if (group.adminOnlyWithoutPermission) {
+      throw Object.assign(new Error('Só administradores podem enviar neste grupo e a conta conectada não é administradora.'), { code: 'grupo:so-admins' });
+    }
     if (this.socket !== sock || this.data.state !== 'connected') throw new Error('Conexão interrompida antes do envio.');
     if (media && !['image', 'video'].includes(media.kind)) throw Error('Tipo de mídia inválido.');
     const content = !media ? { text } : media.kind === 'image'

@@ -35,6 +35,20 @@ test('submits text to the selected group through provider adapter', async () => 
   assert.deepEqual(await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), { messageId: 'fake-id', context: 'membro=? admin=? so-admins=nao participantes=?' });
   assert.deepEqual(sent, [['a@g.us', { text: 'Hello' }]]);
 });
+test('admin-only group without admin rights fails before anything is sent', async () => {
+  const { provider, sent } = fake();
+  const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;
+  Object.assign(socket, {
+    user: { id: '5511000000000:3@s.whatsapp.net' },
+    groupMetadata: async () => ({ announce: true, participants: [{ id: '5511000000000@s.whatsapp.net', admin: null }] }),
+  });
+  await assert.rejects(provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), (e: { code?: string }) => e.code === 'grupo:so-admins');
+  assert.equal(sent.length, 0);
+  // Sendo admin, o mesmo grupo recebe normalmente.
+  Object.assign(socket, { groupMetadata: async () => ({ announce: true, participants: [{ id: '5511000000000@s.whatsapp.net', admin: 'admin' }] }) });
+  assert.equal((await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net')).messageId, 'fake-id');
+  assert.equal(sent.length, 1);
+});
 test('provider errors propagate instead of recording success', async () => {
   const { provider } = fake();
   Object.assign(provider, { socket: { groupMetadata: async () => { throw new Error('No permission'); } } });
