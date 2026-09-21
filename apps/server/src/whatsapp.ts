@@ -5,6 +5,13 @@ import { prisma, persistRead, flushPendingReads } from '@campaign/database';
 import QRCode from 'qrcode';
 import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
 
+// Nome exibido de um grupo sincronizado: assunto sem espaços extras, limitado à coluna
+// (VARCHAR 255); sem assunto, usa o número do grupo para continuar identificável.
+export function groupName(subject: string | null | undefined, jid: string) {
+  const clean = (subject ?? '').replace(/\s+/g, ' ').trim();
+  return (clean || `Grupo ${jid.split('@')[0]}`).slice(0, 255);
+}
+
 export async function resolveWebVersion(fetchVersion: () => Promise<{ version: WAVersion; isLatest: boolean }>): Promise<WAVersion> {
   const result = await fetchVersion();
   if (!result.isLatest || result.version.length !== 3 || !result.version.every(value => Number.isSafeInteger(value) && value >= 0)) {
@@ -132,7 +139,11 @@ export class WhatsAppProvider {
     const groups = Object.values(await sock.groupFetchAllParticipating());
     await prisma.$transaction(async tx => {
       await tx.group.updateMany({ where: { externalId: { not: null } }, data: { active: false } });
-      for (const group of groups) await tx.group.upsert({ where: { externalId: group.id }, update: { name: group.subject, active: true }, create: { externalId: group.id, name: group.subject } });
+      for (const group of groups) {
+        // Grupos sem assunto (antigos ou comunidades) derrubariam a sincronização inteira.
+        const name = groupName(group.subject, group.id);
+        await tx.group.upsert({ where: { externalId: group.id }, update: { name, active: true }, create: { externalId: group.id, name } });
+      }
     }, { timeout: 30000 });
     return { count: groups.length };
   }

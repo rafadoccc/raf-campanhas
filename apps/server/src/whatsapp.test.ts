@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { WhatsAppProvider, defaultSessionsDir, resolveWebVersion } from './whatsapp';
+import { WhatsAppProvider, defaultSessionsDir, resolveWebVersion, groupName } from './whatsapp';
 
 test('uses a verified protocol version', async () => {
   assert.deepEqual(await resolveWebVersion(async () => ({ version: [2, 3000, 123], isLatest: true })), [2, 3000, 123]);
@@ -58,4 +58,10 @@ test('uses the configured session directory outside the repository', () => {
     if (previous === undefined) delete process.env.SESSIONS_DIR;
     else process.env.SESSIONS_DIR = previous;
   }
+});
+test('synced group names never break the sync: blank subjects fall back and long ones fit the column', () => {
+  assert.equal(groupName('  Vendas   SP  ', '120363@g.us'), 'Vendas SP');
+  assert.equal(groupName('', '120363999@g.us'), 'Grupo 120363999');
+  assert.equal(groupName(undefined, '120363999@g.us'), 'Grupo 120363999');
+  assert.equal(groupName('a'.repeat(300), 'x@g.us').length, 255);
 });
