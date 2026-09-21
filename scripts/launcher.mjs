@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 // Inicializador com pré-voo. Valida o ambiente, prepara o banco e o build, sobe
-// API + worker + painel e abre o navegador. É o que o .exe da área de trabalho
+// o sistema (painel e API na mesma porta) e abre o navegador. É o que o .exe da área de trabalho
 // executa. Também funciona direto: node scripts/launcher.mjs
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 process.chdir(root);
 const isWin = process.platform === 'win32';
 const npm = isWin ? 'npm.cmd' : 'npm';
-const PORTS = { painel: 3000, servidor: 3001 };
-const URL_PAINEL = 'http://localhost:3000';
+// Um único processo serve painel e API na porta PORT do .env (padrão 3000).
+const PORTA = Number(/^PORT=(\d+)\s*$/m.exec(existsSync('.env') ? readFileSync('.env', 'utf8') : '')?.[1] ?? 3000);
+const PORTS = { sistema: PORTA };
+const URL_PAINEL = `http://localhost:${PORTA}`;
 // Fontes cujo conteudo decide se o build esta em dia (declarado no topo: o fluxo
 // principal roda antes do fim do arquivo, e const nao sofre hoisting).
-const FONTES = ['apps/server/src', 'apps/web/app', 'apps/web/components', 'apps/web/next.config.js', 'apps/web/tailwind.config.ts', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
+const FONTES = ['apps/server/src', 'apps/web/src', 'apps/web/index.html', 'apps/web/vite.config.mts', 'apps/web/tailwind.config.ts', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
 
 const ok = m => console.log(`  ✔  ${m}`);
 const aviso = m => console.log(`  ⚠  ${m}`);
@@ -75,7 +78,7 @@ for (const [nome, porta] of Object.entries(PORTS)) {
     ]);
   }
 }
-ok('Portas 3000 e 3001 livres');
+ok(`Porta ${PORTA} livre`);
 
 // 5 ─ Banco: conexão, schema e migrations -----------------------------------
 passo('Preparando o banco de dados');
@@ -91,7 +94,7 @@ ok(/No pending migrations/.test(migrar.stdout) ? 'Banco atualizado (nada pendent
 passo('Conferindo o build');
 if (precisaBuild()) {
   aviso('Código alterado ou build ausente. Compilando (pode levar 1 a 2 minutos)…');
-  rodar(process.execPath, ['--env-file=.env', 'node_modules/prisma/build/index.js', 'generate', '--schema=packages/database/prisma/schema.prisma'], 'Falha ao gerar o client do Prisma.');
+  // npm run build já gera o client do Prisma.
   rodar(npm, ['run', 'build'], 'Falha na compilação.');
   mkdirSync('.runtime', { recursive: true });
   writeFileSync('.runtime/build-stamp', impressaoDigital());
@@ -100,7 +103,21 @@ if (precisaBuild()) {
   ok('Build em dia');
 }
 
-// 7 ─ Subir ----------------------------------------------------------------
+// 7 ─ Primeiro acesso ------------------------------------------------------
+// Sem nenhum usuário, o painel não deixa ninguém entrar: cria o primeiro aqui mesmo.
+{
+  const { PrismaClient } = createRequire(import.meta.url)('@prisma/client');
+  const db = new PrismaClient({ datasources: { db: { url: dbUrl } } });
+  const usuarios = await db.user.count().finally(() => db.$disconnect());
+  if (usuarios) ok(`${usuarios} usuário(s) cadastrado(s)`);
+  else if (/^ADMIN_EMAIL=\S/m.test(env)) ok('Primeiro usuário será criado a partir de ADMIN_EMAIL');
+  else if (process.stdin.isTTY) {
+    passo('Primeiro acesso: crie o usuário que vai entrar no painel');
+    rodar(process.execPath, ['--env-file=.env', 'scripts/user-create.mjs'], 'Não foi possível criar o usuário.');
+  } else aviso('Nenhum usuário cadastrado. Rode npm run user:create antes de entrar no painel.');
+}
+
+// 8 ─ Subir ----------------------------------------------------------------
 passo('Iniciando os serviços');
 const filho = spawn(process.execPath, ['scripts/start-local.cjs'], { stdio: 'inherit' });
 let encerrando = false;
@@ -112,7 +129,7 @@ filho.on('exit', code => {
   process.exit(code ?? 0);
 });
 
-const pronto = await aguardar(async () => await portaAberta('127.0.0.1', PORTS.painel) && await portaAberta('127.0.0.1', PORTS.servidor), 90_000);
+const pronto = await aguardar(async () => await portaAberta('127.0.0.1', PORTS.sistema), 90_000);
 if (pronto) {
   console.log('\n' + '─'.repeat(66));
   console.log(`  ✔  Sistema no ar: ${URL_PAINEL}`);
@@ -155,17 +172,13 @@ async function aguardar(cond, limiteMs) {
 // gravados por outra ferramenta podem ter datas no futuro e forçariam um rebuild
 // a cada execução.
 function precisaBuild() {
-  const saidas = ['apps/server/dist/main.js', 'packages/database/dist/client.js', 'apps/web/.next/BUILD_ID'];
+  const saidas = ['apps/server/dist/main.js', 'packages/database/dist/client.js', 'apps/web/dist/index.html'];
   if (saidas.some(f => !existsSync(f))) return true;
   const anterior = existsSync('.runtime/build-stamp') ? readFileSync('.runtime/build-stamp', 'utf8').trim() : '';
   return anterior !== impressaoDigital();
 }
 function impressaoDigital() {
   const h = createHash('sha1');
-  // Variáveis NEXT_PUBLIC_* são gravadas no bundle do painel: mudar uma delas no .env
-  // exige recompilar. Só essas linhas entram no hash; a senha do banco não.
-  const publicas = readFileSync('.env', 'utf8').split(String.fromCharCode(10)).map(l => l.trim()).filter(l => l.startsWith('NEXT_PUBLIC_')).sort().join('|');
-  h.update(publicas);
   for (const arquivo of FONTES.flatMap(listar).sort()) {
     // Normaliza fim de linha: CRLF vs LF não é mudança de código.
     h.update(arquivo).update(readFileSync(arquivo, 'utf8').split(String.fromCharCode(13)).join(''));
