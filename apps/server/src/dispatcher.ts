@@ -12,6 +12,18 @@ import {
 } from '@campaign/database';
 import type { WhatsAppProvider } from './whatsapp';
 
+// O que o despachante usa do conector. Permite testar o fluxo inteiro com um conector falso.
+export type SendingProvider = Pick<WhatsAppProvider, 'status' | 'send' | 'flushReads' | 'flushDeliveryEvents'>;
+
+// Código técnico de uma falha, guardado à parte da mensagem legível: status do Baileys
+// (Boom) ou o code de erros do Node (ex.: ETIMEDOUT).
+export function errorCodeOf(error: unknown): string | undefined {
+  const e = error as { output?: { statusCode?: number }; code?: unknown } | null;
+  if (typeof e?.output?.statusCode === 'number') return `baileys:${e.output.statusCode}`;
+  if (typeof e?.code === 'string' || typeof e?.code === 'number') return String(e.code);
+  return undefined;
+}
+
 const LEASE_TTL_MS = 30_000;
 const LEASE_RENEW_MS = 10_000;
 const SCAN_INTERVAL_MS = 5_000;
@@ -22,7 +34,7 @@ export type Dispatcher = {
   stop(): Promise<void>;
 };
 
-export async function startDispatcher(provider: WhatsAppProvider): Promise<Dispatcher> {
+export async function startDispatcher(provider: SendingProvider, options: { scanIntervalMs?: number } = {}): Promise<Dispatcher> {
   const owner = randomUUID();
   let stopping = false;
   let working = false;
@@ -43,26 +55,31 @@ export async function startDispatcher(provider: WhatsAppProvider): Promise<Dispa
     try {
       if (!delivery.group.active) throw new Error('Grupo inativo.');
       let providerId: string;
+      let context: string | undefined;
       if (delivery.provider === 'simulator') {
         providerId = `sim-${id}`;
       } else if (delivery.provider === 'baileys') {
         const media = delivery.campaign.mediaId
           ? await prisma.campaignMedia.findUniqueOrThrow({ where: { id: delivery.campaign.mediaId } })
           : null;
-        providerId = await provider.send(
+        const sent = await provider.send(
           delivery.group.externalId ?? '',
           delivery.messageBody,
           delivery.campaign.accountJid,
           media,
         );
+        providerId = sent.messageId;
+        context = sent.context;
       } else {
         throw new Error('Provedor desconhecido.');
       }
-      await finishDelivery(prisma, id, { providerId });
+      // SENT = o WhatsApp recebeu o pedido. Entrega ou recusa chegam depois (ADR-012).
+      await finishDelivery(prisma, id, { providerId, context });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Falha no envio';
       await finishDelivery(prisma, id, {
         error: `${message} Resultado pode ser incerto. Sem repetição automática para evitar duplicatas.`,
+        code: errorCodeOf(error),
       });
     }
   }
@@ -74,6 +91,9 @@ export async function startDispatcher(provider: WhatsAppProvider): Promise<Dispa
       await completeFinished(prisma);
       await provider.flushReads().catch(() => {
         console.warn('[WhatsApp] Não foi possível registrar leituras; nova tentativa no próximo ciclo.');
+      });
+      await provider.flushDeliveryEvents().catch(() => {
+        console.warn('[WhatsApp] Não foi possível registrar entregas/recusas; nova tentativa no próximo ciclo.');
       });
       const now = await currentTime();
       const campaigns = await prisma.campaign.findMany({
@@ -138,7 +158,7 @@ export async function startDispatcher(provider: WhatsAppProvider): Promise<Dispa
   }, LEASE_RENEW_MS);
   scanTimer = setInterval(() => {
     void scan();
-  }, SCAN_INTERVAL_MS);
+  }, options.scanIntervalMs ?? SCAN_INTERVAL_MS);
   await scan();
 
   async function stop() {

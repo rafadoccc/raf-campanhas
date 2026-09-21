@@ -100,6 +100,18 @@ model Delivery {
   error       String?        @db.Text
   sequence    Int            @default(0)
   attemptedAt DateTime?
+  // Observabilidade do envio (ADR-012). attemptedAt = início da tentativa; sendReturnedAt =
+  // quando o sendMessage retornou (ou falhou). SENT só diz que o WhatsApp recebeu o pedido:
+  // deliveredAt (primeiro recibo de entrega de um participante) e serverRejectedAt (recusa
+  // do servidor após o envio) dizem o que aconteceu depois.
+  attempts         Int       @default(0)
+  sendReturnedAt   DateTime?
+  errorCode        String?   @db.VarChar(64)
+  deliveredAt      DateTime?
+  serverRejectedAt DateTime?
+  // Situação do grupo no momento do envio (ex.: "membro=sim admin=nao so-admins=sim"), para
+  // explicar recusas depois do fato.
+  sendContext      String?   @db.VarChar(160)
   reads       DeliveryRead[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt

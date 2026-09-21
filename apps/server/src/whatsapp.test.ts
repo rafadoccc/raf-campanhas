@@ -32,7 +32,7 @@ test('rejects a different account and individual destinations', async () => {
 });
 test('submits text to the selected group through provider adapter', async () => {
   const { provider, sent } = fake();
-  assert.equal(await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), 'fake-id');
+  assert.deepEqual(await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), { messageId: 'fake-id', context: 'membro=? admin=? so-admins=nao participantes=?' });
   assert.deepEqual(sent, [['a@g.us', { text: 'Hello' }]]);
 });
 test('provider errors propagate instead of recording success', async () => {
@@ -45,8 +45,8 @@ for (const kind of ['image', 'video'] as const) test(`${kind} and caption are ex
   const { provider, sent } = fake();
   const data = Buffer.from('adapter-test-only');
   const mimeType = kind === 'image' ? 'image/png' : 'video/mp4';
-  const id = await provider.send('a@g.us', 'Legenda completa', '5511000000000@s.whatsapp.net', { kind, mimeType, data });
-  assert.equal(id, 'fake-id');
+  const { messageId } = await provider.send('a@g.us', 'Legenda completa', '5511000000000@s.whatsapp.net', { kind, mimeType, data });
+  assert.equal(messageId, 'fake-id');
   assert.deepEqual(sent, [['a@g.us', { [kind]: data, caption: 'Legenda completa', mimetype: mimeType }]]);
 });
 test('uses the configured session directory outside the repository', () => {
@@ -79,4 +79,24 @@ test('only a paired saved session is resumed automatically on startup', async ()
     writeFileSync(path.join(base, 'whatsapp', 'creds.json'), JSON.stringify({ me: { id: '5511999999999:1@s.whatsapp.net' } }));
     assert.equal(await provider.hasPairedSession(), true, 'sessão pareada');
   } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('group context at send time: member/admin found by number or LID, unknown stays "?", admin-only flagged only when certain', async () => {
+  const { describeGroupForSend } = await import('./send-context.js');
+  const me = { id: '5511999999999:7@s.whatsapp.net', lid: '123456789@lid' };
+  const byNumber = describeGroupForSend({ announce: true, size: 30, participants: [{ id: '5511999999999@s.whatsapp.net', admin: null }] }, me);
+  assert.equal(byNumber.context, 'membro=sim admin=nao so-admins=sim participantes=30');
+  assert.equal(byNumber.adminOnlyWithoutPermission, true);
+  const byLid = describeGroupForSend({ participants: [{ id: '123456789@lid', admin: 'admin' }] }, me);
+  assert.equal(byLid.context, 'membro=sim admin=sim so-admins=nao participantes=1');
+  const unknown = describeGroupForSend({ announce: true, participants: [{ id: '999@lid' }] }, me);
+  assert.equal(unknown.context, 'membro=? admin=? so-admins=sim participantes=1');
+  assert.equal(unknown.adminOnlyWithoutPermission, false, 'sem certeza, não afirma bloqueio');
+});
+
+test('technical error codes are kept apart from the readable message', async () => {
+  const { errorCodeOf } = await import('./dispatcher.js');
+  assert.equal(errorCodeOf(Object.assign(new Error('x'), { output: { statusCode: 428 } })), 'baileys:428');
+  assert.equal(errorCodeOf(Object.assign(new Error('x'), { code: 'ETIMEDOUT' })), 'ETIMEDOUT');
+  assert.equal(errorCodeOf(new Error('sem código')), undefined);
 });

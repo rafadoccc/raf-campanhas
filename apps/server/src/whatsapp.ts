@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { prisma, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, persistRead, flushPendingReads, applyServerEvent, type ServerEvent } from '@campaign/database';
+import { describeGroupForSend } from './send-context';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
 import { closeAction } from './connection-policy';
@@ -65,7 +66,7 @@ export class WhatsAppProvider {
     const generation = ++this.generation;
     this.data = { state: 'connecting' };
     try {
-      const { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser, fetchLatestWaWebVersion } = await import('@whiskeysockets/baileys');
+      const { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser, fetchLatestWaWebVersion, proto } = await import('@whiskeysockets/baileys');
       const { default: pino } = await import('pino');
       // Keep the verified version across reconnects; never silently downgrade.
       this.version ??= await resolveWebVersion(() => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }));
@@ -98,13 +99,30 @@ export class WhatsAppProvider {
         const write = (async () => {
         if (generation !== this.generation || !sock.user?.id) return;
         for (const { key, receipt } of updates) {
-          const timestamp = Number(receipt.readTimestamp);
-          if (!key.fromMe || !key.id || !key.remoteJid?.endsWith('@g.us') || !receipt.userJid || !Number.isFinite(timestamp) || timestamp <= 0) continue;
-          await persistRead(prisma, { messageId: key.id, groupJid: key.remoteJid, accountJid: jidNormalizedUser(sock.user.id), participant: jidNormalizedUser(receipt.userJid), readAt: new Date(timestamp * 1000) });
+          if (!key.fromMe || !key.id || !key.remoteJid?.endsWith('@g.us') || !receipt.userJid) continue;
+          const accountJid = jidNormalizedUser(sock.user.id);
+          const readAt = Number(receipt.readTimestamp);
+          const deliveredAt = Number(receipt.receiptTimestamp) || readAt;
+          // Recibo de entrega (ou de leitura, que implica entrega) de qualquer participante:
+          // a mensagem chegou ao grupo.
+          if (Number.isFinite(deliveredAt) && deliveredAt > 0) this.queueServerEvent({ kind: 'delivered', messageId: key.id, groupJid: key.remoteJid, accountJid, at: new Date(deliveredAt * 1000) });
+          if (!Number.isFinite(readAt) || readAt <= 0) continue;
+          await persistRead(prisma, { messageId: key.id, groupJid: key.remoteJid, accountJid, participant: jidNormalizedUser(receipt.userJid), readAt: new Date(readAt * 1000) });
         }
         })().catch(() => { console.error('[WhatsApp] Falha ao persistir recibo no banco; leitura pode estar incompleta.'); });
         this.receiptWrites.add(write);
         void write.finally(() => this.receiptWrites.delete(write));
+      });
+      // Recusa do servidor DEPOIS do sendMessage (ack com erro): o Baileys marca a mensagem
+      // com status ERROR e o código. Sem ouvir isto, a entrega ficaria "enviada" para sempre.
+      sock.ev.on('messages.update', updates => {
+        if (generation !== this.generation || !sock.user?.id) return;
+        for (const { key, update } of updates) {
+          if (!key.fromMe || !key.id || !key.remoteJid?.endsWith('@g.us') || update.status !== proto.WebMessageInfo.Status.ERROR) continue;
+          const code = String(update.messageStubParameters?.[0] ?? 'desconhecido');
+          console.warn('[WhatsApp] Mensagem recusada pelo servidor depois do envio:', key.id, 'código', code);
+          this.queueServerEvent({ kind: 'rejected', messageId: key.id, groupJid: key.remoteJid, accountJid: jidNormalizedUser(sock.user.id), at: new Date(), code });
+        }
       });
       sock.ev.on('creds.update', persistCreds);
       sock.ev.on('connection.update', update => {
@@ -169,6 +187,33 @@ export class WhatsAppProvider {
   async flushReads() {
     await flushPendingReads(prisma);
   }
+
+  // Eventos do servidor (entrega/recusa) podem chegar antes de a entrega ser gravada: ficam
+  // aqui e são reaplicados a cada ciclo do despachante por até 15 minutos. Um reinício nessa
+  // janela perde o evento (mesma limitação já aceita para leituras em memória).
+  private serverEvents: (ServerEvent & { queuedAt: number })[] = [];
+  private deliveredSeen = new Map<string, number>();
+  private queueServerEvent(event: ServerEvent) {
+    if (event.kind === 'delivered') {
+      // Um recibo por participante: basta o primeiro de cada mensagem.
+      if (this.deliveredSeen.has(event.messageId)) return;
+      this.deliveredSeen.set(event.messageId, Date.now());
+    }
+    this.serverEvents.push({ ...event, queuedAt: Date.now() });
+    void this.flushDeliveryEvents().catch(() => undefined);
+  }
+  async flushDeliveryEvents() {
+    const now = Date.now();
+    for (const [id, seenAt] of this.deliveredSeen) if (now - seenAt > 3_600_000) this.deliveredSeen.delete(id);
+    const pending = this.serverEvents;
+    this.serverEvents = [];
+    for (const event of pending) {
+      const applied = await applyServerEvent(prisma, event).catch(() => false);
+      if (applied) continue;
+      if (now - event.queuedAt < 15 * 60_000) this.serverEvents.push(event);
+      else if (event.kind === 'rejected') console.warn('[WhatsApp] Recusa do servidor sem entrega correspondente; descartada:', event.messageId);
+    }
+  }
   async sync() {
     const sock = this.connected();
     const groups = Object.values(await sock.groupFetchAllParticipating());
@@ -186,8 +231,10 @@ export class WhatsAppProvider {
     const sock = this.connected();
     if (accountJid !== this.data.accountJid) throw new Error('Número conectado difere do número da campanha.');
     if (!groupJid.endsWith('@g.us')) throw new Error('Destino não é um grupo.');
-    // Metadata checks membership and server permissions; sendMessage also enforces restrictions.
-    await sock.groupMetadata(groupJid);
+    // O metadata não bloqueia nada aqui: registra a situação do grupo (membro, admin, só
+    // admins enviam) para explicar uma eventual recusa do servidor.
+    const group = describeGroupForSend(await sock.groupMetadata(groupJid), { id: sock.user?.id, lid: sock.user?.lid });
+    if (group.adminOnlyWithoutPermission) console.warn('[WhatsApp] Grupo só para administradores e a conta não é admin:', groupJid);
     if (this.socket !== sock || this.data.state !== 'connected') throw new Error('Conexão interrompida antes do envio.');
     if (media && !['image', 'video'].includes(media.kind)) throw Error('Tipo de mídia inválido.');
     const content = !media ? { text } : media.kind === 'image'
@@ -195,7 +242,8 @@ export class WhatsAppProvider {
       : { video: Buffer.from(media.data), mimetype: media.mimeType, caption: text };
     const result = await sock.sendMessage(groupJid, content);
     if (!result?.key.id) throw new Error('Resultado do envio desconhecido. Confira no celular antes de reenviar.');
-    return result.key.id;
+    // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
+    return { messageId: result.key.id, context: group.context };
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);

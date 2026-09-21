@@ -79,7 +79,7 @@ app.get('/api/deliveries', async (request) => {
     take: 100,
     skip: Math.max(0, Math.min(10000, parseInt(query.page ?? '0') || 0)) * 100,
     // Sem messageBody: a listagem não precisa do texto das mensagens e não deve expô-lo.
-    select: { id: true, campaignId: true, groupId: true, status: true, provider: true, sequence: true, scheduledAt: true, sentAt: true, error: true, campaign: { select: { name: true } }, group: { select: { name: true } }, _count: { select: { reads: true } } }
+    select: { id: true, campaignId: true, groupId: true, status: true, provider: true, sequence: true, scheduledAt: true, sentAt: true, error: true, attemptedAt: true, sendReturnedAt: true, deliveredAt: true, serverRejectedAt: true, errorCode: true, attempts: true, sendContext: true, campaign: { select: { name: true } }, group: { select: { name: true } }, _count: { select: { reads: true } } }
   });
 });
 

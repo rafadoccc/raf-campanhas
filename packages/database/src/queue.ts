@@ -37,14 +37,18 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
     if (!campaign || campaign.deletedAt || campaign.status !== 'ACTIVE' || (campaign.nextAvailableAt && campaign.nextAvailableAt > at)) return null;
     const head = await tx.delivery.findFirst({ where: { campaignId: campaign.id, status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: { sequence: 'asc' }, include: { group: true } });
     if (!head || head.id !== id || head.status !== 'PENDING' || head.scheduledAt > at) return null;
-    const claimed = await tx.delivery.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'PROCESSING', attemptedAt: at, updatedAt: at, error: null } });
+    const claimed = await tx.delivery.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'PROCESSING', attemptedAt: at, updatedAt: at, error: null, attempts: { increment: 1 } } });
     if (!claimed.count) return null;
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: new Date(at.getTime() + campaign.intervalSeconds * 1000), updatedAt: at } });
     return { ...head, campaign };
   }, LOCKING_TRANSACTION);
 }
 
-export async function finishDelivery(db: PrismaClient, id: string, outcome: { providerId: string } | { error: string }, now?: Date) {
+// Resultado do envio. context descreve o grupo no momento do envio; code é o código
+// técnico da falha (ex.: status do Baileys), guardado à parte da mensagem legível.
+export type SendOutcome = ({ providerId: string } | { error: string; code?: string }) & { context?: string };
+
+export async function finishDelivery(db: PrismaClient, id: string, outcome: SendOutcome, now?: Date) {
   now ??= await currentTime();
   const at = now;
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -53,8 +57,8 @@ export async function finishDelivery(db: PrismaClient, id: string, outcome: { pr
     await lockCampaign(tx, delivery.campaignId);
     const campaign = await tx.campaign.findUniqueOrThrow({ where: { id: delivery.campaignId } });
     const changed = await tx.delivery.updateMany({ where: { id, status: 'PROCESSING' }, data: 'providerId' in outcome
-      ? { status: 'SENT', providerId: outcome.providerId, sentAt: at, updatedAt: at, error: null }
-      : { status: 'FAILED', updatedAt: at, error: outcome.error } });
+      ? { status: 'SENT', providerId: outcome.providerId, sentAt: at, sendReturnedAt: at, updatedAt: at, error: null, sendContext: outcome.context?.slice(0, 160) }
+      : { status: 'FAILED', sendReturnedAt: at, updatedAt: at, error: outcome.error, errorCode: outcome.code?.slice(0, 64), sendContext: outcome.context?.slice(0, 160) } });
     if (!changed.count) return;
     // Full interval after completion, even after a slow send or a restart.
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: new Date(at.getTime() + campaign.intervalSeconds * 1000), updatedAt: at, ...(campaign.status === 'PAUSED' ? { pausedAt: at } : {}) } });

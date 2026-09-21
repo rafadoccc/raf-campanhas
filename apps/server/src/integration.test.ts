@@ -1,8 +1,9 @@
 import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { prisma, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
 import { hashPassword } from './auth';
+import { startDispatcher, type SendingProvider } from './dispatcher';
 import { loadConfig } from './config';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -521,4 +522,179 @@ test('uploads are limited per type before buffering, and listings never expose m
   const list = await request('GET', `/deliveries?campaignId=${id}`);
   assert.equal(list.statusCode, 200);
   assert.equal(list.json()[0].messageBody, undefined);
+});
+
+// ─── Fluxo de envio real (despachante + conector falso), ADR-012 ────────────────
+// O conector falso substitui só o WhatsApp: reserva, gravação, intervalo, reinício e
+// eventos do servidor passam pelo código de produção.
+const ACCOUNT = '5511900000000@s.whatsapp.net';
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor<T>(check: () => Promise<T | null | undefined | false>, what: string, timeoutMs = 10_000): Promise<T> {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > end) throw new Error(`Tempo esgotado esperando: ${what}`);
+    await sleep(50);
+  }
+}
+let jidSeq = 0;
+async function realCampaign(groupCount: number, intervalSeconds = 60) {
+  // Só esta campanha fica ativa, para o despachante não processar sobras de outros testes.
+  await prisma.campaign.updateMany({ where: { status: 'ACTIVE' }, data: { status: 'PAUSED' } });
+  const now = new Date();
+  const groups = [];
+  for (let i = 0; i < groupCount; i++) groups.push(await prisma.group.create({ data: { name: `Real ${i}`, externalId: `120363${Date.now()}${jidSeq++}@g.us` } }));
+  const campaign = await prisma.campaign.create({ data: {
+    name: 'Envio real', startsAt: now, endsAt: now, status: 'ACTIVE', provider: 'baileys', accountJid: ACCOUNT, mode: 'IMMEDIATE', intervalSeconds, nextAvailableAt: now,
+    groups: { create: groups.map((g, position) => ({ groupId: g.id, position })) },
+    messages: { create: [{ content: 'oi', position: 0 }] },
+    deliveries: { create: groups.map((g, sequence) => ({ groupId: g.id, messageBody: 'oi', provider: 'baileys', sequence, scheduledAt: new Date(now.getTime() + sequence * intervalSeconds * 1000) })) },
+  } });
+  const rows = await prisma.delivery.findMany({ where: { campaignId: campaign.id }, orderBy: { sequence: 'asc' }, include: { group: true } });
+  return { campaign, rows };
+}
+type SendResult = { messageId: string; context: string };
+function fakeWhatsApp(onSend: (jid: string, call: number) => Promise<SendResult>) {
+  const calls: string[] = [];
+  const provider = {
+    status: () => ({ state: 'connected', accountJid: ACCOUNT }),
+    send: async (jid: string) => { calls.push(jid); return onSend(jid, calls.length); },
+    flushReads: async () => undefined,
+    flushDeliveryEvents: async () => undefined,
+  } as unknown as SendingProvider;
+  return { provider, calls };
+}
+const fresh = (id: string) => prisma.delivery.findUniqueOrThrow({ where: { id } });
+// Libera a próxima entrega "agora" (simula o intervalo já decorrido).
+const releaseNext = async (campaignId: string, deliveryId: string) => {
+  const past = new Date(Date.now() - 1000);
+  await prisma.delivery.update({ where: { id: deliveryId }, data: { scheduledAt: past } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { nextAvailableAt: past } });
+};
+
+test('successful send: one attempt, times and message id recorded, then delivery receipt marks it delivered', async () => {
+  const { campaign, rows: [row] } = await realCampaign(1);
+  const wa = fakeWhatsApp(async () => { await sleep(120); return { messageId: '3EB0SUCESSO1', context: 'membro=sim admin=nao so-admins=nao participantes=80' }; });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    const sent = await waitFor(async () => { const d = await fresh(row.id); return d.status === 'SENT' && d; }, 'envio gravado');
+    assert.equal(sent.providerId, '3EB0SUCESSO1');
+    assert.equal(sent.attempts, 1);
+    assert.ok(sent.attemptedAt && sent.sendReturnedAt && sent.attemptedAt <= sent.sendReturnedAt, 'início antes do retorno');
+    assert.ok(sent.sendReturnedAt!.getTime() - sent.attemptedAt!.getTime() >= 100, 'a duração do sendMessage fica medida');
+    assert.equal(sent.sendContext, 'membro=sim admin=nao so-admins=nao participantes=80');
+    assert.equal(sent.deliveredAt, null, 'sem recibo ainda: não se afirma entrega');
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'COMPLETED');
+  } finally { await dispatcher.stop(); }
+  const event = { kind: 'delivered' as const, messageId: '3EB0SUCESSO1', groupJid: row.group.externalId!, accountJid: ACCOUNT, at: new Date() };
+  assert.equal(await applyServerEvent(prisma, event), true);
+  assert.equal(await applyServerEvent(prisma, { ...event, at: new Date(Date.now() + 60_000) }), true, 'recibos repetidos são idempotentes');
+  const delivered = await fresh(row.id);
+  assert.equal(delivered.deliveredAt?.getTime(), event.at.getTime(), 'vale o primeiro recibo');
+  assert.equal(delivered.status, 'SENT');
+  assert.equal(wa.calls.length, 1);
+});
+
+test('sendMessage throwing: failed with the technical code, one attempt, never retried', async () => {
+  const { rows: [row] } = await realCampaign(1);
+  const wa = fakeWhatsApp(async () => { throw Object.assign(new Error('Timed Out'), { output: { statusCode: 408 } }); });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    const failed = await waitFor(async () => { const d = await fresh(row.id); return d.status === 'FAILED' && d; }, 'falha gravada');
+    assert.equal(failed.errorCode, 'baileys:408');
+    assert.equal(failed.attempts, 1);
+    assert.match(failed.error ?? '', /Timed Out.*Sem repetição automática/);
+    assert.ok(failed.sendReturnedAt, 'o momento da falha fica registrado');
+    await sleep(400); // vários ciclos do despachante
+    assert.equal(wa.calls.length, 1, 'falha não é repetida');
+  } finally { await dispatcher.stop(); }
+});
+
+test('send accepted locally but refused by the server afterwards: becomes a failure, never resent, even if the refusal arrives first', async () => {
+  const { rows: [row] } = await realCampaign(1);
+  const rejected = { kind: 'rejected' as const, messageId: '3EB0RECUSADO', groupJid: row.group.externalId!, accountJid: ACCOUNT, at: new Date(), code: '479' };
+  // A recusa pode chegar antes de o envio ser gravado: não aplica e pede nova tentativa.
+  assert.equal(await applyServerEvent(prisma, rejected), false);
+  const wa = fakeWhatsApp(async () => ({ messageId: '3EB0RECUSADO', context: 'membro=sim admin=nao so-admins=sim participantes=40' }));
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try { await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio gravado'); }
+  finally { await dispatcher.stop(); }
+  assert.equal(await applyServerEvent(prisma, rejected), true, 'reaplicada depois da gravação');
+  const failed = await fresh(row.id);
+  assert.equal(failed.status, 'FAILED');
+  assert.equal(failed.errorCode, 'servidor:479');
+  assert.ok(failed.serverRejectedAt);
+  assert.match(failed.error ?? '', /recusou.*Não foi reenviada/);
+  assert.equal(await applyServerEvent(prisma, rejected), true, 'recusa repetida é idempotente');
+  assert.equal(wa.calls.length, 1);
+});
+
+test('a delivery receipt wins over a late refusal: something that reached the group is not declared failed', async () => {
+  const { rows: [row] } = await realCampaign(1);
+  const wa = fakeWhatsApp(async () => ({ messageId: '3EB0ENTREGUE', context: 'membro=sim admin=sim so-admins=nao participantes=10' }));
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try { await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio gravado'); }
+  finally { await dispatcher.stop(); }
+  const base = { messageId: '3EB0ENTREGUE', groupJid: row.group.externalId!, accountJid: ACCOUNT, at: new Date() };
+  await applyServerEvent(prisma, { ...base, kind: 'delivered' });
+  await applyServerEvent(prisma, { ...base, kind: 'rejected', code: '500' });
+  const d = await fresh(row.id);
+  assert.equal(d.status, 'SENT');
+  assert.ok(d.deliveredAt);
+  assert.equal(d.errorCode, 'servidor:500', 'o código fica registrado para investigação');
+});
+
+test('queue delay: the next send waits the interval counted from the end of the previous one, and lateness is measurable', async () => {
+  const { campaign, rows: [first, second] } = await realCampaign(2, 60);
+  const wa = fakeWhatsApp(async (_jid, call) => { await sleep(150); return { messageId: `3EB0ATRASO${call}`, context: 'membro=sim admin=nao so-admins=nao participantes=5' }; });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    const one = await waitFor(async () => { const d = await fresh(first.id); return d.status === 'SENT' && d; }, 'primeiro envio');
+    const next = (await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).nextAvailableAt!;
+    // Comportamento atual (ADR-003): intervalo contado do FIM do envio anterior. Cada envio
+    // empurra o seguinte em (duração do envio + espera do ciclo): o atraso se acumula.
+    assert.equal(next.getTime(), one.sendReturnedAt!.getTime() + 60_000);
+    assert.ok(next.getTime() > first.scheduledAt.getTime() + 60_000, 'a grade planejada já ficou para trás');
+    await sleep(300);
+    assert.equal(wa.calls.length, 1, 'não envia antes do intervalo');
+    await releaseNext(campaign.id, second.id);
+    const two = await waitFor(async () => { const d = await fresh(second.id); return d.status === 'SENT' && d; }, 'segundo envio');
+    assert.ok(two.attemptedAt! >= two.scheduledAt, 'início registrado; atraso = attemptedAt - scheduledAt');
+    assert.equal(two.attempts, 1);
+  } finally { await dispatcher.stop(); }
+});
+
+test('restart during a campaign: the interrupted send is marked uncertain and never resent; the queue continues in order', async () => {
+  const { campaign, rows: [first, second] } = await realCampaign(2, 60);
+  // Simula queda no meio do envio: reservado (PROCESSING), sem resultado gravado.
+  await prisma.delivery.update({ where: { id: first.id }, data: { status: 'PROCESSING', attemptedAt: new Date(), attempts: 1 } });
+  await releaseNext(campaign.id, second.id);
+  const wa = fakeWhatsApp(async () => ({ messageId: '3EB0APOSREINICIO', context: 'membro=sim admin=nao so-admins=nao participantes=5' }));
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    await waitFor(async () => (await fresh(second.id)).status === 'SENT', 'segundo envio após reinício');
+    const interrupted = await fresh(first.id);
+    assert.equal(interrupted.status, 'FAILED');
+    assert.match(interrupted.error ?? '', /interrompido.*incerto/i);
+    assert.equal(interrupted.attempts, 1, 'a tentativa interrompida não é repetida');
+    assert.deepEqual(wa.calls, [second.group.externalId], 'só o segundo grupo recebeu envio');
+  } finally { await dispatcher.stop(); }
+});
+
+test('duplicate prevention: a concurrent claim during a slow send gets nothing and the group receives exactly one send', async () => {
+  const { rows: [row] } = await realCampaign(1);
+  let inside!: () => void;
+  const sending = new Promise<void>(resolve => { inside = resolve; });
+  const wa = fakeWhatsApp(async () => { inside(); await sleep(400); return { messageId: '3EB0UNICO', context: 'membro=sim admin=nao so-admins=nao participantes=5' }; });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 20 });
+  try {
+    await sending;
+    assert.equal(await claimDelivery(prisma, row.id), null, 'outra reserva enquanto envia: recusada');
+    await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio gravado');
+    await sleep(300); // mais ciclos do despachante depois de enviado
+    assert.equal(wa.calls.length, 1);
+    assert.equal((await fresh(row.id)).attempts, 1);
+    assert.equal(await claimDelivery(prisma, row.id), null, 'enviado não é reservado de novo');
+  } finally { await dispatcher.stop(); }
 });
