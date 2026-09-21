@@ -1,11 +1,14 @@
 'use client';
+import { API_URL } from './api-url';
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ServerClock } from './server-clock';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
 type Group = { id: string; name: string; active: boolean; externalId: string | null };
-const api = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const api = API_URL;
 const field = 'mt-1 w-full rounded-lg border border-slate-300 p-2';
+// Busca sem acento e sem diferenciar maiúsculas: "sao paulo" encontra "São Paulo".
+const normalize = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const panel = 'space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm';
 export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const router = useRouter();
@@ -14,6 +17,11 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const [mode, setMode] = useState('IMMEDIATE'); const [interval, setIntervalValue] = useState(3);
   const [times, setTimes] = useState(['09:00']); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(!campaignId);
+  const [search, setSearch] = useState('');
+  const term = normalize(search);
+  const visible = term ? groups.filter(group => normalize(group.name).includes(term)) : groups;
+  const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+  const selectVisible = () => setSelected(current => [...current, ...visible.map(group => group.id).filter(id => !current.includes(id))]);
   const [initial, setInitial] = useState({ name: '', startsAt: '', endsAt: '', messages: [''] });
   useEffect(() => {
     if (!campaignId) return;
@@ -52,8 +60,27 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
     </section>
     <section className={panel}><h2 className="font-bold">Grupos participantes</h2><p className="text-sm text-slate-500">Selecione na ordem desejada ou ajuste a fila abaixo. Para importar grupos, use Conexão WhatsApp.</p>
       {!groups.length && <a href="/configuracoes" className="text-emerald-700">Conectar e sincronizar grupos →</a>}
-      <div className="max-h-64 space-y-2 overflow-y-auto">{groups.map(group => <label key={group.id} className="flex gap-2 text-sm"><input type="checkbox" checked={selected.includes(group.id)} onChange={() => setSelected(current => current.includes(group.id) ? current.filter(id => id !== group.id) : [...current, group.id])} />{group.name}{!group.externalId && ' (simulação)'}</label>)}</div>
-      {!!selected.length && <ol className="space-y-2 border-t pt-4">{selected.map((id, i) => <li key={id} className="flex items-center gap-3 text-sm"><span className="flex-1">{i + 1}. {groups.find(g => g.id === id)?.name}</span><button type="button" aria-label={`Subir grupo ${i + 1}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded border px-2 disabled:opacity-30">↑</button><button type="button" aria-label={`Descer grupo ${i + 1}`} disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="rounded border px-2 disabled:opacity-30">↓</button></li>)}</ol>}
+      {!!groups.length && <div className="space-y-2">
+        <input
+          type="search"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
+          placeholder="Buscar grupo pelo nome…"
+          aria-label="Buscar grupo pelo nome"
+          className={field}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+          <span>{term ? `${visible.length} de ${groups.length} grupos` : `${groups.length} grupos`} · {selected.length} selecionados</span>
+          <span className="flex gap-3">
+            <button type="button" onClick={selectVisible} disabled={!visible.some(group => !selected.includes(group.id))} className="text-emerald-700 disabled:opacity-40">{term ? 'Selecionar exibidos' : 'Selecionar todos'}</button>
+            <button type="button" onClick={() => setSelected([])} disabled={!selected.length} className="text-slate-600 disabled:opacity-40">Limpar seleção</button>
+          </span>
+        </div>
+      </div>}
+      <div className="max-h-64 space-y-2 overflow-y-auto">{visible.map(group => <label key={group.id} className="flex gap-2 text-sm"><input type="checkbox" checked={selected.includes(group.id)} onChange={() => toggle(group.id)} />{group.name}{!group.externalId && ' (simulação)'}</label>)}</div>
+      {!!groups.length && !visible.length && <p className="text-sm text-slate-500">Nenhum grupo encontrado para “{search.trim()}”.</p>}
+      {!!selected.length && <ol className="space-y-2 border-t pt-4">{selected.map((id, i) => <li key={id} className="flex items-center gap-3 text-sm"><span className="flex-1">{i + 1}. {groups.find(g => g.id === id)?.name ?? 'Grupo indisponível'}</span><button type="button" aria-label={`Remover grupo ${i + 1}`} onClick={() => toggle(id)} className="rounded border px-2 text-red-700">×</button><button type="button" aria-label={`Subir grupo ${i + 1}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded border px-2 disabled:opacity-30">↑</button><button type="button" aria-label={`Descer grupo ${i + 1}`} disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="rounded border px-2 disabled:opacity-30">↓</button></li>)}</ol>}
     </section>
     <section className={panel}>{initial.messages.map((message, i) => <label key={i} className="block text-sm font-medium">Mensagem {initial.messages.length > 1 ? i + 1 : ''}<textarea defaultValue={message} required maxLength={10000} name="message" className={`${field} min-h-28`} /></label>)}<p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{selected.length} grupos · Intervalo: {interval} min · Aproximadamente {Math.max(0, selected.length - 1) * interval} min entre o primeiro e o último envio de cada rodada, sem contar pausas e atrasos.</p></section>
     <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
