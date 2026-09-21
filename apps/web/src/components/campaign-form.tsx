@@ -3,7 +3,18 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { ServerClock } from './server-clock';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
-type Group = { id: string; name: string; active: boolean; externalId: string | null };
+type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null };
+// Selo "só admins": diz também se a conta conectada é admin, para não precisar conferir no celular.
+function adminBadge(group: Group) {
+  if (!group.adminOnly) return null;
+  if (group.isAdmin) return { text: "Só admins · você é admin ✓", tone: "bg-emerald-50 text-emerald-800" };
+  if (group.isAdmin === false) return { text: "Só admins · você não é admin — não vai receber", tone: "bg-red-50 text-red-700" };
+  return { text: "Só admins · não deu para confirmar se você é admin", tone: "bg-amber-50 text-amber-800" };
+}
+const Badge = ({ group }: { group: Group }) => {
+  const badge = adminBadge(group);
+  return badge ? <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.tone}`}>{badge.text}</span> : null;
+};
 type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; intervalSeconds: number; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
 const field = 'mt-1 w-full rounded-lg border border-slate-300 p-2';
 // Busca sem acento e sem diferenciar maiúsculas: "sao paulo" encontra "São Paulo".
@@ -77,9 +88,10 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
           </span>
         </div>
       </div>}
-      <div className="max-h-64 space-y-2 overflow-y-auto">{visible.map(group => <label key={group.id} className="flex gap-2 text-sm"><input type="checkbox" checked={selected.includes(group.id)} onChange={() => toggle(group.id)} />{group.name}{!group.externalId && ' (simulação)'}</label>)}</div>
+      <div className="max-h-64 space-y-2 overflow-y-auto">{visible.map(group => <label key={group.id} className="flex gap-2 text-sm"><input type="checkbox" checked={selected.includes(group.id)} onChange={() => toggle(group.id)} /><span className="flex flex-wrap items-center gap-2">{group.name}{!group.externalId && ' (simulação)'}<Badge group={group} /></span></label>)}</div>
       {!!groups.length && !visible.length && <p className="text-sm text-slate-500">Nenhum grupo encontrado para “{search.trim()}”.</p>}
-      {!!selected.length && <ol className="space-y-2 border-t pt-4">{selected.map((id, i) => <li key={id} className="flex items-center gap-3 text-sm"><span className="flex-1">{i + 1}. {groups.find(g => g.id === id)?.name ?? 'Grupo indisponível'}</span><button type="button" aria-label={`Remover grupo ${i + 1}`} onClick={() => toggle(id)} className="rounded border px-2 text-red-700">×</button><button type="button" aria-label={`Subir grupo ${i + 1}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded border px-2 disabled:opacity-30">↑</button><button type="button" aria-label={`Descer grupo ${i + 1}`} disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="rounded border px-2 disabled:opacity-30">↓</button></li>)}</ol>}
+      {(() => { const blocked = selected.filter(id => groups.find(g => g.id === id)?.adminOnly && groups.find(g => g.id === id)?.isAdmin === false).length; return blocked > 0 && <p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-700">{blocked === 1 ? '1 grupo selecionado é só para administradores e você não é admin nele: ele não vai receber a mensagem.' : `${blocked} grupos selecionados são só para administradores e você não é admin neles: eles não vão receber a mensagem.`}</p>; })()}
+      {!!selected.length && <ol className="space-y-2 border-t pt-4">{selected.map((id, i) => <li key={id} className="flex items-center gap-3 text-sm"><span className="flex flex-1 flex-wrap items-center gap-2">{i + 1}. {groups.find(g => g.id === id)?.name ?? 'Grupo indisponível'}{groups.find(g => g.id === id) && <Badge group={groups.find(g => g.id === id)!} />}</span><button type="button" aria-label={`Remover grupo ${i + 1}`} onClick={() => toggle(id)} className="rounded border px-2 text-red-700">×</button><button type="button" aria-label={`Subir grupo ${i + 1}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded border px-2 disabled:opacity-30">↑</button><button type="button" aria-label={`Descer grupo ${i + 1}`} disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="rounded border px-2 disabled:opacity-30">↓</button></li>)}</ol>}
     </section>
     <section className={panel}>{initial.messages.map((message, i) => <label key={i} className="block text-sm font-medium">Mensagem {initial.messages.length > 1 ? i + 1 : ''}<textarea defaultValue={message} required maxLength={10000} name="message" className={`${field} min-h-28`} /></label>)}<p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{selected.length} grupos · Intervalo: {interval} min · Aproximadamente {Math.max(0, selected.length - 1) * interval} min entre o primeiro e o último envio de cada rodada, sem contar pausas e atrasos.</p></section>
     <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
