@@ -106,7 +106,8 @@ entradas antigas — o arquivo é append-only.
 
 Mensagens seguem [Conventional Commits](https://www.conventionalcommits.org/):
 `feat(api): ...`, `fix(worker): ...`, `refactor(db): ...`, `chore: ...`, `docs: ...`.
-Assunto em inglês, imperativo, sem ponto final.
+**Mensagem em português do Brasil** (decisão do dono, 2026-09-21): tipo em inglês
+(`feat`, `fix`, ...) e assunto no imperativo, sem ponto final. Ex.: `fix(whatsapp): corrige o pareamento por QR`.
 
 **Não assine commits nem PRs com identificação de IA.** Nada de trailers
 `Co-Authored-By`, `Generated with` ou equivalentes. O histórico do Git pertence ao autor
@@ -137,7 +138,7 @@ Commit e push direto em `main` estão autorizados pelo dono do repositório
    Se encontrar um segredo versionado, pare e avise o humano.
 6. **Teste antes de declarar pronto.** `npm run lint` e `npm test` precisam passar.
    Se falharem por motivo preexistente, diga isso explicitamente no handoff.
-7. **Mensagens de UI em português do Brasil.** Nomes de código, tipos e commits em inglês.
+7. **Mensagens de UI e de commit em português do Brasil.** Nomes de código e tipos em inglês.
 
 ---
 
