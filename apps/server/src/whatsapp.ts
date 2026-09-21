@@ -3,6 +3,8 @@ import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads } from '@campaign/database';
 import QRCode from 'qrcode';
+import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
+import { closeAction } from './connection-policy';
 import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
 
 // Nome exibido de um grupo sincronizado: assunto sem espaços extras, limitado à coluna
@@ -38,6 +40,7 @@ export class WhatsAppProvider {
   private starting = false;
   private version?: WAVersion;
   private receiptWrites = new Set<Promise<void>>();
+  private credsSaving: Promise<void> = Promise.resolve();
   private authDir: string;
   private data: { state: string; qr?: string; accountJid?: string; error?: string } = { state: 'disconnected' };
   constructor(authDir = defaultSessionsDir()) {
@@ -55,7 +58,7 @@ export class WhatsAppProvider {
     const generation = ++this.generation;
     this.data = { state: 'connecting' };
     try {
-      const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, jidNormalizedUser, fetchLatestWaWebVersion } = await import('@whiskeysockets/baileys');
+      const { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser, fetchLatestWaWebVersion } = await import('@whiskeysockets/baileys');
       const { default: pino } = await import('pino');
       // Keep the verified version across reconnects; never silently downgrade.
       this.version ??= await resolveWebVersion(() => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }));
@@ -65,6 +68,25 @@ export class WhatsAppProvider {
       const sock = makeWASocket({ version: this.version, auth: state, logger: pino({ level: 'silent' }), syncFullHistory: false, markOnlineOnConnect: false });
       console.info('[WhatsApp] Iniciando protocolo', this.version.join('.'));
       this.socket = sock;
+      // Gravações de credenciais em andamento. A reconexão pedida logo após o pareamento
+      // precisa esperá-las, senão reabre com credenciais ainda não salvas.
+      const persistCreds = () => { this.credsSaving = this.credsSaving.then(() => saveCreds()).catch(() => { this.data.error = 'Não foi possível salvar a sessão.'; }); };
+      let lastQr: string | undefined;
+      const showQr = async (raw: string) => {
+        lastQr = raw;
+        const qr = await QRCode.toDataURL(withAdvSecret(raw, state.creds.advSecretKey), { width: 300, margin: 2 });
+        if (generation === this.generation && this.data.state !== 'connected') this.data = { state: 'qr', qr };
+      };
+      // Ver pairing.ts: o WhatsApp aposenta o segredo do QR depois da leitura; sem girar o
+      // segredo e redesenhar o QR, o celular recusa o pareamento.
+      sock.ws.on('CB:notification,type:companion_reg_refresh', (node: Parameters<typeof handleCompanionRegRefresh>[0]) => {
+        if (generation !== this.generation) return;
+        const outcome = handleCompanionRegRefresh(node, state.creds);
+        console.info('[WhatsApp] companion_reg_refresh:', outcome);
+        if (outcome !== 'rotated') return;
+        persistCreds();
+        if (lastQr) void showQr(lastQr).catch(() => { this.data.error = 'Falha ao atualizar o QR Code.'; });
+      });
       sock.ev.on('message-receipt.update', updates => {
         const write = (async () => {
         if (generation !== this.generation || !sock.user?.id) return;
@@ -77,36 +99,42 @@ export class WhatsAppProvider {
         this.receiptWrites.add(write);
         void write.finally(() => this.receiptWrites.delete(write));
       });
-      sock.ev.on('creds.update', () => { void saveCreds().catch(() => { this.data.error = 'Não foi possível salvar a sessão.'; }); });
+      sock.ev.on('creds.update', persistCreds);
       sock.ev.on('connection.update', update => {
         void (async () => {
           if (generation !== this.generation) return;
           if ('qr' in update && !update.qr) delete this.data.qr;
-          if (update.qr) {
-            const qr = await QRCode.toDataURL(update.qr, { width: 300, margin: 2 });
-            if (generation === this.generation && this.data.state !== 'connected') this.data = { state: 'qr', qr };
-          }
+          if (update.qr) await showQr(update.qr);
           if (update.connection === 'open') {
             this.retries = 0;
             this.data = { state: 'connected', accountJid: jidNormalizedUser(sock.user?.id) };
           }
           if (update.connection === 'close') {
             this.socket = undefined;
-            const code = (update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
-            console.info('[WhatsApp] Conexão encerrada. Código:', typeof code === 'number' ? code : 'indisponível');
-            if ([DisconnectReason.loggedOut, DisconnectReason.badSession, DisconnectReason.connectionReplaced, DisconnectReason.forbidden].includes(code as number)) {
+            const error = update.lastDisconnect?.error as { message?: string; output?: { statusCode?: number } } | undefined;
+            const code = error?.output?.statusCode;
+            console.info('[WhatsApp] Conexão encerrada. Código:', code ?? 'indisponível', error?.message ?? '');
+            const action = closeAction(code, error?.message, this.retries);
+            if (action.kind === 'stop' || !this.wanted) {
               this.wanted = false;
-              this.data = { state: 'error', error: `Sessão encerrada ou recusada (código ${code}). Desconecte e conecte novamente pelo painel.` };
-            } else if (this.wanted && this.retries < 6) {
-              const delay = Math.min(30000, 1000 * 2 ** this.retries++);
-              this.data = { state: 'reconnecting' };
-              this.timer = setTimeout(() => { void this.open(); }, delay);
-            } else this.data = { state: 'error', error: 'Conexão indisponível. Tente conectar novamente.' };
+              if (action.kind === 'stop' && action.clearSession) await rm(this.authDir, { recursive: true, force: true }).catch(() => {});
+              this.data = action.kind === 'stop' ? { state: 'error', error: action.error } : { state: 'disconnected' };
+              return;
+            }
+            if (action.countsAsRetry) this.retries++;
+            this.data = { state: 'reconnecting' };
+            await this.credsSaving;
+            this.timer = setTimeout(() => { void this.open(); }, action.delayMs);
           }
-        })().catch(() => { this.data.error = 'Falha ao atualizar a conexão.'; });
+        })().catch(error => {
+          console.error('[WhatsApp] Falha ao tratar evento de conexão:', error instanceof Error ? error.message : error);
+          this.data.error = 'Falha ao atualizar a conexão.';
+        });
       });
-    } catch {
-      this.data = { state: 'error', error: this.version ? 'Falha ao iniciar Baileys. Verifique internet e dependências.' : 'Não foi possível consultar a versão atual do WhatsApp Web. Tente novamente mais tarde.' };
+    } catch (error) {
+      // O motivo real vai para o log do servidor; a tela recebe uma mensagem acionável.
+      console.error('[WhatsApp] Falha ao iniciar a conexão:', error instanceof Error ? error.message : error);
+      this.data = { state: 'error', error: this.version ? 'Falha ao iniciar a conexão com o WhatsApp. Confira a internet deste computador e clique em Conectar.' : 'Não foi possível consultar a versão atual do WhatsApp Web. Confira a internet e clique em Conectar.' };
     } finally { this.starting = false; }
   }
   async disconnect() {
