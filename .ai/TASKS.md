@@ -100,6 +100,15 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-083  Deploy na hospedagem Node.js da Hostinger (entrada, env, docs)   owner: —        since: —      
 ```
 
+## Fase 1e — Confiabilidade do envio (teste real de 20 grupos, 2026-09-21)
+
+```
+[x] T-084  Registrar tempos, tentativas e código de erro por envio     owner: —        since: —      
+[x] T-085  Capturar recusa do servidor e recibo de entrega pós-envio   owner: —        since: —      
+[ ] T-086  Intervalo ancorado na grade planejada (exige nova ADR)      owner: —        since: —
+[ ] T-087  Expirar recibos pendentes que nunca vão casar              owner: —        since: —
+```
+
 ## Fase 5 — Deploy em VPS
 
 ```

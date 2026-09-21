@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-21T19:30Z · claude
+
+**Fiz:** investiguei o teste real de 20 grupos (envio 14 "enviado" sem chegar; atrasos) e
+implementei a menor correção segura: o sistema passa a ouvir a recusa do servidor e o recibo de
+entrega depois do sendMessage (ADR-012), e registra tempos, tentativas, código de erro e a
+situação do grupo em cada envio. Nada é reenviado automaticamente.
+**Arquivos:** packages/database/{prisma/schema.prisma, migrations/20260921190000_delivery_observability,
+src/delivery-events.ts (novo), src/queue.ts, src/client.ts}; apps/server/src/{whatsapp.ts,
+dispatcher.ts, send-context.ts (novo), app.ts, integration.test.ts, whatsapp.test.ts};
+apps/web/src/pages/campaign-detail.tsx; .ai/*
+**Tarefas:** T-084, T-085 concluídas. T-086 (intervalo na grade) e T-087 (expirar recibos
+pendentes) abertas, aguardando decisão do dono.
+**Estado:** compila · lint limpo · 36 unitários · 35 de integração (7 novos do fluxo de envio).
+**Armadilhas:**
+- **Migration gerada no Windows sai com tabela minúscula** (`delivery`): o MySQL do Windows
+  guarda nomes em minúsculas. Corrigido à mão para `Delivery`; no Linux (Hostinger) a versão
+  minúscula quebraria o deploy. Revise o case de toda migration gerada por diff contra o banco.
+- Com o sistema rodando, `prisma generate` falha com EPERM (DLL travada) e aborta o
+  `npm run build`; compile os workspaces separadamente ou pare o sistema.
+- O dono tinha o sistema rodando durante a investigação: não abri outra conexão com a sessão.
+  A causa exata do envio 14 não é recuperável (nenhum evento do servidor foi gravado na época).
+- Os 265 PendingRead são leituras de mensagens enviadas pelo celular (ids 3A…), nunca vão casar.
+**Próximo passo sugerido:** o dono decidir T-086; no próximo teste real, conferir no painel se
+algum envio aparece como "Recusado pelo WhatsApp" e o sendContext dele.
+
 ## 2026-09-21T06:10Z · claude
 
 **Fiz:** corrigi o pareamento por QR (companion_reg_refresh, ver pairing.ts), removi o alerta do

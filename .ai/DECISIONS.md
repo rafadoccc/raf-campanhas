@@ -329,3 +329,33 @@ cada deploy. O painel era Next.js em outro processo e a API não tinha autentica
 **Consequências.** Rodar numa hospedagem compartilhada tem um risco não verificado: se ela
 desligar apps ociosos, a fila e a conexão param. Mitigação: monitor externo em /api/health;
 alternativa: VPS com o mesmo `node server.js`. O limite de login é em memória (um processo).
+
+---
+
+## ADR-012 — "Enviado" é pedido aceito; entrega e recusa vêm do servidor depois
+
+**Data:** 2026-09-21 · **Autor:** claude · **Status:** aceita (pedido do dono após o teste real de 20 grupos)
+**Complementa:** ADR-003 (continua valendo: nada é reenviado automaticamente).
+
+**Contexto.** No primeiro teste real, o envio 14 ficou `SENT` sem nunca aparecer no grupo.
+O `sendMessage` do Baileys só escreve a mensagem no socket e devolve o id com status
+`PENDING`; ele não espera o servidor. A recusa do servidor chega depois como *ack* com erro
+(`messages.update`, status ERROR, código), e a entrega chega como recibo de cada participante
+(`message-receipt.update`, `receiptTimestamp`). O sistema não ouvia nenhum dos dois.
+
+**Decisão.**
+1. `SENT` significa "o WhatsApp recebeu o pedido". A entrega passa a ser registrada em
+   `deliveredAt` (primeiro recibo de entrega ou de leitura de qualquer participante).
+2. Uma recusa do servidor transforma `SENT` em `FAILED` (`serverRejectedAt`, `errorCode`
+   `servidor:<código>`). **Nunca é reenviada.** Se já houve recibo de entrega, a recusa é só
+   registrada: algo que chegou ao grupo não é declarado falha.
+3. Os eventos podem chegar antes de o envio ser gravado: ficam em memória e são reaplicados a
+   cada ciclo por 15 min. Um reinício nessa janela perde o evento (mesma limitação das leituras).
+4. Cada envio registra `attempts`, `attemptedAt` (início), `sendReturnedAt` (retorno),
+   `errorCode` e `sendContext` (membro/admin/só-admins do grupo no momento do envio).
+5. Zero leituras ou falta de recibo **nunca** são tratadas como falha nem disparam reenvio: o
+   painel mostra "aguardando confirmação de entrega".
+
+**Consequências.** Contrato alterado: uma entrega `SENT` pode virar `FAILED` depois de a
+campanha terminar, e as métricas de falha do dia acompanham. O intervalo entre envios não foi
+alterado (continua contado do fim do envio anterior; ver T-086, que depende de nova decisão).
