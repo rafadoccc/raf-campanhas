@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { spawn } from 'node:child_process';
 import { prisma } from '@campaign/database';
+import { publicMessage } from './security';
 
 // Compatibility policy, NOT claimed as universal Baileys protocol limits.
 export const IMAGE_LIMIT = 16_000_000;
@@ -49,8 +50,12 @@ export async function validateMedia(data: Buffer, mimeType: string) {
 }
 
 export function registerMediaRoutes(app: FastifyInstance) {
-  app.addContentTypeParser(['image/jpeg', 'image/png', 'video/mp4'], { parseAs: 'buffer', bodyLimit: VIDEO_LIMIT }, (_request, body, done) => done(null, body));
-  app.post('/api/media', { bodyLimit: VIDEO_LIMIT }, async (request, reply) => {
+  // Limite por tipo já na leitura do corpo: uma imagem acima de 16 MB é recusada antes de
+  // ocupar 64 MB de memória.
+  app.addContentTypeParser(['image/jpeg', 'image/png'], { parseAs: 'buffer', bodyLimit: IMAGE_LIMIT }, (_request, body, done) => done(null, body));
+  app.addContentTypeParser('video/mp4', { parseAs: 'buffer', bodyLimit: VIDEO_LIMIT }, (_request, body, done) => done(null, body));
+  // Sem bodyLimit na rota: ele venceria o limite de cada tipo definido nos parsers acima.
+  app.post('/api/media', async (request, reply) => {
     try {
       const data = request.body;
       if (!Buffer.isBuffer(data)) throw Error('Envie exatamente um arquivo.');
@@ -58,8 +63,8 @@ export function registerMediaRoutes(app: FastifyInstance) {
       const kind = await validateMedia(data, mimeType);
       const rawName = (request.query as { name?: string }).name;
       const name = (typeof rawName === 'string' ? rawName.split(/[\\/]/).pop()! : 'mídia').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 180) || 'mídia';
-      return reply.code(201).send(await prisma.campaignMedia.create({ data: { name, mimeType, kind, size: data.length, data: new Uint8Array(data) }, select: mediaMetadata }));
-    } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Arquivo inválido.' }); }
+      return reply.code(201).send(await prisma.campaignMedia.create({ data: { name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer> }, select: mediaMetadata }));
+    } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Arquivo inválido.') }); }
   });
   app.get('/api/media/:id', async (request, reply) => {
     const media = await prisma.campaignMedia.findUnique({ where: { id: (request.params as { id: string }).id } });

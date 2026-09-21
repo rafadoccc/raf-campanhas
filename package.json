@@ -22,7 +22,8 @@
     "db:check": "node --env-file=.env scripts/check-db.mjs",
     "setup:local": "npm run db:check && npm run db:deploy && npm run db:generate && npm run build",
     "build:exe": "node scripts/build-exe.mjs",
-    "dev:server": "npm run dev --workspace=@campaign/server"
+    "dev:server": "npm run dev --workspace=@campaign/server",
+    "user:create": "node --env-file=.env scripts/user-create.mjs"
   },
   "engines": {
     "node": ">=22"

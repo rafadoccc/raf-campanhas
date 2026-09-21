@@ -1,0 +1,69 @@
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+
+export type AppConfig = {
+  port: number;
+  host: string;
+  publicUrl: URL;
+  /** true quando PUBLIC_URL não é localhost (ex.: Hostinger). */
+  deployed: boolean;
+  /** Origens aceitas em requisições que alteram dados (proteção contra CSRF). */
+  allowedOrigins: string[];
+  /** Nomes aceitos no cabeçalho Host (proteção contra DNS rebinding). */
+  allowedHosts: string[];
+  secureCookies: boolean;
+  trustProxy: boolean;
+  sessionTtlMs: number;
+  /** Pasta do painel compilado (apps/web/dist); null se ainda não foi compilado. */
+  webDist: string | null;
+};
+
+const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
+
+// Lê e valida o ambiente uma vez, na partida. Configuração inválida derruba o processo
+// com uma mensagem clara em vez de um comportamento estranho depois.
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const port = Number(env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`PORT inválida: "${env.PORT}".`);
+
+  let publicUrl: URL;
+  try {
+    publicUrl = new URL(env.PUBLIC_URL ?? `http://localhost:${port}`);
+  } catch {
+    throw new Error(`PUBLIC_URL inválida: "${env.PUBLIC_URL}". Exemplo: https://campanhas.seudominio.com.br`);
+  }
+  if (!['http:', 'https:'].includes(publicUrl.protocol)) throw new Error('PUBLIC_URL precisa começar com http:// ou https://');
+  const deployed = !LOCAL_HOSTS.includes(publicUrl.hostname);
+
+  const origins = new Set([publicUrl.origin]);
+  if (!deployed) {
+    // Painel local e servidor de desenvolvimento do Vite.
+    for (const host of LOCAL_HOSTS) for (const p of [port, 5173]) origins.add(`http://${host}:${p}`);
+  }
+  for (const extra of (env.EXTRA_ORIGINS ?? '').split(',').map(o => o.trim()).filter(Boolean)) {
+    try { origins.add(new URL(extra).origin); } catch { throw new Error(`EXTRA_ORIGINS contém uma origem inválida: "${extra}".`); }
+  }
+  const allowedOrigins = [...origins];
+  // localhost fica sempre aceito como Host: chamadas internas do próprio servidor
+  // (monitoramento) não carregam o domínio público. A sessão continua obrigatória.
+  const allowedHosts = [...new Set([...allowedOrigins.map(o => new URL(o).hostname), ...LOCAL_HOSTS])];
+
+  const ttlHours = Number(env.SESSION_TTL_HOURS ?? 168);
+  if (!Number.isFinite(ttlHours) || ttlHours < 1 || ttlHours > 720) throw new Error('SESSION_TTL_HOURS deve ficar entre 1 e 720 horas.');
+
+  const dist = path.resolve(env.WEB_DIST ?? path.join(__dirname, '..', '..', 'web', 'dist'));
+
+  return {
+    port,
+    host: env.HOST ?? (deployed ? '0.0.0.0' : '127.0.0.1'),
+    publicUrl,
+    deployed,
+    allowedOrigins,
+    allowedHosts,
+    secureCookies: publicUrl.protocol === 'https:',
+    // Publicado atrás do proxy da hospedagem: IP e protocolo reais vêm do X-Forwarded-*.
+    trustProxy: env.TRUST_PROXY ? env.TRUST_PROXY === '1' : deployed,
+    sessionTtlMs: ttlHours * 3_600_000,
+    webDist: existsSync(path.join(dist, 'index.html')) ? dist : null,
+  };
+}

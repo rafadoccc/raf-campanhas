@@ -1,14 +1,16 @@
 import { prisma } from '@campaign/database';
 import { buildApp } from './app';
+import { bootstrapAdmin } from './auth';
+import { loadConfig } from './config';
 import { startDispatcher } from './dispatcher';
 import { WhatsAppProvider } from './whatsapp';
 
 async function main() {
+  const config = loadConfig(process.env);
+  await bootstrapAdmin(process.env);
   const provider = new WhatsAppProvider();
-  const app = buildApp(provider);
+  const app = buildApp(provider, config);
   const dispatcher = await startDispatcher(provider);
-  const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3001);
-  const host = process.env.HOST ?? '127.0.0.1';
   let closing = false;
 
   async function shutdown() {
@@ -22,8 +24,9 @@ async function main() {
 
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
-  await app.listen({ port, host });
-  console.log(`Servidor pronto em http://${host}:${port}. Conecte o WhatsApp pelo painel; nenhuma sessão é iniciada automaticamente.`);
+  await app.listen({ port: config.port, host: config.host });
+  if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
+  console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);
 }
 
 void main().catch(error => {

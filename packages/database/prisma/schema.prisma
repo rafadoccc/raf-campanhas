@@ -155,3 +155,34 @@ model WorkerLease {
   expiresAt DateTime
   updatedAt DateTime @updatedAt
 }
+
+// Usuários do painel. Não há cadastro público: o primeiro é criado por ADMIN_EMAIL/
+// ADMIN_PASSWORD na primeira subida ou por `npm run user:create`.
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique @db.VarChar(191)
+  name         String        @db.VarChar(120)
+  passwordHash String        @db.VarChar(255)
+  role         String        @default("OWNER") @db.VarChar(20)
+  disabledAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     AuthSession[]
+}
+
+// Sessão de login. O cookie leva um token aleatório; aqui fica só o hash SHA-256 dele,
+// então um vazamento do banco não entrega sessões válidas.
+model AuthSession {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique @db.Char(64)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  ip         String?  @db.VarChar(64)
+  userAgent  String?  @db.VarChar(255)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}

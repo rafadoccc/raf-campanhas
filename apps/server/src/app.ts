@@ -5,11 +5,21 @@ import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
 import { registerMediaRoutes } from './media';
 import type { WhatsAppProvider } from './whatsapp';
+import { loadConfig, type AppConfig } from './config';
+import { registerAuth } from './auth';
+import { registerSecurity, registerWeb, publicMessage } from './security';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync'>;
 
-export function buildApp(provider: WhatsAppConnection) {
-  const app = Fastify({ logger: { level: 'warn' } });
+export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadConfig({})) {
+  const app = Fastify({
+    trustProxy: config.trustProxy,
+    // Cookie de sessão nunca vai para o log.
+    logger: { level: process.env.LOG_LEVEL ?? 'warn', redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'] }
+  });
+  // Ordem importa: Host/Origem, depois sessão; só então as rotas.
+  registerSecurity(app, config);
+  registerAuth(app, config);
   for (const [path, method] of [['status', 'GET'], ['connect', 'POST'], ['disconnect', 'POST'], ['sync', 'POST']] as const) {
     app.route({ method, url: `/api/whatsapp/${path}`, handler: async (_request, reply) => {
       try {
@@ -18,7 +28,7 @@ export function buildApp(provider: WhatsAppConnection) {
         if (path === 'disconnect') return await provider.disconnect();
         return await provider.sync();
       } catch (error) {
-        return reply.code(503).send({ error: error instanceof Error ? error.message : 'Conector indisponível.' });
+        return reply.code(503).send({ error: publicMessage(error, 'Conector indisponível.') });
       }
     } });
   }
@@ -35,17 +45,6 @@ app.get('/api/health', async (_request, reply) => {
   }
 });
 
-app.addHook('onRequest', async (request, reply) => {
-  if (!['localhost', '127.0.0.1'].includes(request.hostname)) return reply.code(403).send({ error: 'Use localhost.' });
-  const origin = request.headers.origin;
-  if (origin && !['http://localhost:3000', 'http://127.0.0.1:3000'].includes(origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
-  reply.header('Cache-Control', 'no-store');
-  reply.header('Access-Control-Allow-Origin', origin ?? 'http://localhost:3000');
-  reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  reply.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (request.method === 'OPTIONS') return reply.status(204).send();
-});
-
 app.get('/api/groups', async () => prisma.group.findMany({ orderBy: { name: 'asc' } }));
 
 app.post('/api/groups', async (request, reply) => {
@@ -59,7 +58,6 @@ app.post('/api/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
-app.options('/api/*', async (_request, reply) => reply.code(204).send());
 app.get('/api/campaigns', async () => { await completeFinished(prisma); return prisma.campaign.findMany({
   where: { deletedAt: null },
   orderBy: { createdAt: 'desc' },
@@ -80,7 +78,8 @@ app.get('/api/deliveries', async (request) => {
     orderBy: query.campaignId ? { sequence: 'asc' } : { scheduledAt: 'desc' },
     take: 100,
     skip: Math.max(0, Math.min(10000, parseInt(query.page ?? '0') || 0)) * 100,
-    include: { campaign: { select: { name: true } }, group: { select: { name: true } }, _count: { select: { reads: true } } }
+    // Sem messageBody: a listagem não precisa do texto das mensagens e não deve expô-lo.
+    select: { id: true, campaignId: true, groupId: true, status: true, provider: true, sequence: true, scheduledAt: true, sentAt: true, error: true, campaign: { select: { name: true } }, group: { select: { name: true } }, _count: { select: { reads: true } } }
   });
 });
 
@@ -130,7 +129,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
         } });
       }, LOCKING_TRANSACTION);
       return reply.send(updated);
-    } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Não foi possível salvar.' }); }
+    } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Não foi possível salvar.') }); }
   }
   return reply.status(201).send(await prisma.campaign.create({
     data: {
@@ -182,8 +181,9 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       if (next === 'CANCELLED') await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
       return tx.campaign.update({ where: { id }, data: { updatedAt: now, status: next, provider: campaignProvider, accountJid, nextAvailableAt, pausedAt: next === 'PAUSED' ? now : null } });
     }, { ...LOCKING_TRANSACTION, timeout: 30000 });
-  } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Falha ao atualizar.' }); }
+  } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Falha ao atualizar.') }); }
 });
 
+  registerWeb(app, config);
   return app;
 }

@@ -1,7 +1,12 @@
-import { test, after, mock } from 'node:test';
+import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
+import { hashPassword } from './auth';
+import { loadConfig } from './config';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT } from './media';
@@ -23,7 +28,18 @@ const app = buildApp({
 });
 after(async () => { await app.close(); await prisma.$disconnect(); });
 const apiPath = (url: string) => url.startsWith('/api/') ? url : `/api${url}`;
-const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) => app.inject({ method, url: apiPath(url), payload, headers: { host: 'localhost' } });
+// Toda a API exige login: os testes entram uma vez pelo endpoint real e reutilizam o
+// cookie, sempre com a origem do painel (exigida em ações que alteram dados).
+const PANEL = 'http://localhost:3000';
+let cookie = '';
+before(async () => {
+  await prisma.user.create({ data: { email: 'dono@teste.local', name: 'Dono', passwordHash: await hashPassword('senha-de-teste-123') } });
+  const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { host: 'localhost', origin: PANEL }, payload: { email: 'dono@teste.local', password: 'senha-de-teste-123' } });
+  assert.equal(login.statusCode, 200, login.body);
+  cookie = String(login.headers['set-cookie']).split(';')[0];
+});
+const auth = (extra: Record<string, string> = {}) => ({ host: 'localhost', origin: PANEL, cookie, ...extra });
+const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) => app.inject({ method, url: apiPath(url), payload, headers: auth() });
 async function create(count = 3) {
   const groups = await Promise.all(Array.from({ length: count }, (_, i) => prisma.group.create({ data: { name: `Teste ${i}` } })));
   const r = await request('POST', '/campaigns', { name: 'Fila de teste', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['teste'], groupIds: groups.map(g => g.id) });
@@ -43,18 +59,18 @@ for (const kind of ['image', 'video'] as const) test(`${kind}: persistent upload
   const { PrismaClient } = await import('@prisma/client');
   const bytes = kind === 'image' ? await sharp({ create: { width: 2, height: 2, channels: 3, background: '#123456' } }).png().toBuffer() : videoFixture;
   const mimeType = kind === 'image' ? 'image/png' : 'video/mp4';
-  const upload = await app.inject({ method: 'POST', url: '/api/media?name=test-file', headers: { host: 'localhost', 'content-type': mimeType }, payload: bytes });
+  const upload = await app.inject({ method: 'POST', url: '/api/media?name=test-file', headers: auth({ 'content-type': mimeType }), payload: bytes });
   assert.equal(upload.statusCode, 201, upload.body);
   const media = upload.json(); assert.equal(media.kind, kind); assert.equal(media.data, undefined);
   const { groups } = await create(2);
   const body = { name: 'Media fixture', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['caption'], groupIds: groups.map(g => g.id), mediaId: media.id };
   const created = await request('POST', '/campaigns', body); assert.equal(created.statusCode, 201, created.body);
   const id = created.json().id;
-  const preview = await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: { host: 'localhost' } });
+  const preview = await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: auth() });
   assert.equal(preview.statusCode, 200); assert.deepEqual(preview.rawPayload, bytes);
-  const range = await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: { host: 'localhost', range: 'bytes=0-9' } });
+  const range = await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: auth({ range: 'bytes=0-9' }) });
   assert.equal(range.statusCode, 206); assert.deepEqual(range.rawPayload, bytes.subarray(0, 10));
-  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: { host: 'localhost', range: 'bytes=999999-' } })).statusCode, 416);
+  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: auth({ range: 'bytes=999999-' }) })).statusCode, 416);
   // A new DB client represents a restarted backend; no local upload path is required.
   const fresh = new PrismaClient();
   try {
@@ -212,11 +228,14 @@ test('receipt uniqueness survives duplicates and excludes simulations from sent 
 test('pause preserves remaining interval rather than resending or bursting', () => {
   assert.equal(resumeAt(new Date(180000), new Date(60000), new Date(1000000)).getTime(), 1120000);
 });
-test('foreign origins rejected even on WhatsApp routes; DELETE preflight allowed locally', async () => {
-  const r = await app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: { host: 'localhost', origin: 'https://example.com' } });
+// Painel e API agora têm a mesma origem: não há CORS nem preflight. No lugar da checagem
+// de preflight, uma regra mais forte: ação destrutiva sem Origin é recusada mesmo logado.
+test('foreign origins rejected even on WhatsApp routes; destructive calls without Origin rejected even with a session', async () => {
+  const r = await app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: auth({ origin: 'https://example.com' }) });
   assert.equal(r.statusCode, 403);
-  const options = await app.inject({ method: 'OPTIONS', url: '/api/campaigns/test', headers: { host: 'localhost', origin: 'http://localhost:3000', 'access-control-request-method': 'DELETE' } });
-  assert.equal(options.statusCode, 204);
+  const { origin: _omit, ...semOrigem } = auth();
+  const del = await app.inject({ method: 'DELETE', url: '/api/campaigns/qualquer', headers: semOrigem });
+  assert.equal(del.statusCode, 403);
 });
 
 test('read receipts are isolated by campaign, group and account, deduplicated and totalled without pagination', async () => {
@@ -392,4 +411,109 @@ test('health reports the database, text columns keep long content and accents in
 
   const tooLong = await request('POST', '/groups', { name: 'a'.repeat(256) });
   assert.equal(tooLong.statusCode, 400);
+});
+
+// ─── Login e proteção da API ────────────────────────────────────────────────────
+const fakeProvider = { status: () => ({ state: 'qr', qr: 'data:image/png;base64,SEGREDO' }), connect: async () => ({ state: 'qr' }), disconnect: async () => ({ state: 'disconnected' }), sync: async () => ({ count: 0 }) };
+const anon = { host: 'localhost', origin: PANEL };
+
+test('every API route denies access without a session, including the QR code', async () => {
+  const guarded = [
+    ['GET', '/api/groups'], ['POST', '/api/groups'], ['GET', '/api/campaigns'], ['POST', '/api/campaigns'],
+    ['GET', '/api/campaigns/x'], ['PATCH', '/api/campaigns/x'], ['PATCH', '/api/campaigns/x/status'], ['DELETE', '/api/campaigns/x'],
+    ['GET', '/api/deliveries'], ['GET', '/api/dashboard'], ['GET', '/api/time'], ['POST', '/api/media'], ['GET', '/api/media/x'],
+    ['GET', '/api/whatsapp/status'], ['POST', '/api/whatsapp/connect'], ['POST', '/api/whatsapp/disconnect'], ['POST', '/api/whatsapp/sync'],
+    ['GET', '/api/auth/me'], ['POST', '/api/auth/password'], ['GET', '/api/rota-que-ainda-nao-existe'],
+  ] as const;
+  const probe = buildApp(fakeProvider);
+  try {
+    for (const [method, url] of guarded) {
+      const r = await probe.inject({ method, url, headers: anon, payload: method === 'GET' ? undefined : {} });
+      assert.equal(r.statusCode, 401, `${method} ${url} respondeu ${r.statusCode}`);
+      assert.doesNotMatch(r.body, /SEGREDO/, `${method} ${url} vazou o QR`);
+    }
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/health', headers: anon })).statusCode, 200);
+  } finally { await probe.close(); }
+});
+
+test('login sets a hardened cookie, logout and expiry end the session, wrong passwords are rate limited', async () => {
+  await prisma.user.create({ data: { email: 'operador@teste.local', name: 'Operador', passwordHash: await hashPassword('outra-senha-forte-1') } });
+  const probe = buildApp(fakeProvider);
+  const login = (password: string, email = 'OPERADOR@teste.local ') => probe.inject({ method: 'POST', url: '/api/auth/login', headers: anon, payload: { email, password } });
+  try {
+    assert.equal((await login('errada-0000')).statusCode, 401);
+    const ok = await login('outra-senha-forte-1');
+    assert.equal(ok.statusCode, 200, ok.body);
+    const set = String(ok.headers['set-cookie']);
+    for (const flag of ['HttpOnly', 'SameSite=Lax', 'Path=/']) assert.match(set, new RegExp(flag));
+    assert.doesNotMatch(set, /Secure/, 'localhost em http não usa Secure');
+    const session = set.split(';')[0];
+    const stored = await prisma.authSession.findMany({ where: { user: { email: 'operador@teste.local' } } });
+    assert.equal(stored.length, 1);
+    assert.ok(!set.includes(stored[0].tokenHash), 'o banco guarda só o hash do token');
+    const me = await probe.inject({ method: 'GET', url: '/api/auth/me', headers: { ...anon, cookie: session } });
+    assert.equal(me.json().user.email, 'operador@teste.local');
+
+    await prisma.authSession.update({ where: { id: stored[0].id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: { ...anon, cookie: session } })).statusCode, 401, 'sessão vencida');
+
+    const again = String((await login('outra-senha-forte-1')).headers['set-cookie']).split(';')[0];
+    assert.equal((await probe.inject({ method: 'POST', url: '/api/auth/logout', headers: { ...anon, cookie: again } })).statusCode, 200);
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: { ...anon, cookie: again } })).statusCode, 401, 'logout encerra');
+
+    for (let i = 0; i < 10; i++) await login('errada-' + i, 'alvo@teste.local');
+    const blocked = await login('qualquer', 'alvo@teste.local');
+    assert.equal(blocked.statusCode, 429);
+    assert.match(blocked.json().error, /Aguarde/);
+  } finally { await probe.close(); }
+});
+
+test('published URL: secure cookie, only its host and origin accepted, security headers on every response', async () => {
+  const config = loadConfig({ PUBLIC_URL: 'https://campanhas.exemplo.com.br', PORT: '8080' });
+  assert.equal(config.host, '0.0.0.0');
+  assert.equal(config.trustProxy, true);
+  const probe = buildApp(fakeProvider, config);
+  const site = { host: 'campanhas.exemplo.com.br', origin: 'https://campanhas.exemplo.com.br' };
+  try {
+    const ok = await probe.inject({ method: 'POST', url: '/api/auth/login', headers: site, payload: { email: 'dono@teste.local', password: 'senha-de-teste-123' } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    assert.match(String(ok.headers['set-cookie']), /Secure/);
+    assert.match(String(ok.headers['strict-transport-security']), /max-age/);
+    assert.match(String(ok.headers['content-security-policy']), /frame-ancestors 'none'/);
+    assert.equal(ok.headers['x-frame-options'], 'DENY');
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/health', headers: { host: 'outro-site.com' } })).statusCode, 403, 'Host desconhecido');
+    assert.equal((await probe.inject({ method: 'POST', url: '/api/auth/login', headers: { ...site, origin: 'http://localhost:3000' }, payload: {} })).statusCode, 403, 'origem local não vale em produção');
+  } finally { await probe.close(); }
+});
+
+test('panel is served on the same port with SPA fallback, and API 404s stay JSON', async () => {
+  const dist = mkdtempSync(join(tmpdir(), 'painel-'));
+  mkdirSync(join(dist, 'assets'));
+  writeFileSync(join(dist, 'index.html'), '<!doctype html><div id="root"></div>');
+  writeFileSync(join(dist, 'assets', 'app-abc123.js'), 'console.log(1)');
+  const probe = buildApp(fakeProvider, loadConfig({ WEB_DIST: dist }));
+  try {
+    for (const url of ['/', '/campanhas', '/campanhas/abc/editar', '/login']) {
+      const page = await probe.inject({ method: 'GET', url, headers: { host: 'localhost' } });
+      assert.equal(page.statusCode, 200, url);
+      assert.match(page.body, /id="root"/, url);
+    }
+    const asset = await probe.inject({ method: 'GET', url: '/assets/app-abc123.js', headers: { host: 'localhost' } });
+    assert.equal(asset.statusCode, 200);
+    assert.match(String(asset.headers['cache-control']), /immutable/);
+    const missing = await probe.inject({ method: 'GET', url: '/api/nao-existe', headers: auth() });
+    assert.equal(missing.statusCode, 404);
+    assert.equal(missing.json().error, 'Rota não encontrada.');
+  } finally { await probe.close(); rmSync(dist, { recursive: true, force: true }); }
+});
+
+test('uploads are limited per type before buffering, and listings never expose message bodies', async () => {
+  const big = Buffer.alloc(IMAGE_LIMIT + 1024);
+  const r = await app.inject({ method: 'POST', url: '/api/media?name=grande.png', headers: auth({ 'content-type': 'image/png' }), payload: big });
+  assert.equal(r.statusCode, 413);
+  assert.equal(r.json().error, 'Arquivo acima do limite permitido.');
+  const { id } = await create(1); await activate(id);
+  const list = await request('GET', `/deliveries?campaignId=${id}`);
+  assert.equal(list.statusCode, 200);
+  assert.equal(list.json()[0].messageBody, undefined);
 });
