@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-21T00:26Z · codex
+
+**Fiz:** validei a correção de sessões fora do OneDrive e publiquei o commit `e6fd8e2`; a tag `pre-simplificacao` também foi enviada ao GitHub.
+**Arquivos:** somente registro de validação.
+**Tarefas:** T-040 concluída; T-074 em andamento.
+**Estado:** lint limpo · 24/24 testes unitários/polling passam · 21/21 de integração passam contra schema PostgreSQL descartável.
+**Armadilhas:** nenhuma mensagem real foi enviada. A sessão antiga permanece no diretório antigo até o dono parear novamente e desvincular os aparelhos antigos.
+**Próximo passo sugerido:** iniciar a fusão atômica de API e worker em `apps/server`.
 ## 2026-09-21T00:25Z · codex
 
 **Fiz:** validei o plano de simplificação, criei o checkpoint `pre-simplificacao` e movi o padrão de novas sessões do WhatsApp para fora do OneDrive. Desconectar agora remove a cópia local em vez de arquivá-la indefinidamente.
