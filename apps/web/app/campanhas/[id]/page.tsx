@@ -1,3 +1,4 @@
+import { API_URL } from '../../../components/api-url';
 import Link from 'next/link';
 import { MediaPreview, type CampaignMedia } from '../../../components/campaign-media';
 import { readConnectionState } from '../../../components/connection-state';
@@ -5,7 +6,7 @@ import { CampaignActions } from '../../../components/campaign-actions';
 import { LiveRefresh } from '../../../components/live-refresh';
 type Campaign = { media: CampaignMedia | null; serverNow: string; readsTotal: number; readsByGroup: { groupId: string; name: string; count: number }[]; id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string; nextAt: string | null; progress: Record<string, number>; groups: { group: { name: string } }[]; messages: { content: string }[] };
 type Delivery = { id: string; status: string; provider: string; sequence: number; sentAt: string | null; scheduledAt: string; error: string | null; group: { name: string }; _count: { reads: number } };
-const api = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const api = API_URL;
 const labels: Record<string, string> = { DRAFT: 'Rascunho', ACTIVE: 'Ativa', PAUSED: 'Pausada', COMPLETED: 'Encerrada', CANCELLED: 'Encerrada', PENDING: 'Aguardando', PROCESSING: 'Enviando', SENT: 'Enviado ✓', FAILED: 'Falhou' };
 export default async function CampaignPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ page?: string }> }) {
   const { id } = await params; const query = await searchParams;

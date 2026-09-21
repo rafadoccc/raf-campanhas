@@ -1,7 +1,8 @@
 'use client';
+import { API_URL } from './api-url';
 import { useEffect, useRef, useState } from 'react';
 export type CampaignMedia = { id?: string; name: string; kind: string; size: number; mimeType: string; file?: File };
-const api = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const api = API_URL;
 export function MediaPreview({ media }: { media: CampaignMedia }) {
   const [local, setLocal] = useState('');
   useEffect(() => {

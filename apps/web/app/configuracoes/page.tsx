@@ -1,7 +1,8 @@
 'use client';
+import { API_URL } from '../../components/api-url';
 import { useEffect, useState } from 'react';
 import { startVisiblePolling, connectionPollDelay } from '../../components/visible-polling';
-const api = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const api = API_URL;
 type Connection = { state: string; qr?: string; accountJid?: string; error?: string };
 const labels: Record<string, string> = { disconnected: 'Desconectado', connecting: 'Conectando…', qr: 'Aguardando leitura do QR Code', connected: 'Conectado', reconnecting: 'Reconectando…', error: 'Conexão interrompida' };
 export default function Settings() {

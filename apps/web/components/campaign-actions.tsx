@@ -1,7 +1,8 @@
 'use client';
+import { API_URL } from './api-url';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const apiUrl = API_URL;
 export function CampaignActions({ id, status, provider = 'simulator', groupCount = 0, intervalSeconds = 180, mode = 'SCHEDULED', connectionState = 'unavailable' }: { id: string; status: string; provider?: string; groupCount?: number; intervalSeconds?: number; mode?: string; connectionState?: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');

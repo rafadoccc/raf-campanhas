@@ -1,10 +1,11 @@
+import { API_URL } from '../../components/api-url';
 import Link from 'next/link';
 import { readConnectionState } from '../../components/connection-state';
 import { CampaignActions } from '../../components/campaign-actions';
 import { LiveRefresh } from '../../components/live-refresh';
 
 type Campaign = { id: string; name: string; startsAt: string; endsAt: string; status: string; provider: string; intervalSeconds: number; mode: string; groups: { group: { name: string } }[]; messages: { content: string }[]; schedules: { time: string }[] };
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const apiUrl = API_URL;
 
 async function getCampaigns(): Promise<Campaign[] | null> {
   try { const response = await fetch(`${apiUrl}/campaigns`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }); return response.ok ? await response.json() : null; } catch { return null; }

@@ -1,3 +1,4 @@
+import { API_URL } from '../components/api-url';
 import Link from 'next/link';
 import { LiveRefresh } from '../components/live-refresh';
 import { readConnectionState } from '../components/connection-state';
@@ -11,7 +12,7 @@ type Dashboard = {
 };
 async function getDashboard(): Promise<Dashboard | null> {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/dashboard`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    const response = await fetch(`${API_URL}/dashboard`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     return response.ok ? response.json() : null;
   } catch { return null; }
 }

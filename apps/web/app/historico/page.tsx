@@ -1,5 +1,6 @@
+import { API_URL } from '../../components/api-url';
 type Delivery = { id: string; status: string; provider: string; scheduledAt: string; sentAt: string | null; error: string | null; campaign: { name: string }; group: { name: string } };
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const apiUrl = API_URL;
 async function getDeliveries(): Promise<Delivery[] | null> { try { const response = await fetch(`${apiUrl}/deliveries`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }); return response.ok ? await response.json() : null; } catch { return null; } }
 const labels: Record<string, string> = { PENDING: 'Pendente', PROCESSING: 'Processando', SENT: 'Enviada', FAILED: 'Falhou', CANCELLED: 'Cancelada' };
 const colors: Record<string, string> = { PENDING: 'bg-slate-100 text-slate-700', PROCESSING: 'bg-blue-100 text-blue-700', SENT: 'bg-emerald-100 text-emerald-700', FAILED: 'bg-red-100 text-red-700', CANCELLED: 'bg-amber-100 text-amber-700' };
