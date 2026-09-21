@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -24,43 +24,43 @@ enum DeliveryStatus {
 }
 
 model Group {
-  id        String   @id @default(cuid())
-  externalId String?  @unique
-  name      String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String          @id @default(cuid())
+  externalId String?         @unique
+  name       String          @db.VarChar(255)
+  active     Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
   deliveries Delivery[]
-  campaigns CampaignGroup[]
+  campaigns  CampaignGroup[]
 }
 
 model Campaign {
-  mediaId String?
-  media CampaignMedia? @relation(fields: [mediaId], references: [id], onDelete: Restrict)
-  id        String         @id @default(cuid())
-  name      String
-  startsAt  DateTime
-  endsAt    DateTime
-  status    CampaignStatus @default(DRAFT)
-  provider  String         @default("simulator")
-  accountJid String?
-  mode       String         @default("SCHEDULED")
-  intervalSeconds Int       @default(180)
+  mediaId         String?
+  media           CampaignMedia?     @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  id              String             @id @default(cuid())
+  name            String             @db.VarChar(200)
+  startsAt        DateTime
+  endsAt          DateTime
+  status          CampaignStatus     @default(DRAFT)
+  provider        String             @default("simulator")
+  accountJid      String?
+  mode            String             @default("SCHEDULED")
+  intervalSeconds Int                @default(180)
   nextAvailableAt DateTime?
-  pausedAt   DateTime?
-  deletedAt  DateTime?
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  messages  CampaignMessage[]
-  schedules CampaignSchedule[]
-  deliveries Delivery[]
-  groups     CampaignGroup[]
+  pausedAt        DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  messages        CampaignMessage[]
+  schedules       CampaignSchedule[]
+  deliveries      Delivery[]
+  groups          CampaignGroup[]
 }
 
 model CampaignGroup {
   campaignId String
   groupId    String
-  position   Int @default(0)
+  position   Int      @default(0)
   createdAt  DateTime @default(now())
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   group      Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -72,7 +72,7 @@ model CampaignGroup {
 model CampaignMessage {
   id         String   @id @default(cuid())
   campaignId String
-  content    String
+  content    String   @db.Text
   position   Int      @default(0)
   createdAt  DateTime @default(now())
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -91,13 +91,13 @@ model Delivery {
   id          String         @id @default(cuid())
   campaignId  String
   groupId     String
-  messageBody String
+  messageBody String         @db.Text
   scheduledAt DateTime
   sentAt      DateTime?
   status      DeliveryStatus @default(PENDING)
   provider    String         @default("simulator")
   providerId  String?
-  error       String?
+  error       String?        @db.Text
   sequence    Int            @default(0)
   attemptedAt DateTime?
   reads       DeliveryRead[]
@@ -106,41 +106,43 @@ model Delivery {
   campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   group       Group          @relation(fields: [groupId], references: [id])
 
-  @@index([status, scheduledAt])
-  @@index([campaignId, scheduledAt])
   @@unique([campaignId, groupId, scheduledAt])
   @@unique([campaignId, sequence])
+  @@index([status, scheduledAt])
+  @@index([campaignId, scheduledAt])
   @@index([providerId])
 }
 
 model CampaignMedia {
-  id String @id @default(cuid())
-  name String
-  mimeType String
-  kind String
-  size Int
-  data Bytes
-  createdAt DateTime @default(now())
+  id        String     @id @default(cuid())
+  name      String     @db.VarChar(255)
+  mimeType  String
+  kind      String
+  size      Int
+  data      Bytes
+  createdAt DateTime   @default(now())
   campaigns Campaign[]
 }
 
 model PendingRead {
-  id String @id
-  messageId String
-  groupJid String
-  accountJid String
-  participant String
-  readAt DateTime
+  id            String   @id
+  messageId     String
+  groupJid      String
+  accountJid    String
+  participant   String
+  readAt        DateTime
   nextAttemptAt DateTime @default(now())
+
   @@index([nextAttemptAt])
 }
 
 model DeliveryRead {
-  id String @id @default(cuid())
-  deliveryId String
+  id            String   @id @default(cuid())
+  deliveryId    String
   recipientHash String
-  readAt DateTime
-  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  readAt        DateTime
+  delivery      Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
   @@unique([deliveryId, recipientHash])
   @@index([readAt])
 }

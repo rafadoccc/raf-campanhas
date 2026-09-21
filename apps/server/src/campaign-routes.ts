@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { dashboardSummary } from './dashboard';
 import { mediaMetadata } from './media';
-import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads } from '@campaign/database';
+import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION } from '@campaign/database';
 
 export function registerCampaignRoutes(app: FastifyInstance) {
   app.get('/api/campaigns/:id', async (request, reply) => {
@@ -29,7 +29,7 @@ export function registerCampaignRoutes(app: FastifyInstance) {
       await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED', error: 'Campanha excluída.' } });
       await tx.campaign.update({ where: { id }, data: { deletedAt: await currentTime(), status: campaign.status === 'DRAFT' ? 'CANCELLED' : campaign.status } });
       return { deleted: true };
-    }); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Falha ao excluir.' }); }
+    }, LOCKING_TRANSACTION); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Falha ao excluir.' }); }
   });
   app.get('/api/dashboard', async () => dashboardSummary());
 }

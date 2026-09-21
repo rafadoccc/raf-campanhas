@@ -64,6 +64,6 @@ const cache: Cache = {
     await rename(temporary, cacheFile);
   }
 };
-const clock = new ReferenceClock(undefined, undefined, undefined, process.env.CAMPAIGN_TEST_SCHEMA ? undefined : cache);
+const clock = new ReferenceClock(undefined, undefined, undefined, process.env.CAMPAIGN_TEST_DATABASE ? undefined : cache);
 export const currentTime = () => clock.now();
 export const clockStatus = () => clock.status();

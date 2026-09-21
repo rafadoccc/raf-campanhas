@@ -13,8 +13,16 @@ export async function completeFinished(db: PrismaClient) {
   });
 }
 
+// O InnoDB usa REPEATABLE READ por padrão: a transação congela um snapshot na primeira
+// leitura. Nas transações da fila essa primeira leitura acontece ANTES do lock da
+// campanha, então uma pausa confirmada enquanto esperávamos o lock ficaria invisível e o
+// envio sairia mesmo com a campanha pausada. READ COMMITTED faz cada comando enxergar o
+// que já foi confirmado — a semântica que a fila sempre assumiu (era o padrão do
+// PostgreSQL). Use em toda transação que chama lockCampaign.
+export const LOCKING_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted };
+
 export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
-  await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${id} FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM \`Campaign\` WHERE id = ${id} FOR UPDATE`;
 }
 
 // One durable claim per delivery. A crash after this point is deliberately NOT retried.
@@ -33,7 +41,7 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
     if (!claimed.count) return null;
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: new Date(at.getTime() + campaign.intervalSeconds * 1000), updatedAt: at } });
     return { ...head, campaign };
-  });
+  }, LOCKING_TRANSACTION);
 }
 
 export async function finishDelivery(db: PrismaClient, id: string, outcome: { providerId: string } | { error: string }, now?: Date) {
@@ -52,5 +60,5 @@ export async function finishDelivery(db: PrismaClient, id: string, outcome: { pr
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: new Date(at.getTime() + campaign.intervalSeconds * 1000), updatedAt: at, ...(campaign.status === 'PAUSED' ? { pausedAt: at } : {}) } });
     const remaining = await tx.delivery.count({ where: { campaignId: campaign.id, status: { in: ['PENDING', 'PROCESSING'] } } });
     if (!remaining && ['ACTIVE', 'PAUSED'].includes(campaign.status)) await tx.campaign.update({ where: { id: campaign.id }, data: { status: 'COMPLETED', pausedAt: null, updatedAt: at } });
-  });
+  }, LOCKING_TRANSACTION);
 }

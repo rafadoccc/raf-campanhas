@@ -33,9 +33,9 @@ export async function recordRead(db: PrismaClient, receipt: ReadReceipt) {
 
 export async function campaignReads(db: PrismaClient, campaignId: string) {
   const rows = await db.$queryRaw<{ groupId: string; count: bigint }[]>`
-    SELECT d."groupId", COUNT(*) AS count FROM "DeliveryRead" r
-    JOIN "Delivery" d ON d.id = r."deliveryId"
-    WHERE d."campaignId" = ${campaignId} AND d.provider = 'baileys' AND d.status = 'SENT'
-    GROUP BY d."groupId"`;
+    SELECT d.\`groupId\` AS groupId, COUNT(*) AS count FROM \`DeliveryRead\` r
+    JOIN \`Delivery\` d ON d.id = r.\`deliveryId\`
+    WHERE d.\`campaignId\` = ${campaignId} AND d.provider = 'baileys' AND d.status = 'SENT'
+    GROUP BY d.\`groupId\``;
   return rows.map((row: { groupId: string; count: bigint }) => ({ groupId: row.groupId, count: Number(row.count) }));
 }

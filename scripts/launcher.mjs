@@ -16,7 +16,7 @@ const PORTS = { painel: 3000, servidor: 3001 };
 const URL_PAINEL = 'http://localhost:3000';
 // Fontes cujo conteudo decide se o build esta em dia (declarado no topo: o fluxo
 // principal roda antes do fim do arquivo, e const nao sofre hoisting).
-const FONTES = ['apps/server/src', 'apps/web/app', 'apps/web/components', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
+const FONTES = ['apps/server/src', 'apps/web/app', 'apps/web/components', 'apps/web/next.config.js', 'apps/web/tailwind.config.ts', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
 
 const ok = m => console.log(`  ✔  ${m}`);
 const aviso = m => console.log(`  ⚠  ${m}`);
@@ -42,28 +42,29 @@ if (!existsSync('node_modules')) parar('Dependências não instaladas.', ['Rode 
 ok('Dependências instaladas');
 
 // 2 ─ .env ----------------------------------------------------------------
-if (!existsSync('.env')) parar('Arquivo .env não encontrado.', ['Copie .env.example para .env e coloque a senha do PostgreSQL.']);
+if (!existsSync('.env')) parar('Arquivo .env não encontrado.', ['Copie .env.example para .env e coloque a senha do MySQL.']);
 const env = readFileSync('.env', 'utf8');
 const dbUrl = /^DATABASE_URL=(.+)$/m.exec(env)?.[1]?.trim();
 if (!dbUrl) parar('DATABASE_URL ausente no .env.');
 if (/<SENHA>|SUA_SENHA/.test(dbUrl)) {
-  parar('A senha do PostgreSQL ainda é um placeholder no .env.', [
+  parar('A senha do MySQL ainda é um placeholder no .env.', [
     'Abra o arquivo .env na pasta do projeto e troque <SENHA> pela senha',
-    'do seu usuário postgres (a mesma que você usa no pgAdmin).',
+    'do seu usuário do MySQL (a mesma do MySQL Workbench).',
   ]);
 }
 ok('.env configurado');
 
-// 3 ─ Porta do PostgreSQL --------------------------------------------------
+// 3 ─ Porta do MySQL -------------------------------------------------------
 const alvo = new URL(dbUrl);
-const pgPorta = Number(alvo.port || 5432);
-if (!await portaAberta(alvo.hostname, pgPorta)) {
-  parar(`PostgreSQL não responde em ${alvo.hostname}:${pgPorta}.`, [
-    'Abra o menu Iniciar > "Serviços" e inicie "postgresql-x64-18",',
-    'ou no PowerShell (como administrador): Start-Service postgresql-x64-18',
+if (alvo.protocol !== 'mysql:') parar('DATABASE_URL não é MySQL.', ['Formato esperado: mysql://root:SENHA@localhost:3306/campanhas']);
+const dbPorta = Number(alvo.port || 3306);
+if (!await portaAberta(alvo.hostname, dbPorta)) {
+  parar(`MySQL não responde em ${alvo.hostname}:${dbPorta}.`, [
+    'Abra o menu Iniciar > "Serviços" e inicie "MySQL80",',
+    'ou no PowerShell (como administrador): Start-Service MySQL80',
   ]);
 }
-ok(`PostgreSQL respondendo em ${alvo.hostname}:${pgPorta}`);
+ok(`MySQL respondendo em ${alvo.hostname}:${dbPorta}`);
 
 // 4 ─ Portas do sistema livres ----------------------------------------------
 for (const [nome, porta] of Object.entries(PORTS)) {
@@ -161,6 +162,10 @@ function precisaBuild() {
 }
 function impressaoDigital() {
   const h = createHash('sha1');
+  // Variáveis NEXT_PUBLIC_* são gravadas no bundle do painel: mudar uma delas no .env
+  // exige recompilar. Só essas linhas entram no hash; a senha do banco não.
+  const publicas = readFileSync('.env', 'utf8').split(String.fromCharCode(10)).map(l => l.trim()).filter(l => l.startsWith('NEXT_PUBLIC_')).sort().join('|');
+  h.update(publicas);
   for (const arquivo of FONTES.flatMap(listar).sort()) {
     // Normaliza fim de linha: CRLF vs LF não é mudança de código.
     h.update(arquivo).update(readFileSync(arquivo, 'utf8').split(String.fromCharCode(13)).join(''));

@@ -1,13 +1,13 @@
 import { test, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { prisma, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT } from './media';
 
-const schema = process.env.CAMPAIGN_TEST_SCHEMA;
-if (!schema || !/^campaign_test_[a-f0-9]{16}$/.test(schema) || new URL(process.env.DATABASE_URL!).searchParams.get('schema') !== schema) throw Error('Testes só podem executar no schema descartável.');
+const database = process.env.CAMPAIGN_TEST_DATABASE;
+if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
 
 // External clock fixtures are confined to this isolated test process/schema.
 const originalFetch = globalThis.fetch;
@@ -347,4 +347,49 @@ test('worker lease: exclusive while live, taken over 31 seconds after expiry, re
   await releaseLease(prisma, 'B');
   assert.equal(await acquireLease(prisma, 'A', ttl, new Date(t0.getTime() + 44_000)), true, 'após release do dono, livre');
   await releaseLease(prisma, 'A');
+});
+
+// Regressão MySQL: o InnoDB usa REPEATABLE READ e congela o snapshot na primeira leitura
+// da transação, que em claimDelivery acontece antes do lock da campanha. Sem READ
+// COMMITTED, uma pausa confirmada durante a espera pelo lock ficava invisível e a
+// entrega saía com a campanha pausada.
+test('claim waiting on the campaign lock sees a pause committed meanwhile (never sends while paused)', async () => {
+  const { id } = await create(2); await activate(id);
+  const [head] = await deliveries(id);
+  const at = new Date(head.scheduledAt.getTime() + 10);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let locked!: () => void;
+  const hasLock = new Promise<void>(resolve => { locked = resolve; });
+  const pausing = prisma.$transaction(async tx => {
+    await lockCampaign(tx, id);
+    await tx.campaign.update({ where: { id }, data: { status: 'PAUSED', pausedAt: at } });
+    locked();
+    await gate;
+  }, { ...LOCKING_TRANSACTION, timeout: 20000 });
+  await hasLock;
+  const claim = claimDelivery(prisma, head.id, at);   // lê a entrega e fica esperando o lock
+  await new Promise(resolve => setTimeout(resolve, 400));
+  release();
+  await pausing;
+  assert.equal(await claim, null, 'a reserva tem que enxergar a pausa confirmada');
+  assert.equal((await prisma.delivery.findUniqueOrThrow({ where: { id: head.id } })).status, 'PENDING');
+});
+
+test('health reports the database, text columns keep long content and accents intact', async () => {
+  const health = await request('GET', '/health');
+  assert.equal(health.statusCode, 200, health.body);
+  assert.deepEqual(health.json(), { status: 'ok', database: 'ok' });
+
+  const longMessage = 'Olá, ação! 🎉 ' + 'x'.repeat(9_980);
+  const group = await prisma.group.create({ data: { name: 'São João — Coração 💚' } });
+  const r = await request('POST', '/campaigns', { name: 'Ç'.repeat(200), mode: 'IMMEDIATE', intervalSeconds: 60, messages: [longMessage], groupIds: [group.id] });
+  assert.equal(r.statusCode, 201, r.body);
+  const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: r.json().id }, include: { messages: true } });
+  assert.equal(saved.name, 'Ç'.repeat(200));
+  assert.equal(saved.messages[0].content, longMessage);
+  assert.equal((await prisma.group.findUniqueOrThrow({ where: { id: group.id } })).name, 'São João — Coração 💚');
+
+  const tooLong = await request('POST', '/groups', { name: 'a'.repeat(256) });
+  assert.equal(tooLong.statusCode, 400);
 });

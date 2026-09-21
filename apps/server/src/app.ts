@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus } from '@campaign/database';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION } from '@campaign/database';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
 import { registerMediaRoutes } from './media';
@@ -25,7 +25,15 @@ export function buildApp(provider: WhatsAppConnection) {
 
 app.get('/api/time', async (_request, reply) => { try { return { now: await currentTime(), timezone: TIME_ZONE, ...clockStatus() }; } catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : 'Horário indisponível.' }); } });
 
-app.get('/api/health', async () => ({ status: 'ok' }));
+// Confirma que o banco responde: "ok" com o banco fora do ar esconderia a falha real.
+app.get('/api/health', async (_request, reply) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return { status: 'ok', database: 'ok' };
+  } catch {
+    return reply.code(503).send({ status: 'error', database: 'unavailable', error: 'Banco de dados indisponível. Verifique o serviço MySQL80.' });
+  }
+});
 
 app.addHook('onRequest', async (request, reply) => {
   if (!['localhost', '127.0.0.1'].includes(request.hostname)) return reply.code(403).send({ error: 'Use localhost.' });
@@ -45,6 +53,7 @@ app.post('/api/groups', async (request, reply) => {
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const externalId = undefined; // Only the connector may assign real WhatsApp group identifiers.
   if (!name) return reply.status(400).send({ error: 'O nome do grupo é obrigatório.' });
+  if (name.length > 255) return reply.status(400).send({ error: 'O nome do grupo pode ter no máximo 255 caracteres.' });
   return reply.status(201).send(await prisma.group.create({ data: { name, externalId: externalId || null } }));
 });
 
@@ -109,7 +118,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
     const { id } = request.params as { id: string };
     try {
       const updated = await prisma.$transaction(async tx => {
-        await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${id} FOR UPDATE`;
+        await lockCampaign(tx, id);
         const campaign = await tx.campaign.findUnique({ where: { id } });
         if (!campaign || campaign.deletedAt) throw new Error('Campanha não encontrada.');
         if (campaign.status !== 'DRAFT') throw new Error('Somente rascunhos podem ser editados.');
@@ -119,7 +128,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
           messages: { deleteMany: {}, create: messages.map((content, position) => ({ content, position })) },
           schedules: { deleteMany: {}, create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }
         } });
-      });
+      }, LOCKING_TRANSACTION);
       return reply.send(updated);
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Não foi possível salvar.' }); }
   }
@@ -142,7 +151,7 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
   try {
     await completeFinished(prisma);
     return await prisma.$transaction(async tx => {
-      await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${id} FOR UPDATE`;
+      await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id }, include: { groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
       if (!campaign || campaign.deletedAt) throw new Error('Campanha não encontrada.');
       const transitions: Record<string, string[]> = { DRAFT: ['ACTIVE', 'CANCELLED'], ACTIVE: ['PAUSED', 'CANCELLED'], PAUSED: ['ACTIVE', 'CANCELLED'], CANCELLED: [], COMPLETED: [] };
@@ -172,7 +181,7 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       }
       if (next === 'CANCELLED') await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
       return tx.campaign.update({ where: { id }, data: { updatedAt: now, status: next, provider: campaignProvider, accountJid, nextAvailableAt, pausedAt: next === 'PAUSED' ? now : null } });
-    }, { timeout: 30000 });
+    }, { ...LOCKING_TRANSACTION, timeout: 30000 });
   } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Falha ao atualizar.' }); }
 });
 
