@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-21T01:10Z · codex
+
+**Fiz:** reivindiquei T-075 e instalei as dependências oficiais necessárias para migrar o painel de Next.js para Vite e servi-lo pelo Fastify; nenhuma tela foi convertida ainda.
+**Arquivos:** apps/web/package.json, apps/server/package.json, package-lock.json, .ai/TASKS.md.
+**Tarefas:** T-075 em andamento.
+**Estado:** lint limpo · 24/24 testes unitários/polling passam após a instalação. A versão em produção local segue funcionando com Next na 3000 e server na 3001.
+**Armadilhas:** Vite 8 exige Node 22, já atendido pelo projeto. npm audit informa 3 vulnerabilidades altas transitivas; não rodei audit fix automático porque isso é uma tarefa explícita de segurança e pode alterar versões fora do escopo desta etapa.
+**Próximo passo sugerido:** converter as telas e componentes para React Router, trocar chamadas por /api same-origin e só então remover Next.
+
 ## 2026-09-21T00:50Z · codex
 
 **Fiz:** concluí a fusão de API e worker em apps/server: o conector Baileys e o despachante usam o mesmo processo Fastify; as rotas passaram para /api, sem chamada HTTP à porta 3002.

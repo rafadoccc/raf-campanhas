@@ -8,9 +8,12 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
     "next": "^15.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.18.4",
+    "vite": "^8.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
