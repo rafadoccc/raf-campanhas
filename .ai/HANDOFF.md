@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-21T21:40Z · claude
+
+**Fiz:** selo "só admins" com a situação da conta (admin / não admin / desconhecido) na lista de grupos do formulário de campanha, mais aviso quando um grupo selecionado não vai receber (ADR-013).
+**Arquivos:** packages/database/prisma/schema.prisma, packages/database/prisma/migrations/20260921213000_group_admin_flags/migration.sql, apps/server/src/send-context.ts, apps/server/src/whatsapp.ts, apps/server/src/whatsapp.test.ts, apps/web/src/components/campaign-form.tsx
+**Tarefas:** T-089 (concluída)
+**Estado:** compila · lint ok · npm test 35+2 ok · integração 35/35
+**Armadilhas:** os campos só se preenchem depois de "Sincronizar grupos" (ou de um envio ao grupo); até lá ficam null e não aparece selo. Migration escrita à mão com a tabela `Group` em maiúscula (Linux é case-sensitive).
+**Próximo passo sugerido:** conferir o selo no painel depois da próxima sincronização real.
+
 ## 2026-09-21T21:10Z · claude
 
 **Fiz:** o dono confirmou que o grupo 14 do teste real é "só administradores enviam" (conta não é admin): o WhatsApp aceitou o pedido e a mensagem nunca apareceu. `WhatsAppProvider.send` agora FALHA ANTES de enviar nesse caso (código `grupo:so-admins`); nada sai, então não há duplicação. Também estabilizei o teste "queue delay" (o atalho releaseNext disputava linhas com o despachante e às vezes caía em deadlock; agora usa lockCampaign + LOCKING_TRANSACTION).

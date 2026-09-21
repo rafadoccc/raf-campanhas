@@ -359,3 +359,16 @@ O `sendMessage` do Baileys só escreve a mensagem no socket e devolve o id com s
 **Consequências.** Contrato alterado: uma entrega `SENT` pode virar `FAILED` depois de a
 campanha terminar, e as métricas de falha do dia acompanham. O intervalo entre envios não foi
 alterado (continua contado do fim do envio anterior; ver T-086, que depende de nova decisão).
+
+
+## ADR-013 · Selo "só admins" nos grupos
+
+**Data:** 2026-09-21 · **Status:** aceita (pedido do dono) · **Autor:** claude
+
+`Group` ganha `adminOnly` e `isAdmin` (Boolean opcionais; null = desconhecido), gravados na
+sincronização (`groupFetchAllParticipating`) e atualizados a cada envio (`groupMetadata`).
+`GET /api/groups` passa a devolver os dois campos. O formulário de campanha mostra
+"Só admins · você é admin ✓", "Só admins · você não é admin — não vai receber" ou
+"não deu para confirmar", e avisa quando há grupos selecionados que não vão receber.
+O bloqueio real continua no envio (`grupo:so-admins`, antes do sendMessage); o selo é só
+informação e reflete a última sincronização.

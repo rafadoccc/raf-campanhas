@@ -108,6 +108,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-086  Grade planejada: descartada, dono manteve a ADR-003      owner: —        since: —
 [ ] T-087  Expirar recibos pendentes que nunca vão casar              owner: —        since: —
 [x] T-088  Bloquear envio a grupo só-admins quando a conta não é admin   owner: —        since: —
+[x] T-089  Selo só admins / você é admin na escolha de grupos       owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS
