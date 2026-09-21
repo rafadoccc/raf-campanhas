@@ -23,7 +23,7 @@ export default function Settings() {
     finally { setBusy(false); }
   }
   return <main className="mx-auto max-w-3xl space-y-6 p-8"><header><p className="text-sm font-semibold text-emerald-700">CONEXÃO</p><h1 className="mt-2 text-3xl font-bold">Seu WhatsApp</h1><p className="mt-3 text-slate-600">Conecte seu celular para importar os grupos dos quais você participa.</p></header>
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Baileys é uma integração não oficial. A conexão pode parar de funcionar e existe risco de restrição do número. Conectar não ativa campanhas automaticamente.</div>
+    
     <section className="space-y-4 rounded-xl border bg-white p-6"><h2 className="text-xl font-semibold">{labels[connection.state] ?? connection.state}</h2>
       {connection.accountJid && <p>Número conectado: {connection.accountJid.split('@')[0]}</p>}
       {connection.qr && <div><img src={connection.qr} width={300} height={300} alt="QR Code para conectar o WhatsApp" /><p>No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho. Leia este código.</p></div>}
