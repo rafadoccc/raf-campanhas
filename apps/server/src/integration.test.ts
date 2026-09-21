@@ -569,8 +569,13 @@ const fresh = (id: string) => prisma.delivery.findUniqueOrThrow({ where: { id } 
 // Libera a próxima entrega "agora" (simula o intervalo já decorrido).
 const releaseNext = async (campaignId: string, deliveryId: string) => {
   const past = new Date(Date.now() - 1000);
-  await prisma.delivery.update({ where: { id: deliveryId }, data: { scheduledAt: past } });
-  await prisma.campaign.update({ where: { id: campaignId }, data: { nextAvailableAt: past } });
+  // Mesmo lock da fila: sem ele este atalho do teste disputa as linhas com o despachante
+  // em execução e o MySQL às vezes o escolhe como vítima de deadlock.
+  await prisma.$transaction(async tx => {
+    await lockCampaign(tx, campaignId);
+    await tx.delivery.update({ where: { id: deliveryId }, data: { scheduledAt: past } });
+    await tx.campaign.update({ where: { id: campaignId }, data: { nextAvailableAt: past } });
+  }, LOCKING_TRANSACTION);
 };
 
 test('successful send: one attempt, times and message id recorded, then delivery receipt marks it delivered', async () => {
