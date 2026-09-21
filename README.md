@@ -71,7 +71,7 @@ em outro terminal, encerre-os antes. `npm test` executa os testes sem WhatsApp.
 
 1. Em Conexão WhatsApp, clique em Conectar / gerar QR Code.
 2. No celular: WhatsApp > Aparelhos conectados > Conectar um aparelho.
-3. Escaneie o QR no painel. Não compartilhe o QR nem a pasta .sessions.
+3. Escaneie o QR no painel. Não compartilhe o QR nem a pasta de sessões. Novas sessões ficam fora do OneDrive em `%LOCALAPPDATA%\raf-campanhas\sessions` por padrão.
 4. Clique em Sincronizar grupos.
 5. Crie uma campanha, selecione os grupos em ordem e escolha intervalo de 1 a 60 minutos.
 6. Escolha fila única (início ao ativar) ou os horários diários já existentes.
@@ -147,9 +147,7 @@ Tentar novamente para falhas; não é possível provar que uma mensagem não foi
 Versão local, um número e um worker. API, worker e painel iniciam no endereço
 de loopback. Não publique esses serviços na internet sem implementar autenticação,
 TLS, armazenamento protegido de sessão, backups e gerenciamento dos processos.
-O diretório .sessions está excluído do Git; os arquivos de autenticação ficam
-locais, sem criptografia adicional. Desconectar tenta revogar a sessão e arquiva
-os arquivos localmente; também é possível remover o aparelho pelo celular.
+As sessões do WhatsApp ficam fora do projeto/OneDrive por padrão e não entram no Git. Depois desta atualização, pareie novamente pelo QR para criar a sessão no local seguro; não copie credenciais antigas. Ao desconectar, o sistema apaga a cópia local. Se o WhatsApp não confirmar a revogação, remova também o aparelho em WhatsApp > Aparelhos conectados.
 
 Baileys é não oficial; não há garantia contra bloqueio ou mudanças no WhatsApp.
 A versão 7.0.0-rc14 foi fixada no package-lock.json; é uma versão candidata.

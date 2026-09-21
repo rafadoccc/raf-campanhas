@@ -15,7 +15,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 `docs/security-audit-2026-09.md`.
 
 ```
-[ ] T-040  (C) Mover .sessions/ para fora do OneDrive, via env  owner: —        since: —
+[x] T-040  (C) Mover .sessions/ para fora do OneDrive, via env  owner: —        since: —
 [ ] T-041  (C) Apagar sessoes -revoked-* e desvincular aparelhos  owner: —        since: —
 [ ] T-042  (C) Token de autenticação obrigatório na API          owner: —        since: —
 [ ] T-043  (C) Parar de serializar o QR sem autenticação         owner: —        since: —
@@ -105,3 +105,9 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 - **Não crie tarefa duplicada.** Procure antes de adicionar.
 - IDs são sequenciais e **nunca reutilizados**, mesmo após conclusão.
 - Tarefa bloqueada (`[!]`) precisa de uma linha explicando o que a desbloqueia.
+
+## Simplificação para processo único
+
+```text
+[~] T-074  Fundir API e worker em servidor único Fastify           owner: codex    since: 2026-09-20T21:17Z
+```

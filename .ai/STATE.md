@@ -3,7 +3,7 @@
 > Atualize este arquivo sempre que a arquitetura, a fase ou o conjunto de serviços mudar.
 > Ele responde a uma pergunta: *se eu chegasse agora, o que eu precisaria saber?*
 
-**Última atualização:** 2026-09-20 · por `claude`
+**Última atualização:** 2026-09-20 · por `codex`
 
 ---
 
@@ -64,7 +64,7 @@ Tarefas correspondentes: T-040 a T-053 em `.ai/TASKS.md`.
 | # | Problema | Impacto |
 |---|---|---|
 | 1 | **Sem autenticação alguma** | Acesso ao loopback = controle total. Qualquer processo local dispara envio real (C1) e captura o QR de pareamento (C2). |
-| 2 | **Credenciais do WhatsApp em claro dentro do OneDrive** | `creds.json` replica para a nuvem. Quem copia assume a conta sem QR (C3). |
+| 2 | **Sessões antigas podem estar no OneDrive** | Novas sessões usam `%LOCALAPPDATA%\\raf-campanhas\\sessions`; o dono ainda precisa parear novamente e desvincular aparelhos antigos (C3 parcialmente mitigado). |
 | 3 | **Sem multi-tenancy** | Nenhuma tabela tem escopo de organização. Ver ADR-004. |
 | 4 | `WhatsAppProvider` é singleton com `authDir` fixo | Impossível ter 2 números. Ver ADR-006. |
 | 5 | `sync()` faz `updateMany` global desativando grupos | Com 2 sessões, sincronizar B derruba os grupos de A. Ver ADR-005. |

@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { mkdir, rename } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads } from '@campaign/database';
 import QRCode from 'qrcode';
 import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
@@ -11,6 +12,15 @@ export async function resolveWebVersion(fetchVersion: () => Promise<{ version: W
   }
   return result.version;
 }
+export function defaultSessionsDir() {
+  if (process.env.SESSIONS_DIR) return path.resolve(process.env.SESSIONS_DIR);
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ?? path.join(homedir(), 'AppData', 'Local');
+    return path.join(localAppData, 'raf-campanhas', 'sessions');
+  }
+  const stateHome = process.env.XDG_STATE_HOME ?? path.join(homedir(), '.local', 'state');
+  return path.join(stateHome, 'raf-campanhas', 'sessions');
+}
 
 export class WhatsAppProvider {
   private socket?: WASocket;
@@ -21,8 +31,11 @@ export class WhatsAppProvider {
   private starting = false;
   private version?: WAVersion;
   private receiptWrites = new Set<Promise<void>>();
-  private authDir = path.resolve(process.cwd(), '.sessions/whatsapp');
+  private authDir: string;
   private data: { state: string; qr?: string; accountJid?: string; error?: string } = { state: 'disconnected' };
+  constructor(authDir = defaultSessionsDir()) {
+    this.authDir = path.join(authDir, 'whatsapp');
+  }
   status() { return { ...this.data }; }
   async connect() {
     if (this.starting || ['connected', 'connecting', 'qr', 'reconnecting'].includes(this.data.state)) return this.status();
@@ -94,10 +107,17 @@ export class WhatsAppProvider {
     this.version = undefined;
     const sock = this.socket; this.socket = undefined;
     this.data = { state: 'disconnected' };
-    if (sock) { try { await sock.logout(); } catch { /* User can also unlink on phone. */ } sock.end(undefined); }
-    // Recoverable session archive; never exposed through HTTP or included in source ZIPs.
-    try { await rename(this.authDir, `${this.authDir}-revoked-${Date.now()}`); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    let logoutFailed = false;
+    if (sock) {
+      try { await sock.logout(); }
+      catch { logoutFailed = true; }
+      finally { sock.end(undefined); }
+    }
+    await rm(this.authDir, { recursive: true, force: true });
+    if (logoutFailed) {
+      this.data = { state: 'error', error: 'Não foi possível revogar a sessão pelo WhatsApp. Remova este aparelho no celular.' };
+      throw new Error(this.data.error);
+    }
     return this.status();
   }
   private connected() {

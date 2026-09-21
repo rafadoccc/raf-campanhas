@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-21T00:25Z · codex
+
+**Fiz:** validei o plano de simplificação, criei o checkpoint `pre-simplificacao` e movi o padrão de novas sessões do WhatsApp para fora do OneDrive. Desconectar agora remove a cópia local em vez de arquivá-la indefinidamente.
+**Arquivos:** apps/worker/src/whatsapp.ts, apps/worker/src/whatsapp.test.ts, .env.example, README.md, .ai/{TASKS,STATE,DECISIONS}.
+**Tarefas:** T-040 concluída; T-074 em andamento.
+**Estado:** lint limpo · 11/11 testes do adaptador WhatsApp passam. Nenhum envio real realizado.
+**Armadilhas:** sessões antigas em `.sessions/` não foram movidas nem apagadas. O dono deve parear novamente para criar a sessão em `%LOCALAPPDATA%\raf-campanhas\sessions` e remover aparelhos/sessões antigas manualmente pelo celular.
+**Próximo passo sugerido:** concluir T-074 (servidor único) preservando a fila PostgreSQL e a regra de não duplicar envios.
 ## 2026-09-21T00:20Z · claude
 
 **Fiz:** criei o executável de duplo clique (launcher/Launcher.cs + scripts/launcher.mjs +

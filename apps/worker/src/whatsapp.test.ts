@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WhatsAppProvider, resolveWebVersion } from './whatsapp';
+import path from 'node:path';
+import { WhatsAppProvider, defaultSessionsDir, resolveWebVersion } from './whatsapp';
 
 test('uses a verified protocol version', async () => {
   assert.deepEqual(await resolveWebVersion(async () => ({ version: [2, 3000, 123], isLatest: true })), [2, 3000, 123]);
@@ -47,4 +48,14 @@ for (const kind of ['image', 'video'] as const) test(`${kind} and caption are ex
   const id = await provider.send('a@g.us', 'Legenda completa', '5511000000000@s.whatsapp.net', { kind, mimeType, data });
   assert.equal(id, 'fake-id');
   assert.deepEqual(sent, [['a@g.us', { [kind]: data, caption: 'Legenda completa', mimetype: mimeType }]]);
+});
+test('uses the configured session directory outside the repository', () => {
+  const previous = process.env.SESSIONS_DIR;
+  process.env.SESSIONS_DIR = path.join('C:', 'secure', 'raf-campanhas', 'sessions');
+  try {
+    assert.equal(defaultSessionsDir(), path.resolve(process.env.SESSIONS_DIR));
+  } finally {
+    if (previous === undefined) delete process.env.SESSIONS_DIR;
+    else process.env.SESSIONS_DIR = previous;
+  }
 });

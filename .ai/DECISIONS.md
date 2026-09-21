@@ -255,3 +255,17 @@ Agora `packages/database/src/lease.ts` usa a API de modelo do Prisma, com teste 
 (vencimento de 31 s). **Regra: não compare datas em SQL bruto contra colunas TIMESTAMP.**
 Além disso, o worker espera até 40 s por um lease órfão, porque fechar a janela do console no
 Windows mata o processo sem rodar shutdown().
+
+---
+
+## ADR-009 — Simplificação para um processo e painel na mesma origem
+
+**Data:** 2026-09-20 · **Autor:** codex · **Status:** aceita (decisão do dono)
+
+**Contexto.** O produto atual separa painel Next.js, API Fastify e worker do WhatsApp em três processos e três portas. O dono autorizou simplificar para uma instalação em VPS com um único processo Node e PostgreSQL como única infraestrutura de dados/fila. A auditoria também identificou que autenticar a API antes de migrar o painel server-side quebraria as consultas do painel, pois elas não encaminham o cookie do navegador.
+
+**Decisão.** A evolução seguirá esta ordem: (1) fundir API e despachante em `apps/server`, preservando as invariantes de fila; (2) migrar o painel para Vite + React servido pelo Fastify na mesma origem; (3) adicionar autenticação, autorização e hardening; (4) empacotar para VPS. O backend permanece TypeScript/Node. Redis não volta a fazer parte da pilha. A autenticação inicial será de instalação única, com OWNER e OPERATOR; multi-organização e múltiplas sessões continuam etapas posteriores.
+
+**Justificativa.** Baileys é uma biblioteca Node e a aplicação já compartilha tipos TypeScript. Um processo reduz portas, chamadas HTTP internas, falhas de inicialização e custo operacional. A SPA same-origin permite cookies httpOnly sem CORS e sem duplicar lógica de sessão no servidor de renderização.
+
+**Consequências.** O painel será migrado antes da autenticação global. A fila continuará usando PostgreSQL, `claimDelivery` e o lease; não haverá retry automático. A transição precisa preservar rotas funcionais e testes. O checkpoint `pre-simplificacao` foi criado antes da mudança.
