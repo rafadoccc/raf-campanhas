@@ -1,7 +1,7 @@
 import { test, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
-import { app } from './server';
+import { buildApp } from './app';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT } from './media';
@@ -15,8 +15,15 @@ mock.method(globalThis, 'fetch', async (input: Parameters<typeof fetch>[0], init
   if (/^https:\/\/(www\.google\.com|www\.cloudflare\.com)\//.test(String(input))) return new Response(null, { status: 200, headers: { date: new Date().toUTCString() } });
   return originalFetch(input, init);
 });
+const app = buildApp({
+  status: () => ({ state: 'disconnected' }),
+  connect: async () => ({ state: 'disconnected' }),
+  disconnect: async () => ({ state: 'disconnected' }),
+  sync: async () => ({ count: 0 }),
+});
 after(async () => { await app.close(); await prisma.$disconnect(); });
-const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) => app.inject({ method, url, payload, headers: { host: 'localhost' } });
+const apiPath = (url: string) => url.startsWith('/api/') ? url : `/api${url}`;
+const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) => app.inject({ method, url: apiPath(url), payload, headers: { host: 'localhost' } });
 async function create(count = 3) {
   const groups = await Promise.all(Array.from({ length: count }, (_, i) => prisma.group.create({ data: { name: `Teste ${i}` } })));
   const r = await request('POST', '/campaigns', { name: 'Fila de teste', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['teste'], groupIds: groups.map(g => g.id) });
@@ -36,18 +43,18 @@ for (const kind of ['image', 'video'] as const) test(`${kind}: persistent upload
   const { PrismaClient } = await import('@prisma/client');
   const bytes = kind === 'image' ? await sharp({ create: { width: 2, height: 2, channels: 3, background: '#123456' } }).png().toBuffer() : videoFixture;
   const mimeType = kind === 'image' ? 'image/png' : 'video/mp4';
-  const upload = await app.inject({ method: 'POST', url: '/media?name=test-file', headers: { host: 'localhost', 'content-type': mimeType }, payload: bytes });
+  const upload = await app.inject({ method: 'POST', url: '/api/media?name=test-file', headers: { host: 'localhost', 'content-type': mimeType }, payload: bytes });
   assert.equal(upload.statusCode, 201, upload.body);
   const media = upload.json(); assert.equal(media.kind, kind); assert.equal(media.data, undefined);
   const { groups } = await create(2);
   const body = { name: 'Media fixture', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['caption'], groupIds: groups.map(g => g.id), mediaId: media.id };
   const created = await request('POST', '/campaigns', body); assert.equal(created.statusCode, 201, created.body);
   const id = created.json().id;
-  const preview = await app.inject({ method: 'GET', url: `/media/${media.id}`, headers: { host: 'localhost' } });
+  const preview = await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: { host: 'localhost' } });
   assert.equal(preview.statusCode, 200); assert.deepEqual(preview.rawPayload, bytes);
-  const range = await app.inject({ method: 'GET', url: `/media/${media.id}`, headers: { host: 'localhost', range: 'bytes=0-9' } });
+  const range = await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: { host: 'localhost', range: 'bytes=0-9' } });
   assert.equal(range.statusCode, 206); assert.deepEqual(range.rawPayload, bytes.subarray(0, 10));
-  assert.equal((await app.inject({ method: 'GET', url: `/media/${media.id}`, headers: { host: 'localhost', range: 'bytes=999999-' } })).statusCode, 416);
+  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${media.id}`, headers: { host: 'localhost', range: 'bytes=999999-' } })).statusCode, 416);
   // A new DB client represents a restarted backend; no local upload path is required.
   const fresh = new PrismaClient();
   try {
@@ -206,9 +213,9 @@ test('pause preserves remaining interval rather than resending or bursting', () 
   assert.equal(resumeAt(new Date(180000), new Date(60000), new Date(1000000)).getTime(), 1120000);
 });
 test('foreign origins rejected even on WhatsApp routes; DELETE preflight allowed locally', async () => {
-  const r = await app.inject({ method: 'GET', url: '/whatsapp/status', headers: { host: 'localhost', origin: 'https://example.com' } });
+  const r = await app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: { host: 'localhost', origin: 'https://example.com' } });
   assert.equal(r.statusCode, 403);
-  const options = await app.inject({ method: 'OPTIONS', url: '/campaigns/test', headers: { host: 'localhost', origin: 'http://localhost:3000', 'access-control-request-method': 'DELETE' } });
+  const options = await app.inject({ method: 'OPTIONS', url: '/api/campaigns/test', headers: { host: 'localhost', origin: 'http://localhost:3000', 'access-control-request-method': 'DELETE' } });
   assert.equal(options.statusCode, 204);
 });
 
@@ -310,18 +317,13 @@ test('groups with zero reads remain visible and disconnected activation creates 
   const detail = (await request('GET', `/campaigns/${id}`)).json();
   assert.deepEqual(detail.readsByGroup.map((g: { count: number }) => g.count), [0, 0]);
   assert.equal(detail.readsTotal, 0);
-  const previous = globalThis.fetch;
-  const disconnected = mock.method(globalThis, 'fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    if (String(input) === 'http://127.0.0.1:3002/status') return new Response(JSON.stringify({ state: 'disconnected' }), { headers: { 'Content-Type': 'application/json' } });
-    return previous(input, init);
-  });
-  try {
+  {
     const result = await request('PATCH', `/campaigns/${id}/status`, { status: 'ACTIVE', provider: 'baileys', consent: true });
     assert.equal(result.statusCode, 400);
     assert.match(result.json().error, /Conecte o WhatsApp/);
     assert.equal((await deliveries(id)).length, 0);
     assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id } })).status, 'DRAFT');
-  } finally { disconnected.mock.restore(); }
+  }
 });
 
 // Regressão: a comparação do vencimento não pode depender do fuso da sessão do

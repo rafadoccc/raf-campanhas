@@ -4,24 +4,28 @@ import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
 import { registerMediaRoutes } from './media';
+import type { WhatsAppProvider } from './whatsapp';
 
-export const app = Fastify({ logger: { level: 'warn' } });
-async function workerRequest(path: string, method = 'GET') {
-  const response = await fetch(`http://127.0.0.1:3002${path}`, { method, signal: AbortSignal.timeout(20000) });
-  const data = await response.json() as { state: string; accountJid?: string; error?: string };
-  if (!response.ok) throw new Error(data.error ?? 'Conector indisponível.');
-  return data;
-}
-for (const [path, method] of [['status', 'GET'], ['connect', 'POST'], ['disconnect', 'POST'], ['sync', 'POST']] as const) {
-  app.route({ method, url: `/whatsapp/${path}`, handler: async (_request, reply) => {
-    try { return await workerRequest(`/${path}`, method); }
-    catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : 'Inicie o worker.' }); }
-  } });
-}
+export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync'>;
 
-app.get('/time', async (_request, reply) => { try { return { now: await currentTime(), timezone: TIME_ZONE, ...clockStatus() }; } catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : 'Horário indisponível.' }); } });
+export function buildApp(provider: WhatsAppConnection) {
+  const app = Fastify({ logger: { level: 'warn' } });
+  for (const [path, method] of [['status', 'GET'], ['connect', 'POST'], ['disconnect', 'POST'], ['sync', 'POST']] as const) {
+    app.route({ method, url: `/api/whatsapp/${path}`, handler: async (_request, reply) => {
+      try {
+        if (path === 'status') return provider.status();
+        if (path === 'connect') return await provider.connect();
+        if (path === 'disconnect') return await provider.disconnect();
+        return await provider.sync();
+      } catch (error) {
+        return reply.code(503).send({ error: error instanceof Error ? error.message : 'Conector indisponível.' });
+      }
+    } });
+  }
 
-app.get('/health', async () => ({ status: 'ok' }));
+app.get('/api/time', async (_request, reply) => { try { return { now: await currentTime(), timezone: TIME_ZONE, ...clockStatus() }; } catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : 'Horário indisponível.' }); } });
+
+app.get('/api/health', async () => ({ status: 'ok' }));
 
 app.addHook('onRequest', async (request, reply) => {
   if (!['localhost', '127.0.0.1'].includes(request.hostname)) return reply.code(403).send({ error: 'Use localhost.' });
@@ -34,9 +38,9 @@ app.addHook('onRequest', async (request, reply) => {
   if (request.method === 'OPTIONS') return reply.status(204).send();
 });
 
-app.get('/groups', async () => prisma.group.findMany({ orderBy: { name: 'asc' } }));
+app.get('/api/groups', async () => prisma.group.findMany({ orderBy: { name: 'asc' } }));
 
-app.post('/groups', async (request, reply) => {
+app.post('/api/groups', async (request, reply) => {
   const body = request.body as { name?: unknown; externalId?: unknown };
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const externalId = undefined; // Only the connector may assign real WhatsApp group identifiers.
@@ -46,8 +50,8 @@ app.post('/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
-app.options('/*', async (_request, reply) => reply.code(204).send());
-app.get('/campaigns', async () => { await completeFinished(prisma); return prisma.campaign.findMany({
+app.options('/api/*', async (_request, reply) => reply.code(204).send());
+app.get('/api/campaigns', async () => { await completeFinished(prisma); return prisma.campaign.findMany({
   where: { deletedAt: null },
   orderBy: { createdAt: 'desc' },
   include: {
@@ -58,7 +62,7 @@ app.get('/campaigns', async () => { await completeFinished(prisma); return prism
   }
 }); });
 
-app.get('/deliveries', async (request) => {
+app.get('/api/deliveries', async (request) => {
   const query = request.query as { status?: string; campaignId?: string; page?: string };
   const statuses = ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'CANCELLED'] as const;
   const status = statuses.find(item => item === query.status);
@@ -71,7 +75,7 @@ app.get('/deliveries', async (request) => {
   });
 });
 
-for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/campaigns' : '/campaigns/:id', handler: async (request, reply) => {
+for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/api/campaigns' : '/api/campaigns/:id', handler: async (request, reply) => {
   const body = request.body as { name?: unknown; startsAt?: unknown; endsAt?: unknown; groupIds?: unknown; messages?: unknown; times?: unknown; mode?: unknown; intervalSeconds?: unknown; mediaId?: unknown };
   if (body?.mediaId !== undefined && body.mediaId !== null && (typeof body.mediaId !== 'string' || !await prisma.campaignMedia.count({ where: { id: body.mediaId } }))) return reply.code(400).send({ error: 'Mídia inválida. Selecione um arquivo novamente.' });
   const mediaId = typeof body?.mediaId === 'string' ? body.mediaId : body?.mediaId === null ? null : undefined;
@@ -130,7 +134,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   }));
 } });
 
-app.patch('/campaigns/:id/status', async (request, reply) => {
+app.patch('/api/campaigns/:id/status', async (request, reply) => {
   const { id } = request.params as { id: string };
   const body = request.body as { status?: string; provider?: string; consent?: boolean } | null;
   if (!body || !['ACTIVE', 'PAUSED', 'CANCELLED'].includes(body.status ?? '')) return reply.code(400).send({ error: 'Status inválido.' });
@@ -143,21 +147,21 @@ app.patch('/campaigns/:id/status', async (request, reply) => {
       if (!campaign || campaign.deletedAt) throw new Error('Campanha não encontrada.');
       const transitions: Record<string, string[]> = { DRAFT: ['ACTIVE', 'CANCELLED'], ACTIVE: ['PAUSED', 'CANCELLED'], PAUSED: ['ACTIVE', 'CANCELLED'], CANCELLED: [], COMPLETED: [] };
       if (!transitions[campaign.status].includes(next)) throw new Error('Mudança de status não permitida.');
-      let provider = campaign.provider; let accountJid = campaign.accountJid;
+      let campaignProvider = campaign.provider; let accountJid = campaign.accountJid;
       const now = await currentTime(); let nextAvailableAt = campaign.nextAvailableAt;
       if (next === 'ACTIVE') {
-        if (campaign.status === 'DRAFT') provider = body.provider ?? 'simulator';
-        if (!['simulator', 'baileys'].includes(provider)) throw new Error('Provedor inválido.');
-        if (provider === 'baileys') {
+        if (campaign.status === 'DRAFT') campaignProvider = body.provider ?? 'simulator';
+        if (!['simulator', 'baileys'].includes(campaignProvider)) throw new Error('Provedor inválido.');
+        if (campaignProvider === 'baileys') {
           if (body.consent !== true) throw new Error('Confirme a autorização dos grupos para envio real.');
-          const connection = await workerRequest('/status');
+          const connection = provider.status();
           if (connection.state !== 'connected' || !connection.accountJid) throw new Error('Conecte o WhatsApp primeiro.');
           if (accountJid && accountJid !== connection.accountJid) throw new Error('Conecte o mesmo número usado na ativação.');
           accountJid = connection.accountJid;
           if (campaign.groups.some(g => !g.group.active || !g.group.externalId?.endsWith('@g.us'))) throw new Error('Selecione somente grupos sincronizados e ativos do WhatsApp.');
         }
         if (campaign.status === 'DRAFT') {
-          const planned = planDeliveries({ ...campaign, provider }, now);
+          const planned = planDeliveries({ ...campaign, provider: campaignProvider }, now);
           if (!planned.length) throw new Error('Os horários já passaram no fuso de São Paulo. Clique em Editar para ajustar datas e horários ou escolher Fila única.');
           await tx.delivery.createMany({ data: planned.map(delivery => ({ ...delivery, createdAt: now, updatedAt: now })) });
           nextAvailableAt = now;
@@ -167,10 +171,10 @@ app.patch('/campaigns/:id/status', async (request, reply) => {
         }
       }
       if (next === 'CANCELLED') await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
-      return tx.campaign.update({ where: { id }, data: { updatedAt: now, status: next, provider, accountJid, nextAvailableAt, pausedAt: next === 'PAUSED' ? now : null } });
+      return tx.campaign.update({ where: { id }, data: { updatedAt: now, status: next, provider: campaignProvider, accountJid, nextAvailableAt, pausedAt: next === 'PAUSED' ? now : null } });
     }, { timeout: 30000 });
   } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Falha ao atualizar.' }); }
 });
 
-const port = Number(process.env.API_PORT ?? 3001);
-if (require.main === module) void app.listen({ port, host: '127.0.0.1' });
+  return app;
+}

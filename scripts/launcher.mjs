@@ -12,11 +12,11 @@ const root = path.resolve(import.meta.dirname, '..');
 process.chdir(root);
 const isWin = process.platform === 'win32';
 const npm = isWin ? 'npm.cmd' : 'npm';
-const PORTS = { painel: 3000, api: 3001, worker: 3002 };
+const PORTS = { painel: 3000, servidor: 3001 };
 const URL_PAINEL = 'http://localhost:3000';
 // Fontes cujo conteudo decide se o build esta em dia (declarado no topo: o fluxo
 // principal roda antes do fim do arquivo, e const nao sofre hoisting).
-const FONTES = ['apps/api/src', 'apps/worker/src', 'apps/web/app', 'apps/web/components', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
+const FONTES = ['apps/server/src', 'apps/web/app', 'apps/web/components', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
 
 const ok = m => console.log(`  ✔  ${m}`);
 const aviso = m => console.log(`  ⚠  ${m}`);
@@ -74,7 +74,7 @@ for (const [nome, porta] of Object.entries(PORTS)) {
     ]);
   }
 }
-ok('Portas 3000, 3001 e 3002 livres');
+ok('Portas 3000 e 3001 livres');
 
 // 5 ─ Banco: conexão, schema e migrations -----------------------------------
 passo('Preparando o banco de dados');
@@ -111,7 +111,7 @@ filho.on('exit', code => {
   process.exit(code ?? 0);
 });
 
-const pronto = await aguardar(async () => await portaAberta('127.0.0.1', PORTS.painel) && await portaAberta('127.0.0.1', PORTS.api), 90_000);
+const pronto = await aguardar(async () => await portaAberta('127.0.0.1', PORTS.painel) && await portaAberta('127.0.0.1', PORTS.servidor), 90_000);
 if (pronto) {
   console.log('\n' + '─'.repeat(66));
   console.log(`  ✔  Sistema no ar: ${URL_PAINEL}`);
@@ -154,7 +154,7 @@ async function aguardar(cond, limiteMs) {
 // gravados por outra ferramenta podem ter datas no futuro e forçariam um rebuild
 // a cada execução.
 function precisaBuild() {
-  const saidas = ['apps/api/dist/server.js', 'apps/worker/dist/index.js', 'packages/database/dist/client.js', 'apps/web/.next/BUILD_ID'];
+  const saidas = ['apps/server/dist/main.js', 'packages/database/dist/client.js', 'apps/web/.next/BUILD_ID'];
   if (saidas.some(f => !existsSync(f))) return true;
   const anterior = existsSync('.runtime/build-stamp') ? readFileSync('.runtime/build-stamp', 'utf8').trim() : '';
   return anterior !== impressaoDigital();

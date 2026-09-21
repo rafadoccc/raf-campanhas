@@ -12,18 +12,17 @@
     "start:local": "node scripts/start-local.cjs",
     "db:deploy": "prisma migrate deploy --schema=packages/database/prisma/schema.prisma",
     "dev:web": "npm run dev --workspace=@campaign/web",
-    "dev:api": "npm run dev --workspace=@campaign/api",
-    "dev:worker": "npm run dev --workspace=@campaign/worker",
-    "build": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/api && npm run build --workspace=@campaign/worker && npm run build --workspace=@campaign/web",
+    "build": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && npm run build --workspace=@campaign/web",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/api && npm run build --workspace=@campaign/worker && node --test apps/api/dist/schedule.test.js apps/api/dist/clock.test.js apps/worker/dist/whatsapp.test.js && npm run test:polling",
+    "test": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && node --test apps/server/dist/schedule.test.js apps/server/dist/clock.test.js apps/server/dist/whatsapp.test.js && npm run test:polling",
     "test:polling": "tsc --target ES2022 --module commonjs --esModuleInterop --skipLibCheck --outDir .tmp/polling-tests apps/web/components/visible-polling.ts apps/web/components/visible-polling.test.ts && node --test .tmp/polling-tests/visible-polling.test.js",
-    "test:integration": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/api && node --env-file=.env scripts/test-integration.cjs",
+    "test:integration": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && node --env-file=.env scripts/test-integration.cjs",
     "db:generate": "prisma generate --schema=packages/database/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=packages/database/prisma/schema.prisma",
     "db:check": "node --env-file=.env scripts/check-db.mjs",
     "setup:local": "npm run db:check && npm run db:deploy && npm run db:generate && npm run build",
-    "build:exe": "node scripts/build-exe.mjs"
+    "build:exe": "node scripts/build-exe.mjs",
+    "dev:server": "npm run dev --workspace=@campaign/server"
   },
   "engines": {
     "node": ">=22"

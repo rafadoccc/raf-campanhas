@@ -109,5 +109,6 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 ## Simplificação para processo único
 
 ```text
-[~] T-074  Fundir API e worker em servidor único Fastify           owner: codex    since: 2026-09-20T21:17Z
+[x] T-074  Fundir API e worker em servidor único Fastify           owner: —        since: —
+[ ] T-075  Migrar o painel de Next.js para Vite na mesma origem     owner: —        since: —
 ```

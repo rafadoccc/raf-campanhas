@@ -50,7 +50,7 @@ export async function validateMedia(data: Buffer, mimeType: string) {
 
 export function registerMediaRoutes(app: FastifyInstance) {
   app.addContentTypeParser(['image/jpeg', 'image/png', 'video/mp4'], { parseAs: 'buffer', bodyLimit: VIDEO_LIMIT }, (_request, body, done) => done(null, body));
-  app.post('/media', { bodyLimit: VIDEO_LIMIT }, async (request, reply) => {
+  app.post('/api/media', { bodyLimit: VIDEO_LIMIT }, async (request, reply) => {
     try {
       const data = request.body;
       if (!Buffer.isBuffer(data)) throw Error('Envie exatamente um arquivo.');
@@ -61,7 +61,7 @@ export function registerMediaRoutes(app: FastifyInstance) {
       return reply.code(201).send(await prisma.campaignMedia.create({ data: { name, mimeType, kind, size: data.length, data: new Uint8Array(data) }, select: mediaMetadata }));
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Arquivo inválido.' }); }
   });
-  app.get('/media/:id', async (request, reply) => {
+  app.get('/api/media/:id', async (request, reply) => {
     const media = await prisma.campaignMedia.findUnique({ where: { id: (request.params as { id: string }).id } });
     if (!media) return reply.code(404).send({ error: 'Mídia não encontrada.' });
     reply.header('Content-Type', media.mimeType).header('X-Content-Type-Options', 'nosniff').header('Accept-Ranges', 'bytes');

@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-21T00:50Z · codex
+
+**Fiz:** concluí a fusão de API e worker em apps/server: o conector Baileys e o despachante usam o mesmo processo Fastify; as rotas passaram para /api, sem chamada HTTP à porta 3002.
+**Arquivos:** apps/server/src, package.json, scripts/start-local.cjs, scripts/launcher.mjs, scripts/test-integration.cjs, .env.example, .ai/STATE.md e .ai/TASKS.md.
+**Tarefas:** T-074 concluída; T-075 aberta para migrar o painel Next para Vite/same-origin.
+**Estado:** lint limpo · 24/24 testes unitários/polling passam · 21/21 de integração passam no schema PostgreSQL descartável · build completo passou · painel (3000), API (3001) e estado WhatsApp desconectado responderam localmente.
+**Armadilhas:** esta é uma transição consciente: o painel Next ainda usa porta 3000 e aponta para http://localhost:3001/api. A redução final para uma porta acontece apenas na T-075. Nenhum QR foi gerado e nenhum envio real ocorreu.
+**Próximo passo sugerido:** reivindicar T-075 e migrar o painel preservando as telas e o polling visível.
+
 ## 2026-09-21T00:26Z · codex
 
 **Fiz:** validei a correção de sessões fora do OneDrive e publiquei o commit `e6fd8e2`; a tag `pre-simplificacao` também foi enviada ao GitHub.

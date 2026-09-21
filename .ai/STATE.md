@@ -3,14 +3,14 @@
 > Atualize este arquivo sempre que a arquitetura, a fase ou o conjunto de serviços mudar.
 > Ele responde a uma pergunta: *se eu chegasse agora, o que eu precisaria saber?*
 
-**Última atualização:** 2026-09-20 · por `codex`
+**Última atualização:** 2026-09-21 · por `codex`
 
 ---
 
 ## Fase atual
 
-**Fase 1 — Endurecimento.** Saindo de protótipo mono-usuário rumo a produção multi-tenant.
-O código atual funciona, mas assume **um usuário, um número de WhatsApp, sem autenticação**.
+**Simplificação — etapa 1 concluída.** O backend agora é um processo único; a migração do painel para mesma origem ainda é a próxima etapa.
+O código continua assumindo **um usuário, um número de WhatsApp e sem autenticação**.
 
 Fases planejadas:
 
@@ -27,21 +27,20 @@ Fases planejadas:
 ## Arquitetura vigente
 
 ```
-apps/web      Next.js 15 (App Router, React 19, Tailwind)   → porta 3000
-apps/api      Fastify 5                                      → porta 3001
-apps/worker   Baileys + varredura do PostgreSQL              → porta 3002
+apps/web      Next.js 15 (App Router, React 19, Tailwind)   → porta 3000 (transição)
+apps/server   Fastify 5 + Baileys + despachante PostgreSQL   → porta 3001, API em /api
 packages/database  Prisma 6 + PostgreSQL 18 (nativo no Windows)
 infra         nenhuma. Sem Docker, sem Redis. Ver ADR-008.
 ```
 
-Os três serviços sobem juntos por `scripts/start-local.cjs`, todos em `127.0.0.1`.
+Dois processos temporários sobem por scripts/start-local.cjs: o painel Next e o novo servidor único. A etapa seguinte substitui o painel por Vite estático servido pelo Fastify, reduzindo para uma porta e um processo Node.
 
 ### Fluxo de uma campanha
 
 1. Usuário cria campanha (`DRAFT`) escolhendo grupos, mensagens, intervalo e modo.
-2. Ao ativar, `apps/api/src/schedule.ts::planDeliveries` materializa **todas** as
+2. Ao ativar, `apps/server/src/schedule.ts::planDeliveries` materializa **todas** as
    entregas no Postgres com `sequence` fixa. Isso só acontece na primeira ativação.
-3. O worker varre o PostgreSQL a cada 5s e pega o **primeiro pendente** de cada campanha.
+3. O despachante interno de apps/server varre o PostgreSQL a cada 5s e pega o **primeiro pendente** de cada campanha.
 4. `claimDelivery` reserva PENDING→PROCESSING sob lock da campanha (`SELECT ... FOR UPDATE`).
 5. Envio via Baileys ou simulador. `finishDelivery` grava SENT/FAILED e empurra
    `nextAvailableAt` em `intervalSeconds`.
@@ -95,7 +94,7 @@ npm install
 npm run db:deploy           # aplica migrations
 npm run db:generate         # gera o client Prisma
 npm run build
-npm run start:local         # sobe os três serviços
+npm run start:local         # sobe o painel e o servidor único de transição
 npm run build:exe -- --desktop   # gera o .exe de duplo clique (pré-voo + build só se mudou)
 npm run db:check            # diagnóstico do PostgreSQL local
 npm test                    # testes sem WhatsApp

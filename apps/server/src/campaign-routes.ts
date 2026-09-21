@@ -4,7 +4,7 @@ import { mediaMetadata } from './media';
 import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads } from '@campaign/database';
 
 export function registerCampaignRoutes(app: FastifyInstance) {
-  app.get('/campaigns/:id', async (request, reply) => {
+  app.get('/api/campaigns/:id', async (request, reply) => {
     await completeFinished(prisma);
     const { id } = request.params as { id: string };
     const campaign = await prisma.campaign.findFirst({ where: { id, deletedAt: null }, include: { media: { select: mediaMetadata }, groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
@@ -17,7 +17,7 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     const serverNow = await currentTime();
     return { ...campaign, serverNow, readsTotal: reads.reduce((sum, r) => sum + r.count, 0), readsByGroup, progress: Object.fromEntries(counts.map(r => [r.status, r._count._all])), nextAt };
   });
-  app.delete('/campaigns/:id', async (request, reply) => {
+  app.delete('/api/campaigns/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     try { return await prisma.$transaction(async tx => {
       await lockCampaign(tx, id);
@@ -31,5 +31,5 @@ export function registerCampaignRoutes(app: FastifyInstance) {
       return { deleted: true };
     }); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Falha ao excluir.' }); }
   });
-  app.get('/dashboard', async () => dashboardSummary());
+  app.get('/api/dashboard', async () => dashboardSummary());
 }

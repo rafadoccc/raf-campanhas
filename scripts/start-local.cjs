@@ -3,8 +3,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const children = [];
 for (const args of [
-  ['--env-file=.env', 'apps/api/dist/server.js'],
-  ['--env-file=.env', 'apps/worker/dist/index.js'],
+  ['--env-file=.env', 'apps/server/dist/main.js'],
   ['node_modules/next/dist/bin/next', 'start', 'apps/web', '-H', '127.0.0.1', '-p', '3000']
 ]) {
   const child = spawn(process.execPath, args, { cwd: root, stdio: 'inherit' });

@@ -13,7 +13,7 @@ async function main() {
     await db.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
     const migration = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--schema=packages/database/prisma/schema.prisma'], { env, encoding: 'utf8' });
     if (migration.status !== 0) throw Error('Migração isolada falhou. ' + migration.stderr.replaceAll(process.env.DATABASE_URL, '[DATABASE_URL]'));
-    const result = spawnSync(process.execPath, ['--test', 'apps/api/dist/integration.test.js'], { env, stdio: 'inherit' });
+    const result = spawnSync(process.execPath, ['--test', 'apps/server/dist/integration.test.js'], { env, stdio: 'inherit' });
     process.exitCode = result.status ?? 1;
   } finally {
     // Exact random schema created above; no public/user schema can enter this branch.
