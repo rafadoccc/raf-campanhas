@@ -1,8 +1,5 @@
-'use client';
-import { API_URL } from './api-url';
 import { useEffect, useRef, useState } from 'react';
 export type CampaignMedia = { id?: string; name: string; kind: string; size: number; mimeType: string; file?: File };
-const api = API_URL;
 export function MediaPreview({ media }: { media: CampaignMedia }) {
   const [local, setLocal] = useState('');
   useEffect(() => {
@@ -10,7 +7,8 @@ export function MediaPreview({ media }: { media: CampaignMedia }) {
     const url = URL.createObjectURL(media.file); setLocal(url);
     return () => URL.revokeObjectURL(url);
   }, [media.file]);
-  const src = media.file ? local : `${api}/media/${media.id}`;
+  // Mesma origem: o cookie de sessão acompanha a imagem/vídeo.
+  const src = media.file ? local : `/api/media/${media.id}`;
   return <div className="mt-3 space-y-2"><p className="break-all text-sm">{media.name} · {(media.size / 1_000_000).toFixed(2)} MB</p>{src && (media.kind === 'image' ? <img src={src} alt={`Mídia da campanha: ${media.name}`} className="max-h-64 max-w-full rounded-lg object-contain" /> : <video src={src} controls preload="metadata" className="max-h-64 max-w-full rounded-lg" />)}</div>;
 }
 export function CampaignMediaInput({ value, onChange, disabled }: { value: CampaignMedia | null; onChange(value: CampaignMedia | null): void; disabled: boolean }) {
