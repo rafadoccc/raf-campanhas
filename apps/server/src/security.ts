@@ -16,7 +16,7 @@ const CSP = [
 export function registerSecurity(app: FastifyInstance, config: AppConfig) {
   app.addHook('onRequest', async (request, reply) => {
     // Host desconhecido: DNS rebinding ou acesso por um endereço não configurado.
-    if (!config.allowedHosts.includes(request.hostname)) return reply.code(403).send({ error: 'Endereço não permitido. Confira PUBLIC_URL.' });
+    if (config.allowedHosts && !config.allowedHosts.includes(request.hostname)) return reply.code(403).send({ error: 'Endereço não permitido. Confira PUBLIC_URL.' });
     const origin = request.headers.origin;
     if (origin && !config.allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
     // Ações que alteram dados precisam vir do próprio painel. Navegadores sempre enviam

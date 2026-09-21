@@ -65,3 +65,18 @@ test('synced group names never break the sync: blank subjects fall back and long
   assert.equal(groupName(undefined, '120363999@g.us'), 'Grupo 120363999');
   assert.equal(groupName('a'.repeat(300), 'x@g.us').length, 255);
 });
+
+test('only a paired saved session is resumed automatically on startup', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const base = mkdtempSync(path.join(tmpdir(), 'wa-resume-'));
+  try {
+    const provider = new WhatsAppProvider(base);
+    assert.equal(await provider.hasPairedSession(), false, 'sem pasta de sessão');
+    mkdirSync(path.join(base, 'whatsapp'));
+    writeFileSync(path.join(base, 'whatsapp', 'creds.json'), JSON.stringify({ noiseKey: {} }));
+    assert.equal(await provider.hasPairedSession(), false, 'credenciais ainda não pareadas');
+    writeFileSync(path.join(base, 'whatsapp', 'creds.json'), JSON.stringify({ me: { id: '5511999999999:1@s.whatsapp.net' } }));
+    assert.equal(await provider.hasPairedSession(), true, 'sessão pareada');
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});

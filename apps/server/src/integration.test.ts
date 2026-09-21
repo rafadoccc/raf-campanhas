@@ -481,7 +481,12 @@ test('published URL: secure cookie, only its host and origin accepted, security 
     assert.match(String(ok.headers['strict-transport-security']), /max-age/);
     assert.match(String(ok.headers['content-security-policy']), /frame-ancestors 'none'/);
     assert.equal(ok.headers['x-frame-options'], 'DENY');
-    assert.equal((await probe.inject({ method: 'GET', url: '/api/health', headers: { host: 'outro-site.com' } })).statusCode, 403, 'Host desconhecido');
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/health', headers: { host: 'nome-interno-do-proxy' } })).statusCode, 200, 'publicado, o Host interno do proxy é aceito');
+    const www = await probe.inject({ method: 'POST', url: '/api/auth/login', headers: { host: 'www.campanhas.exemplo.com.br', origin: 'https://www.campanhas.exemplo.com.br' }, payload: { email: 'dono@teste.local', password: 'senha-de-teste-123' } });
+    assert.equal(www.statusCode, 200, 'o mesmo site com www. também funciona');
+    const local = buildApp(fakeProvider);
+    try { assert.equal((await local.inject({ method: 'GET', url: '/api/health', headers: { host: 'outro-site.com' } })).statusCode, 403, 'localmente, Host desconhecido é recusado'); }
+    finally { await local.close(); }
     assert.equal((await probe.inject({ method: 'POST', url: '/api/auth/login', headers: { ...site, origin: 'http://localhost:3000' }, payload: {} })).statusCode, 403, 'origem local não vale em produção');
   } finally { await probe.close(); }
 });

@@ -9,8 +9,8 @@ export type AppConfig = {
   deployed: boolean;
   /** Origens aceitas em requisições que alteram dados (proteção contra CSRF). */
   allowedOrigins: string[];
-  /** Nomes aceitos no cabeçalho Host (proteção contra DNS rebinding). */
-  allowedHosts: string[];
+  /** Nomes aceitos no cabeçalho Host (proteção contra DNS rebinding); null = não checa. */
+  allowedHosts: string[] | null;
   secureCookies: boolean;
   trustProxy: boolean;
   sessionTtlMs: number;
@@ -36,6 +36,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const deployed = !LOCAL_HOSTS.includes(publicUrl.hostname);
 
   const origins = new Set([publicUrl.origin]);
+  // O mesmo site com e sem "www.": abrir pelo outro endereço não pode bloquear o login.
+  if (deployed) {
+    const twin = new URL(publicUrl.origin);
+    twin.hostname = twin.hostname.startsWith('www.') ? twin.hostname.slice(4) : `www.${twin.hostname}`;
+    origins.add(twin.origin);
+  }
   if (!deployed) {
     // Painel local e servidor de desenvolvimento do Vite.
     for (const host of LOCAL_HOSTS) for (const p of [port, 5173]) origins.add(`http://${host}:${p}`);
@@ -44,9 +50,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     try { origins.add(new URL(extra).origin); } catch { throw new Error(`EXTRA_ORIGINS contém uma origem inválida: "${extra}".`); }
   }
   const allowedOrigins = [...origins];
-  // localhost fica sempre aceito como Host: chamadas internas do próprio servidor
-  // (monitoramento) não carregam o domínio público. A sessão continua obrigatória.
-  const allowedHosts = [...new Set([...allowedOrigins.map(o => new URL(o).hostname), ...LOCAL_HOSTS])];
+  // Publicado, o proxy da hospedagem pode entregar um Host interno; ali quem protege é o
+  // login (cookie SameSite) e a checagem de Origin. A checagem de Host vale no modo local,
+  // contra DNS rebinding; localhost fica aceito para chamadas do próprio computador.
+  const allowedHosts = deployed ? null : [...new Set([...allowedOrigins.map(o => new URL(o).hostname), ...LOCAL_HOSTS])];
 
   const ttlHours = Number(env.SESSION_TTL_HOURS ?? 168);
   if (!Number.isFinite(ttlHours) || ttlHours < 1 || ttlHours > 720) throw new Error('SESSION_TTL_HOURS deve ficar entre 1 e 720 horas.');

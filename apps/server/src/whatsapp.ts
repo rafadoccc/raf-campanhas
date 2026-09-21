@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads } from '@campaign/database';
 import QRCode from 'qrcode';
@@ -47,6 +47,13 @@ export class WhatsAppProvider {
     this.authDir = path.join(authDir, 'whatsapp');
   }
   status() { return { ...this.data }; }
+  /** Há uma sessão já pareada salva? Reconectar com ela não exige ler QR. */
+  async hasPairedSession() {
+    try {
+      const creds = JSON.parse(await readFile(path.join(this.authDir, 'creds.json'), 'utf8')) as { me?: { id?: string } };
+      return Boolean(creds.me?.id);
+    } catch { return false; }
+  }
   async connect() {
     if (this.starting || ['connected', 'connecting', 'qr', 'reconnecting'].includes(this.data.state)) return this.status();
     this.wanted = true; this.retries = 0;
