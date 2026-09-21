@@ -1,0 +1,2 @@
+ALTER TABLE `Group` ADD COLUMN `adminOnly` BOOLEAN NULL,
+    ADD COLUMN `isAdmin` BOOLEAN NULL;

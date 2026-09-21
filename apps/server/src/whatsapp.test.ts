@@ -106,6 +106,10 @@ test('group context at send time: member/admin found by number or LID, unknown s
   const unknown = describeGroupForSend({ announce: true, participants: [{ id: '999@lid' }] }, me);
   assert.equal(unknown.context, 'membro=? admin=? so-admins=sim participantes=1');
   assert.equal(unknown.adminOnlyWithoutPermission, false, 'sem certeza, não afirma bloqueio');
+  // Selo do painel: só admins + você é admin / não é / desconhecido (null).
+  assert.deepEqual([byNumber.onlyAdmins, byNumber.isAdmin], [true, false]);
+  assert.deepEqual([byLid.onlyAdmins, byLid.isAdmin], [false, true]);
+  assert.deepEqual([unknown.onlyAdmins, unknown.isAdmin], [true, null]);
 });
 
 test('technical error codes are kept apart from the readable message', async () => {

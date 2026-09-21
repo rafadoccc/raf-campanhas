@@ -28,6 +28,9 @@ model Group {
   externalId String?         @unique
   name       String          @db.VarChar(255)
   active     Boolean         @default(true)
+  // Situação na última sincronização/envio; null = desconhecida.
+  adminOnly  Boolean?
+  isAdmin    Boolean?
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
   deliveries Delivery[]

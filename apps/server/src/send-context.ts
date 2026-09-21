@@ -21,6 +21,8 @@ export function describeGroupForSend(group: GroupInfo, me: { id?: string; lid?: 
     `so-admins=${yesNo(onlyAdmins)}`,
     `participantes=${group.size ?? group.participants?.length ?? '?'}`,
   ].join(' ');
+  // isAdmin: null quando a conta não foi encontrada (desconhecido, nunca "não").
+  const isAdmin = self ? Boolean(self.admin) : null;
   // Só afirma o bloqueio quando tem certeza: grupo restrito E a conta encontrada sem ser admin.
-  return { context, adminOnlyWithoutPermission: onlyAdmins && Boolean(self) && !self?.admin };
+  return { context, onlyAdmins, isAdmin, adminOnlyWithoutPermission: onlyAdmins && isAdmin === false };
 }

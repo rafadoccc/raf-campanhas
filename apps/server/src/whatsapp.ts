@@ -217,12 +217,15 @@ export class WhatsAppProvider {
   async sync() {
     const sock = this.connected();
     const groups = Object.values(await sock.groupFetchAllParticipating());
+    const me = { id: sock.user?.id, lid: sock.user?.lid };
     await prisma.$transaction(async tx => {
       await tx.group.updateMany({ where: { externalId: { not: null } }, data: { active: false } });
       for (const group of groups) {
         // Grupos sem assunto (antigos ou comunidades) derrubariam a sincronização inteira.
         const name = groupName(group.subject, group.id);
-        await tx.group.upsert({ where: { externalId: group.id }, update: { name, active: true }, create: { externalId: group.id, name } });
+        const { onlyAdmins: adminOnly, isAdmin } = describeGroupForSend(group, me);
+        const data = { name, adminOnly, isAdmin };
+        await tx.group.upsert({ where: { externalId: group.id }, update: { ...data, active: true }, create: { externalId: group.id, ...data } });
       }
     }, { timeout: 30000 });
     return { count: groups.length };
@@ -234,6 +237,8 @@ export class WhatsAppProvider {
     // Registra a situação do grupo (membro, admin, só admins enviam) para explicar uma
     // eventual recusa do servidor.
     const group = describeGroupForSend(await sock.groupMetadata(groupJid), { id: sock.user?.id, lid: sock.user?.lid });
+    // Mantém o selo do painel (só admins / você é admin) atualizado; falha aqui não impede o envio.
+    await prisma.group.updateMany({ where: { externalId: groupJid }, data: { adminOnly: group.onlyAdmins, isAdmin: group.isAdmin } }).catch(() => undefined);
     // Grupo só para administradores e a conta comprovadamente não é admin: o WhatsApp
     // aceita o pedido mas a mensagem nunca aparece (teste real, 2026-09-21). Falha ANTES de
     // enviar — nada saiu, então não há risco de duplicar.
