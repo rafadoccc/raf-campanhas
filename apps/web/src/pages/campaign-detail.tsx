@@ -4,7 +4,29 @@ import { CampaignActions } from '../components/campaign-actions';
 import { api, connectionState as readConnection } from '../lib/api';
 import { usePolling } from '../lib/use-polling';
 type Campaign = { media: CampaignMedia | null; serverNow: string; readsTotal: number; readsByGroup: { groupId: string; name: string; count: number }[]; id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string; nextAt: string | null; progress: Record<string, number>; groups: { group: { name: string } }[]; messages: { content: string }[] };
-type Delivery = { id: string; status: string; provider: string; sequence: number; sentAt: string | null; scheduledAt: string; error: string | null; group: { name: string }; _count: { reads: number } };
+type Delivery = { id: string; status: string; provider: string; sequence: number; sentAt: string | null; scheduledAt: string; error: string | null; attemptedAt: string | null; sendReturnedAt: string | null; deliveredAt: string | null; serverRejectedAt: string | null; errorCode: string | null; attempts: number; sendContext: string | null; group: { name: string }; _count: { reads: number } };
+const hora = (at: string) => new Date(at).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hourCycle: 'h23' });
+// Situação real de um envio (ADR-012). "Enviado" só diz que o WhatsApp recebeu o pedido;
+// entrega e recusa chegam depois. Zero leituras NÃO significa falha.
+function situation(d: Delivery): { text: string; tone: string } {
+  if (d.status === 'SENT' && d.provider === 'simulator') return { text: 'Simulado ✓', tone: 'text-emerald-700' };
+  if (d.status === 'SENT' && d.deliveredAt) return { text: 'Entregue ✓✓', tone: 'text-emerald-700' };
+  if (d.status === 'SENT') return { text: 'Enviado · aguardando confirmação de entrega', tone: 'text-amber-700' };
+  if (d.status === 'FAILED' && d.serverRejectedAt) return { text: 'Recusado pelo WhatsApp', tone: 'text-red-700' };
+  if (d.status === 'CANCELLED') return { text: 'Cancelado', tone: 'text-slate-500' };
+  return { text: labels[d.status] ?? d.status, tone: d.status === 'FAILED' ? 'text-red-700' : 'text-emerald-700' };
+}
+// Horários do envio: previsto, início da tentativa (com atraso), retorno e entrega.
+function timeline(d: Delivery) {
+  const parts = [`Previsto ${hora(d.scheduledAt)}`];
+  if (d.attemptedAt) {
+    const late = Math.round((Date.parse(d.attemptedAt) - Date.parse(d.scheduledAt)) / 1000);
+    parts.push(`início ${hora(d.attemptedAt)}${late > 0 ? ` (+${late} s)` : ''}`);
+  }
+  if (d.sendReturnedAt) parts.push(`retorno ${hora(d.sendReturnedAt)}`);
+  if (d.deliveredAt) parts.push(`entregue ${hora(d.deliveredAt)}`);
+  return parts.join(' · ');
+}
 const labels: Record<string, string> = { DRAFT: 'Rascunho', ACTIVE: 'Ativa', PAUSED: 'Pausada', COMPLETED: 'Encerrada', CANCELLED: 'Encerrada', PENDING: 'Aguardando', PROCESSING: 'Enviando', SENT: 'Enviado ✓', FAILED: 'Falhou' };
 export default function CampaignPage() {
   const id = useParams().id ?? '';
@@ -33,8 +55,8 @@ export default function CampaignPage() {
     </section>
     {total > 0 && <section className="rounded-xl border bg-white p-6"><h2 className="text-lg font-bold">{sent} de {total} {campaign.provider === 'simulator' ? 'simulados' : 'enviados'}</h2><progress aria-label="Progresso de envios" value={sent} max={total} className="mt-3 h-2 w-full accent-emerald-600" /><p className="mt-3 text-sm text-slate-500">{failed} falhas · {campaign.progress.CANCELLED ?? 0} cancelados · {campaign.progress.PENDING ?? 0} aguardando</p><p className="mt-2 text-sm">{campaign.status === 'PAUSED' ? 'Fila pausada. A ordem e os pendentes estão preservados.' : campaign.nextAt ? `Próximo envio: ${minutes ? `em aproximadamente ${minutes} min` : 'aguardando o processador/conexão'}.` : 'Nenhum envio restante.'}</p></section>}
     <section className="rounded-xl border bg-white p-6"><h2 className="text-lg font-bold">Visualizações por grupo — histórico</h2><p className="mt-2 font-semibold">Visualizações totais: {campaign.readsTotal}</p><p className="mt-2 text-sm text-slate-500">Total registrado desde a criação da campanha, inclusive após o encerramento; sem limite de 24 horas. Leituras confirmadas por recibos do WhatsApp. Cada destinatário conta uma vez por mensagem; pode contar novamente em outra mensagem. Ausência de recibos não significa ausência de leitura.</p><ul className="mt-4 divide-y">{campaign.readsByGroup.map(group => <li key={group.groupId} className="flex justify-between gap-4 py-3"><span>{group.name}</span><span>{group.count} visualizações</span></li>)}</ul></section>
-    <section className="overflow-hidden rounded-xl border bg-white"><h2 className="p-6 text-lg font-bold">Histórico desta campanha</h2><p className="px-6 pb-2 text-sm text-slate-500">Horário de Brasília (America/Sao_Paulo).</p><p className="px-6 pb-4 text-sm text-slate-500">Leituras confirmadas contam destinatários distintos por mensagem, somente quando o WhatsApp fornece recibos. Sem recibos não significa ninguém leu. Falhas incertas não oferecem reenvio para evitar duplicatas.</p>
-      <ul className="divide-y">{deliveries.map(d => <li key={d.id} className="p-4"><div className="flex flex-wrap justify-between gap-2"><span className="font-medium">{d.sequence + 1}. {d.group.name}</span><span className={d.status === 'FAILED' ? 'text-red-700' : 'text-emerald-700'}>{d.status === 'SENT' && d.provider === 'simulator' ? 'Simulado ✓' : d.status === 'CANCELLED' ? 'Cancelado' : labels[d.status]}</span></div><p className="mt-1 text-sm text-slate-500">{d.sentAt ? `Enviado em ${new Date(d.sentAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : `Previsto a partir de ${new Date(d.scheduledAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`}{d.provider === 'baileys' && d.status === 'SENT' && ` · ${d._count.reads} leituras confirmadas`}</p>{d.error && <p className="mt-2 text-sm text-red-700">{d.error}</p>}</li>)}</ul>
+    <section className="overflow-hidden rounded-xl border bg-white"><h2 className="p-6 text-lg font-bold">Histórico desta campanha</h2><p className="px-6 pb-2 text-sm text-slate-500">Horário de Brasília (America/Sao_Paulo).</p><p className="px-6 pb-4 text-sm text-slate-500">"Entregue ✓✓" exige o recibo de entrega de pelo menos um participante; "aguardando confirmação" não é falha. Leituras contam destinatários distintos por mensagem, só quando o WhatsApp fornece recibos; zero leituras não significa que não chegou. Falhas incertas não oferecem reenvio para evitar duplicatas.</p>
+      <ul className="divide-y">{deliveries.map(d => <li key={d.id} className="p-4"><div className="flex flex-wrap justify-between gap-2"><span className="font-medium">{d.sequence + 1}. {d.group.name}</span><span className={situation(d).tone}>{situation(d).text}</span></div><p className="mt-1 text-sm text-slate-500">{timeline(d)}{d.provider === 'baileys' && d.status === 'SENT' && ` · ${d._count.reads} leituras confirmadas`}</p>{d.error && <p className="mt-2 text-sm text-red-700">{d.error}{d.errorCode && <span className="ml-1 text-xs text-slate-500">[{d.errorCode}]</span>}</p>}{d.provider === 'baileys' && d.sendContext && (d.status === 'FAILED' || !d.deliveredAt) && <p className="mt-1 text-xs text-slate-400">Grupo no envio: {d.sendContext}</p>}</li>)}</ul>
       {!deliveries.length && <p className="p-6 text-slate-500">Os envios serão criados ao iniciar.</p>}<div className="flex justify-between p-4 text-sm text-emerald-700">{page > 0 && <Link to={`?page=${page - 1}`}>← Anteriores</Link>}{deliveries.length === 100 && <Link to={`?page=${page + 1}`}>Próximos →</Link>}</div>
     </section>
   </div></main>;
