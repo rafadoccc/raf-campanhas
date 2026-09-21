@@ -10,6 +10,12 @@
     "build": "tsc",
     "lint": "tsc --noEmit"
   },
-  "dependencies": { "@prisma/client": "^6.0.0" },
-  "devDependencies": { "prisma": "^6.0.0", "typescript": "^5.7.0" }
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "prisma": "^6.0.0",
+    "typescript": "^5.7.0"
+  }
 }
