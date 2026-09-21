@@ -26,7 +26,8 @@ Seu identificador no protocolo é **`claude`**. Use exatamente isso em
 
 - Node 24 / npm 11. Shell primário: PowerShell; Bash também disponível.
 - Banco: MySQL 8 nativo (serviço `MySQL80`), sem Docker nem Redis. `npm run db:check` diagnostica.
-- `npm run start:local` sobe o servidor (3001, API em `/api`) e o painel (3000). Use `npm.cmd` no PowerShell.
+- `npm run start:local` sobe **um único processo** (`server.js`) com painel e API na porta 3000 (API em `/api`). Use `npm.cmd` no PowerShell.
+- Toda a API exige login (cookie de sessão). Usuário: `npm run user:create`. Deploy: `docs/deploy-hostinger.md`.
 - Testes que **não** precisam de WhatsApp: `npm test`.
 - Teste de integração (cria e destrói um banco MySQL aleatório): `npm run test:integration`.
 - MySQL usa REPEATABLE READ: toda transação com `lockCampaign` precisa de `LOCKING_TRANSACTION` (ADR-010).

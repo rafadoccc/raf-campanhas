@@ -301,3 +301,31 @@ migrar (o PostgreSQL já tinha sido removido e o MySQL começou vazio).
 **Consequências.** Comparar DATETIME com NOW() em SQL bruto continua proibido (fuso da sessão).
 No Linux (VPS) o MySQL diferencia maiúsculas em nomes de tabela: use sempre os nomes exatos do
 schema. As ADRs propostas de multi-tenant (004–007) seguem válidas no MySQL.
+
+---
+
+## ADR-011 — Um processo, painel Vite na mesma origem, login obrigatório, Hostinger
+
+**Data:** 2026-09-21 · **Autor:** claude · **Status:** aceita (decisão do dono)
+**Substitui:** a parte "Next como fronteira de autenticação" das recomendações anteriores.
+
+**Contexto.** O dono vai publicar na hospedagem de sites da Hostinger (Node.js App), que
+roda um arquivo de entrada por app, entrega a porta ao processo e troca a pasta do app a
+cada deploy. O painel era Next.js em outro processo e a API não tinha autenticação.
+
+**Decisão.**
+1. **Um processo** (`server.js` → `apps/server`) serve o painel compilado pelo Vite e a API
+   em `/api`, na mesma porta e origem. Sem CORS, sem URL de API gravada no build.
+2. **Login obrigatório, negar por padrão:** só `/api/health`, `/api/auth/login` e
+   `/api/auth/setup` são públicas. Senha com scrypt (biblioteca padrão, sem binário nativo);
+   cookie HttpOnly/SameSite=Lax/Secure com token aleatório, e só o hash SHA-256 no banco.
+   Sem cadastro público: `ADMIN_EMAIL`/`ADMIN_PASSWORD` na primeira subida ou `user:create`.
+3. **`PUBLIC_URL` define o modo:** publicado aceita a origem dele (com e sem www), usa proxy
+   confiável e cookie Secure, escuta em 0.0.0.0 e não checa Host (o proxy pode mandar um nome
+   interno). Local mantém a checagem de Host contra DNS rebinding.
+4. **Sessão do WhatsApp fora da pasta do app** e **retomada automática** de sessão já pareada
+   na subida: sem isso, cada deploy exigiria QR ou deixaria as campanhas paradas.
+
+**Consequências.** Rodar numa hospedagem compartilhada tem um risco não verificado: se ela
+desligar apps ociosos, a fila e a conexão param. Mitigação: monitor externo em /api/health;
+alternativa: VPS com o mesmo `node server.js`. O limite de login é em memória (um processo).

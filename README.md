@@ -1,83 +1,52 @@
 # Central de Campanhas
 
-Painel em Next.js, servidor Fastify (API + despachante de envios + conector WhatsApp)
-e MySQL 8 via Prisma. Conector WhatsApp com Baileys e provedor simulado separados.
+Gerenciador de campanhas para grupos de WhatsApp. **Um único processo Node** entrega o
+painel (React + Vite) e a API (Fastify) na mesma porta, roda a fila de envios e mantém a
+conexão com o WhatsApp (Baileys). Os dados ficam no **MySQL 8**, que também é a fila: não há
+Docker nem Redis.
 
-Sem Docker e sem Redis: o MySQL instalado na máquina é o banco **e** a fila.
+Para publicar na Hostinger, veja **[docs/deploy-hostinger.md](docs/deploy-hostinger.md)**.
 
 ## Iniciar no Windows
 
-Pré-requisitos: **Node.js 22+** e **MySQL 8** instalado localmente, com o serviço
-`MySQL80` em execução.
+Pré-requisitos: **Node.js 22+** e **MySQL 8** (serviço `MySQL80` em execução).
 
-1. Na primeira instalação, copie `.env.example` para `.env` e coloque a senha do seu
-   usuário do MySQL em `DATABASE_URL`. Não substitua um `.env` existente.
+1. Copie `.env.example` para `.env` e coloque a senha do MySQL em `DATABASE_URL`.
+   O banco `campanhas` é criado sozinho. Não substitua um `.env` existente.
+2. Instale as dependências uma vez: `npm.cmd install`
+3. Gere o atalho: `npm.cmd run build:exe -- --desktop`
+4. Dê duplo clique em **Central de Campanhas.exe** na área de trabalho.
 
-   ```
-   DATABASE_URL=mysql://root:SUA_SENHA@localhost:3306/campanhas
-   ```
+O inicializador confere Node, `.env`, MySQL e a porta 3000, aplica migrations, recompila
+só se o código mudou, e **no primeiro uso pede o e-mail e a senha** do usuário do painel.
+Depois abre <http://localhost:3000>. Fechar a janela encerra o sistema. Se algo estiver
+errado, a janela fica aberta explicando o que corrigir.
 
-2. O banco `campanhas` é criado automaticamente (utf8mb4, acentos e emojis) pelo
-   diagnóstico abaixo ou pelo inicializador. Não é preciso criá-lo no MySQL Workbench.
+Sem o atalho: `npm.cmd run user:create` (uma vez) e `npm.cmd run start:local`.
+No PowerShell use `npm.cmd`; o `npm` puro é bloqueado pela política de scripts do Windows.
 
-3. Instale e confira a conexão:
+### Login
 
-   ```powershell
-   npm install
-   npm run db:check
-   ```
-
-   O diagnóstico diz se o serviço responde, cria o banco `campanhas` se faltar, confere o
-   limite de pacote do MySQL para vídeos de 64 MB e
-   avisa se as migrations ainda não foram aplicadas. Ele nunca imprime a senha.
-
-4. Aplique as migrations, gere o client e suba:
-
-   ```powershell
-   npm run setup:local
-   npm run start:local
-   ```
-
-   `setup:local` roda diagnóstico, migrations, geração do client Prisma e build.
-
-### Atalho na área de trabalho (.exe)
-
-```powershell
-npm.cmd run build:exe -- --desktop
-```
-
-Gera "Central de Campanhas.exe" e o copia para a área de trabalho. Um duplo clique:
-
-1. confere Node, `.env`, MySQL e as portas 3000 e 3001;
-2. aplica migrations pendentes;
-3. recompila **só se o código mudou** (compara o conteúdo, não a data dos arquivos);
-4. sobe API, worker e painel e abre o navegador.
-
-Se algo estiver errado, a janela fica aberta explicando o que corrigir. Fechar a janela
-encerra o sistema. O executável guarda o caminho desta pasta: se você a mover, rode
-`build:exe` de novo. Não é assinado digitalmente, então o Windows pode exibir um aviso do
-SmartScreen na primeira vez ("Mais informações" > "Executar assim mesmo").
-
-Abra <http://localhost:3000/configuracoes>. O comando `start:local` mantém API, worker e
-painel ativos; `Ctrl+C` encerra os três. Se o painel ou o worker antigos estiverem abertos
-em outro terminal, encerre-os antes. `npm test` executa os testes sem WhatsApp.
+Todo o painel e toda a API exigem login. Não há cadastro público: usuários são criados
+por `npm run user:create` (que também redefine senhas) ou, na primeira subida em um
+servidor, pelas variáveis `ADMIN_EMAIL` e `ADMIN_PASSWORD`. A senha é trocada em
+**Minha conta**. O login vale 7 dias e se renova com o uso.
 
 ## Conectar WhatsApp
 
-1. Em Conexão WhatsApp, clique em Conectar / gerar QR Code.
-2. No celular: WhatsApp > Aparelhos conectados > Conectar um aparelho.
-3. Escaneie o QR no painel. Não compartilhe o QR nem a pasta de sessões. Novas sessões ficam fora do OneDrive em `%LOCALAPPDATA%\raf-campanhas\sessions` por padrão.
-4. Clique em Sincronizar grupos.
-5. Crie uma campanha, selecione os grupos em ordem e escolha intervalo de 1 a 60 minutos.
-6. Escolha fila única (início ao ativar) ou os horários diários já existentes.
-7. Confira o resumo e a mensagem nos detalhes. Selecione Simulação para testar,
-   ou WhatsApp real e confirme a autorização dos destinatários antes de iniciar.
+1. Em **Conexão WhatsApp**, clique em **Conectar / gerar QR Code**.
+2. No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho.
+3. Leia o QR na tela (ele se renova sozinho a cada 20 segundos).
+4. Clique em **Sincronizar grupos**.
+5. Crie uma campanha, busque e selecione os grupos em ordem, e escolha o intervalo (1 a 60 min).
+6. Escolha fila única (início ao ativar) ou horários diários.
+7. Confira o resumo. Use **Simulação** para testar, ou **WhatsApp real** confirmando a
+   autorização dos destinatários.
 
-Conectar/importar grupos não ativa campanhas. Grupos cadastrados manualmente
-servem para simulação. Campanhas antigas continuam no simulador.
-O número da conta fica vinculado à campanha na ativação; retomar com outra conta
-é bloqueado. Após reiniciar o sistema, clique em Conectar para reutilizar a sessão.
-A sincronização marca grupos que deixaram de aparecer como inativos.
+Depois de pareado, o sistema **reconecta sozinho** ao iniciar (sem QR). Conectar ou
+sincronizar não ativa campanhas. A sessão fica fora da pasta do projeto
+(`%LOCALAPPDATA%\raf-campanhas\sessions`) e nunca entra no Git; "Desconectar" apaga essa
+cópia local. O número fica vinculado à campanha na ativação; retomar com outro é bloqueado.
 
 ## Fila persistente e estados
 
@@ -121,7 +90,7 @@ Mostra hoje e ontem no fuso de São Paulo. Simulações não entram em sucesso/e
 ### Idempotência e resultados incertos
 
 O MySQL controla a reserva PENDING → PROCESSING antes da chamada externa, e é também
-a fila: o worker varre o banco a cada 5 segundos, sem serviço externo. Ele valida estado,
+a fila: o servidor varre o banco a cada 5 segundos, sem serviço externo. Ele valida estado,
 ordem e intervalo sob lock da campanha, então uma varredura atrasada não contorna
 pausa/encerramento. Um lease em WorkerLease garante um processador por vez. PROCESSING encontrado
 ao reiniciar vira FAILED com aviso de resultado incerto e nunca é repetido automaticamente.
@@ -130,45 +99,32 @@ resposta pode deixar o resultado desconhecido. Por segurança, esta versão NÃO
 Tentar novamente para falhas; não é possível provar que uma mensagem não foi entregue.
 É uma escolha conservadora para evitar duplicatas, podendo deixar mensagens sem envio.
 
-## Estrutura e limites
+## Estrutura
 
-- apps/web: painel e conexão por QR.
-- apps/server: API em /api (campanhas, grupos, histórico, ativação), despachante da fila e
-  conector Baileys, num único processo na porta 3001.
-- packages/database: modelo Prisma e migrações versionadas.
-- scripts/start-local.cjs: inicia os serviços a partir da raiz, carregando .env.
-- Não há Docker nem Redis: o MySQL local é banco e fila (ver .ai/DECISIONS.md, ADR-008 e ADR-010).
+- `server.js`: ponto de entrada. Aplica migrations pendentes e sobe o servidor.
+- `apps/server`: Fastify com a API em `/api`, login, segurança, entrega do painel, fila de
+  envios e conector Baileys.
+- `apps/web`: painel React (Vite + React Router + Tailwind), compilado para `apps/web/dist`.
+- `packages/database`: schema Prisma (MySQL), migrations e a lógica transacional da fila.
+- `scripts/`: inicializador, diagnóstico do banco, criação de usuário e testes.
+- `.ai/`: protocolo entre os agentes de IA (ver `AGENTS.md`).
 
-Versão local, um número e um worker. API, worker e painel iniciam no endereço
-de loopback. Não publique esses serviços na internet sem implementar autenticação,
-TLS, armazenamento protegido de sessão, backups e gerenciamento dos processos.
-As sessões do WhatsApp ficam fora do projeto/OneDrive por padrão e não entram no Git. Depois desta atualização, pareie novamente pelo QR para criar a sessão no local seguro; não copie credenciais antigas. Ao desconectar, o sistema apaga a cópia local. Se o WhatsApp não confirmar a revogação, remova também o aparelho em WhatsApp > Aparelhos conectados.
-
-Baileys é não oficial; não há garantia contra bloqueio ou mudanças no WhatsApp.
-A versão 7.0.0-rc14 foi fixada no package-lock.json; é uma versão candidata.
-Não há mecanismos de evasão de restrições, criação de grupos ou adição de pessoas.
+Baileys é uma integração não oficial: o WhatsApp pode mudar o protocolo ou restringir o
+número. O pareamento por QR inclui uma correção para a mudança de julho/2026 que o
+Baileys 7.0.0-rc14 ainda não trata (ver `apps/server/src/pairing.ts`).
 
 ## Testar e atualizar
 
-Antes de atualizar, pare API/worker/painel com Ctrl+C; mantenha o serviço MySQL80 ativo.
-Execute `npm run db:deploy`, `npm run db:generate`, `npm run build` e `npm run start:local`.
-A migração interval_queue é aditiva; não exclui dados. Não rode uma versão antiga do
-worker junto da nova. Não há autenticação: mantenha acesso somente local.
+- `npm test`: testes sem banco nem WhatsApp (planejamento, relógio, pareamento, reconexão).
+- `npm run test:integration`: cria um banco MySQL descartável (`campaign_test_*`), testa API,
+  login, segurança, fila concorrente, recibos e o painel servido, e apaga o banco no fim.
+- `npm run lint`: TypeScript de todos os pacotes. `npm run build`: build completo.
+- Desenvolvimento: `npm run dev:server` e, em outro terminal, `npm run dev:web` (Vite na
+  5173 repassando `/api` para a 3000).
 
-- `npm test`: testes de planejamento, protocolo e adaptador, sem WhatsApp.
-- `npm run test:integration`: aplica migrations num banco MySQL aleatório e isolado (`campaign_test_*`),
-  testa API/estados/reserva concorrente/ordem/falhas/retomada/recibos e remove somente esse
-  schema ao terminar. Não usa nem apaga campanhas do schema principal.
-- `npm run lint`: verificação TypeScript de todos os pacotes.
-- `npm run build`: build completo, inclusive Next.js.
+Para atualizar, feche a janela do sistema e abra o `.exe` de novo: ele recompila o que mudou.
+Envio real e recibos de leitura só são validados com celular; os testes usam simulação.
 
-Os testes de reinício automatizados simulam perda do cliente após a reserva persistente;
-não simulam queda da rede do WhatsApp. Recibos reais dependem de teste com celular e
-outro participante. Atualizações visuais ocorrem a cada 15 segundos só com a aba visível.
-
-npm audit também apontou problemas em dependências transitivas existentes
-(Prisma/deepmerge-ts e PostCSS do Next). Não houve atualização forçada para outra
-versão principal. Este projeto ainda não deve ser considerado pronto para produção.
-# Mídia opcional (V1)
+## Mídia opcional
 
 Na criação/edição de rascunhos, use **Adicionar mídia** para escolher uma imagem JPEG/PNG ou vídeo MP4 H.264/AAC. É possível visualizar, trocar e remover antes de salvar. A mídia fica no MySQL e acompanha o backup do banco. Aplique migrations com `npm run db:deploy` após atualizar. Consulte [formatos, limites e validação](docs/campaign-media.md).

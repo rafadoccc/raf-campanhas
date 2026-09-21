@@ -5,6 +5,32 @@
 
 ---
 
+## 2026-09-21T06:10Z · claude
+
+**Fiz:** corrigi o pareamento por QR (companion_reg_refresh, ver pairing.ts), removi o alerta do
+Baileys, assumi a T-075 do Codex (sem tokens) e concluí a simplificação: painel Next → Vite
+servido pelo Fastify na mesma porta, login obrigatório, hardening, entrada única server.js,
+retomada automática do WhatsApp e guia de deploy na Hostinger. Commits agora em português.
+**Arquivos:** apps/server/src/{auth,config,security,pairing,connection-policy}.ts (novos),
+app.ts, main.ts, whatsapp.ts, media.ts; apps/web (reescrito em src/); server.js;
+scripts/{launcher.mjs,start-local.cjs,user-create.mjs}; migration 20260921050000_auth;
+README.md, docs/deploy-hostinger.md, AGENTS.md, CLAUDE.md, .ai/*
+**Tarefas:** T-075, T-080 a T-083, T-042, T-043, T-044, T-047, T-050, T-051, T-060, T-061, T-067 concluídas.
+**Estado:** compila · lint limpo · 34 unitários · 28 de integração (inclui login e segurança) ·
+validado no navegador: login, telas, busca, salvar campanha, sair.
+**Armadilhas:**
+- **O QR funcionou de verdade:** a sessão atual foi pareada às 03:55Z, 1,5 min depois do commit
+  da correção (774d91c). Não clique em Desconectar em testes: há sessão real pareada (iPhone).
+- Toda requisição que altera dados precisa de Origin do painel; testes injetam cookie e origin
+  pelo helper `auth()` de integration.test.ts.
+- O servidor registra os arquivos do painel na partida: após `vite build`, reinicie.
+- O banco local tem 155 grupos reais e **0 usuários**: o próximo .exe pede e-mail e senha.
+- Limite de rota (bodyLimit) no Fastify vence o do parser; por isso /api/media não tem bodyLimit.
+- Abertas e relevantes: T-041 (desvincular aparelhos antigos), T-048 (Range de mídia ainda
+  carrega o arquivo inteiro), T-053 (SIGKILL do ffprobe), T-052 (limpeza de mídia órfã).
+**Próximo passo sugerido:** o dono publicar na Hostinger seguindo docs/deploy-hostinger.md e
+cadastrar o monitor de /api/health; depois observar por uma semana se o app fica sempre ligado.
+
 ## 2026-09-21T03:55Z · claude
 
 **Fiz:** migrei o banco de PostgreSQL para MySQL 8 (ADR-010), corrigi o 404 ao gerar o QR,

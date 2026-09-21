@@ -27,13 +27,14 @@ Fases planejadas:
 ## Arquitetura vigente
 
 ```
-apps/web      Next.js 15 (App Router, React 19, Tailwind)   → porta 3000 (transição)
-apps/server   Fastify 5 + Baileys + despachante MySQL        → porta 3001, API em /api
+server.js     entrada: aplica migrations e sobe apps/server   → porta 3000 (painel + /api)
+apps/web      Vite + React 19 + React Router + Tailwind       → compilado em apps/web/dist
+apps/server   Fastify 5: login, segurança, painel, fila, Baileys
 packages/database  Prisma 6 + MySQL 8 (nativo no Windows, banco `campanhas`)
 infra         nenhuma. Sem Docker, sem Redis. Ver ADR-008 e ADR-010.
 ```
 
-Dois processos temporários sobem por scripts/start-local.cjs: o painel Next e o novo servidor único. A etapa seguinte substitui o painel por Vite estático servido pelo Fastify, reduzindo para uma porta e um processo Node.
+Um único processo Node. Toda rota /api exige sessão (negar por padrão). Publicado na Hostinger (Node.js App, Business/Cloud) conforme docs/deploy-hostinger.md; ver ADR-011.
 
 ### Fluxo de uma campanha
 

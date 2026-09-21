@@ -17,16 +17,16 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 ```
 [x] T-040  (C) Mover .sessions/ para fora do OneDrive, via env  owner: —        since: —
 [ ] T-041  (C) Apagar sessoes -revoked-* e desvincular aparelhos  owner: —        since: —
-[ ] T-042  (C) Token de autenticação obrigatório na API          owner: —        since: —
-[ ] T-043  (C) Parar de serializar o QR sem autenticação         owner: —        since: —
-[ ] T-044  (A) Token compartilhado no worker (porta 3002)        owner: —        since: —
+[x] T-042  (C) Token de autenticação obrigatório na API          owner: —        since: —      
+[x] T-043  (C) Parar de serializar o QR sem autenticação         owner: —        since: —      
+[x] T-044  (A) Worker separado removido: não há porta 3002         owner: —        since: —
 [ ] T-045  (A) Bind de Postgres e Redis em 127.0.0.1             owner: —        since: —
 [x] T-046  (A) requirepass no Redis — resolvido: Redis removido     owner: —        since: —
-[ ] T-047  (A) select explícito em /deliveries (vaza messageBody)  owner: —       since: —
+[x] T-047  (A) select explícito em /deliveries (vaza messageBody)  owner: —        since: —      
 [ ] T-048  (A) bodyLimit por tipo e streaming de mídia           owner: —        since: —
 [ ] T-049  (A) npm audit fix para deepmerge-ts via prisma        owner: —        since: —
-[ ] T-050  (M) Mapear erros internos antes de responder          owner: —        since: —
-[ ] T-051  (M) rate limiting na API                              owner: —        since: —
+[x] T-050  (M) Mapear erros internos antes de responder          owner: —        since: —      
+[x] T-051  (M) rate limiting na API                              owner: —        since: —      
 [ ] T-052  (M) Rotina de exclusão de mídia órfã e cota           owner: —        since: —
 [ ] T-053  (M) SIGKILL de fallback no timeout do ffprobe         owner: —        since: —
 ```
@@ -91,17 +91,26 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-079  Melhorias gerais validadas (health, launcher, sync)      owner: —        since: —      
 ```
 
+## Fase 1d — Painel Vite, login e Hostinger (pedido do dono em 2026-09-21)
+
+```
+[x] T-080  Servidor único: painel Vite servido pelo Fastify na mesma porta  owner: —        since: —      
+[x] T-081  Login com cookie de sessão; negar por padrão em /api             owner: —        since: —      
+[x] T-082  Hardening: limite de login, cabeçalhos, erros genéricos, mídia   owner: —        since: —      
+[x] T-083  Deploy na hospedagem Node.js da Hostinger (entrada, env, docs)   owner: —        since: —      
+```
+
 ## Fase 5 — Deploy em VPS
 
 ```
-[ ] T-060  Config por env: hosts/origens/URL da API (remover hardcode de localhost)  owner: —        since: —
-[ ] T-061  Web fala com a API por rota same-origin (/api), sem NEXT_PUBLIC_API_URL   owner: —        since: —
+[x] T-060  Config por env: hosts/origens/URL da API (remover hardcode de localhost)  owner: —        since: —      
+[x] T-061  Web fala com a API por rota same-origin (/api), sem NEXT_PUBLIC_API_URL   owner: —        since: —      
 [ ] T-062  Dockerfile multi-stage por serviço (api, worker, web)                     owner: —        since: —
 [ ] T-063  docker-compose.prod.yml: rede interna, sem portas de DB/Redis publicadas   owner: —        since: —
 [ ] T-064  Caddy como reverse proxy com HTTPS automático                              owner: —        since: —
 [ ] T-065  Remover ReferenceClock; usar NTP do host e now() do Postgres              owner: —        since: —
 [x] T-066  Trocar BullMQ/Redis por fila em Postgres                  owner: —        since: —
-[ ] T-067  Migrations no release (migrate deploy) e healthchecks reais               owner: —        since: —
+[x] T-067  Migrations no release (migrate deploy) e healthchecks reais               owner: —        since: —      
 [ ] T-068  Backup diário do Postgres + volume de sessões, com restore testado        owner: —        since: —
 [ ] T-069  CI/CD: build de imagens no GitHub Actions e deploy por SSH                owner: —        since: —
 [ ] T-070  Hardening da VPS: firewall, SSH por chave, fail2ban, updates automáticos  owner: —        since: —
@@ -119,5 +128,5 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 
 ```text
 [x] T-074  Fundir API e worker em servidor único Fastify           owner: —        since: —
-[~] T-075  Migrar o painel de Next.js para Vite na mesma origem     owner: codex    since: 2026-09-21T01:00Z
+[x] T-075  Migrar o painel de Next.js para Vite na mesma origem     owner: —        since: —      
 ```
