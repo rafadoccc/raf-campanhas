@@ -25,10 +25,11 @@ Seu identificador no protocolo é **`claude`**. Use exatamente isso em
 ### Ambiente local (Windows)
 
 - Node 24 / npm 11. Shell primário: PowerShell; Bash também disponível.
-- PostgreSQL e Redis sobem via `docker compose up -d`.
-- `npm run start:local` sobe API (3001), worker (3002) e painel (3000) juntos.
+- Banco: MySQL 8 nativo (serviço `MySQL80`), sem Docker nem Redis. `npm run db:check` diagnostica.
+- `npm run start:local` sobe o servidor (3001, API em `/api`) e o painel (3000). Use `npm.cmd` no PowerShell.
 - Testes que **não** precisam de WhatsApp: `npm test`.
-- Teste de integração (cria e destrói um schema Postgres aleatório): `npm run test:integration`.
+- Teste de integração (cria e destrói um banco MySQL aleatório): `npm run test:integration`.
+- MySQL usa REPEATABLE READ: toda transação com `lockCampaign` precisa de `LOCKING_TRANSACTION` (ADR-010).
 
 ### Antes de encerrar
 

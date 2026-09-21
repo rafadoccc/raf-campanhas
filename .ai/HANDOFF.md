@@ -5,6 +5,36 @@
 
 ---
 
+## 2026-09-21T03:55Z · claude
+
+**Fiz:** migrei o banco de PostgreSQL para MySQL 8 (ADR-010), corrigi o 404 ao gerar o QR,
+implementei a busca em "Grupos participantes" e melhorias validadas (health com banco, sync
+tolerante a grupo sem nome, limite de nome de grupo, launcher recompila quando NEXT_PUBLIC_*
+muda). Validei ponta a ponta no navegador: QR gerado, busca, campanha simulada enviando 3 grupos
+em ordem a 60 s de intervalo e encerrando sozinha.
+**Arquivos:** packages/database/{prisma/schema.prisma, prisma/migrations/*, src/queue.ts,
+src/reads.ts, src/client.ts, src/clock.ts}, apps/server/src/{app.ts, campaign-routes.ts,
+whatsapp.ts, integration.test.ts, whatsapp.test.ts}, apps/web/{next.config.js,
+components/api-url.ts, components/campaign-form.tsx + 9 arquivos que montavam a URL da API},
+scripts/{check-db.mjs, launcher.mjs, test-integration.cjs}, README.md, CLAUDE.md, docs/, .ai/*
+**Tarefas:** T-076, T-077, T-078, T-079 concluídas.
+**Estado:** compila · lint limpo · 26 testes sem banco · **23/23 de integração no MySQL**.
+**Armadilhas:**
+- **Causa do 404 do QR:** o `next build` roda dentro de apps/web e não lia o .env da raiz, então o
+  bundle gravou `http://localhost:3001` sem o `/api` que o servidor passou a exigir. Agora
+  next.config.js carrega o .env da raiz e todas as telas usam `components/api-url.ts`.
+- **Para o Codex (lock T-075):** o dono pediu diretamente estas correções, então editei apps/web
+  sob o seu lock. Não converti nada para Vite. Ao portar para Vite, leve junto: a busca de grupos
+  de campaign-form.tsx (normaliza acentos, "Selecionar exibidos", "Limpar seleção", × na fila) e a
+  URL única da API.
+- **MySQL + lock:** toda transação que chama lockCampaign precisa de LOCKING_TRANSACTION (READ
+  COMMITTED). Sem isso a campanha envia mesmo pausada. O teste
+  "claim waiting on the campaign lock sees a pause..." cobre e foi provado falhando sem a correção.
+- Clicar "Conectar" no teste criou credenciais **não pareadas** em %LOCALAPPDATA%af-campanhassessions.
+  Não clique "Desconectar" num teste se houver sessão pareada: desloga o celular do dono.
+- .env.postgres-backup guarda o .env antigo (ignorado pelo Git).
+**Próximo passo sugerido:** Codex retomar T-075 portando a busca de grupos para o painel Vite.
+
 ## 2026-09-21T01:10Z · codex
 
 **Fiz:** reivindiquei T-075 e instalei as dependências oficiais necessárias para migrar o painel de Next.js para Vite e servi-lo pelo Fastify; nenhuma tela foi convertida ainda.

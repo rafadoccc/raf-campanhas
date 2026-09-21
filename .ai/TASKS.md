@@ -82,6 +82,15 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [ ] T-073  Ícone e assinatura do .exe (evita aviso do SmartScreen)      owner: —        since: —
 ```
 
+## Fase 1c — MySQL, correções e busca (pedido do dono em 2026-09-21)
+
+```
+[x] T-076  Migrar o banco de PostgreSQL para MySQL 8                owner: —        since: —      
+[x] T-077  Corrigir 404 do QR: URL da API gravada no build do Next  owner: —        since: —      
+[x] T-078  Busca por nome em Grupos participantes                   owner: —        since: —      
+[x] T-079  Melhorias gerais validadas (health, launcher, sync)      owner: —        since: —      
+```
+
 ## Fase 5 — Deploy em VPS
 
 ```

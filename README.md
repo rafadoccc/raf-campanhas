@@ -1,30 +1,24 @@
 # Central de Campanhas
 
-Painel em Next.js, API Fastify, worker de envio e PostgreSQL via Prisma.
-Conector WhatsApp com Baileys e provedor simulado separados.
+Painel em Next.js, servidor Fastify (API + despachante de envios + conector WhatsApp)
+e MySQL 8 via Prisma. Conector WhatsApp com Baileys e provedor simulado separados.
 
-Sem Docker e sem Redis: o PostgreSQL instalado na máquina é o banco **e** a fila.
+Sem Docker e sem Redis: o MySQL instalado na máquina é o banco **e** a fila.
 
 ## Iniciar no Windows
 
-Pré-requisitos: **Node.js 22+** e **PostgreSQL 18** instalado localmente, com o serviço
-`postgresql-x64-18` em execução.
+Pré-requisitos: **Node.js 22+** e **MySQL 8** instalado localmente, com o serviço
+`MySQL80` em execução.
 
 1. Na primeira instalação, copie `.env.example` para `.env` e coloque a senha do seu
-   usuário do PostgreSQL em `DATABASE_URL`. Não substitua um `.env` existente.
+   usuário do MySQL em `DATABASE_URL`. Não substitua um `.env` existente.
 
    ```
-   DATABASE_URL=postgresql://postgres:SUA_SENHA@localhost:5432/main_db?schema=campanhas
+   DATABASE_URL=mysql://root:SUA_SENHA@localhost:3306/campanhas
    ```
 
-   As tabelas ficam no schema `campanhas` dentro de `main_db`, isoladas de qualquer
-   outra coisa que você já use nesse banco.
-
-2. Crie o banco, se ainda não existir (pelo pgAdmin, ou pela linha de comando):
-
-   ```powershell
-   & "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres main_db
-   ```
+2. O banco `campanhas` é criado automaticamente (utf8mb4, acentos e emojis) pelo
+   diagnóstico abaixo ou pelo inicializador. Não é preciso criá-lo no MySQL Workbench.
 
 3. Instale e confira a conexão:
 
@@ -33,7 +27,8 @@ Pré-requisitos: **Node.js 22+** e **PostgreSQL 18** instalado localmente, com o
    npm run db:check
    ```
 
-   O diagnóstico diz se o serviço responde, cria o schema `campanhas` se faltar e
+   O diagnóstico diz se o serviço responde, cria o banco `campanhas` se faltar, confere o
+   limite de pacote do MySQL para vídeos de 64 MB e
    avisa se as migrations ainda não foram aplicadas. Ele nunca imprime a senha.
 
 4. Aplique as migrations, gere o client e suba:
@@ -53,7 +48,7 @@ npm.cmd run build:exe -- --desktop
 
 Gera "Central de Campanhas.exe" e o copia para a área de trabalho. Um duplo clique:
 
-1. confere Node, `.env`, PostgreSQL e portas 3000-3002;
+1. confere Node, `.env`, MySQL e as portas 3000 e 3001;
 2. aplica migrations pendentes;
 3. recompila **só se o código mudou** (compara o conteúdo, não a data dos arquivos);
 4. sobe API, worker e painel e abre o navegador.
@@ -90,7 +85,7 @@ A sincronização marca grupos que deixaram de aparecer como inativos.
 - Fila única: primeiro grupo elegível ao ativar; duração mínima `(grupos - 1) × intervalo`.
 - Horários diários: cada horário inicia uma rodada; rodadas nunca se sobrepõem na campanha.
 - No modo agendado, as mensagens alternam por rodada. No modo imediato, alternam por grupo.
-- Só a primeira ativação cria entregas, com sequência e identidade persistidas no PostgreSQL.
+- Só a primeira ativação cria entregas, com sequência e identidade persistidas no MySQL.
 - Worker reconcilia a fila a cada 5 segundos; a espera não depende do navegador.
 - Só o primeiro item pendente da campanha pode ser reservado; existe uma espera mínima
   entre a finalização de uma tentativa e o início da próxima, inclusive após falhas.
@@ -125,7 +120,7 @@ Mostra hoje e ontem no fuso de São Paulo. Simulações não entram em sucesso/e
 
 ### Idempotência e resultados incertos
 
-PostgreSQL controla a reserva PENDING → PROCESSING antes da chamada externa, e é também
+O MySQL controla a reserva PENDING → PROCESSING antes da chamada externa, e é também
 a fila: o worker varre o banco a cada 5 segundos, sem serviço externo. Ele valida estado,
 ordem e intervalo sob lock da campanha, então uma varredura atrasada não contorna
 pausa/encerramento. Um lease em WorkerLease garante um processador por vez. PROCESSING encontrado
@@ -138,11 +133,11 @@ Tentar novamente para falhas; não é possível provar que uma mensagem não foi
 ## Estrutura e limites
 
 - apps/web: painel e conexão por QR.
-- apps/api: campanhas, grupos, histórico e ativação.
-- apps/worker: fila, controle local do conector e adaptador Baileys.
+- apps/server: API em /api (campanhas, grupos, histórico, ativação), despachante da fila e
+  conector Baileys, num único processo na porta 3001.
 - packages/database: modelo Prisma e migrações versionadas.
 - scripts/start-local.cjs: inicia os serviços a partir da raiz, carregando .env.
-- Não há Docker nem Redis: PostgreSQL local é banco e fila (ver .ai/DECISIONS.md, ADR-008).
+- Não há Docker nem Redis: o MySQL local é banco e fila (ver .ai/DECISIONS.md, ADR-008 e ADR-010).
 
 Versão local, um número e um worker. API, worker e painel iniciam no endereço
 de loopback. Não publique esses serviços na internet sem implementar autenticação,
@@ -155,13 +150,13 @@ Não há mecanismos de evasão de restrições, criação de grupos ou adição 
 
 ## Testar e atualizar
 
-Antes de atualizar, pare API/worker/painel com Ctrl+C; mantenha o serviço do PostgreSQL ativo.
+Antes de atualizar, pare API/worker/painel com Ctrl+C; mantenha o serviço MySQL80 ativo.
 Execute `npm run db:deploy`, `npm run db:generate`, `npm run build` e `npm run start:local`.
 A migração interval_queue é aditiva; não exclui dados. Não rode uma versão antiga do
 worker junto da nova. Não há autenticação: mantenha acesso somente local.
 
 - `npm test`: testes de planejamento, protocolo e adaptador, sem WhatsApp.
-- `npm run test:integration`: aplica migrations num schema PostgreSQL aleatório e isolado,
+- `npm run test:integration`: aplica migrations num banco MySQL aleatório e isolado (`campaign_test_*`),
   testa API/estados/reserva concorrente/ordem/falhas/retomada/recibos e remove somente esse
   schema ao terminar. Não usa nem apaga campanhas do schema principal.
 - `npm run lint`: verificação TypeScript de todos os pacotes.
@@ -176,4 +171,4 @@ npm audit também apontou problemas em dependências transitivas existentes
 versão principal. Este projeto ainda não deve ser considerado pronto para produção.
 # Mídia opcional (V1)
 
-Na criação/edição de rascunhos, use **Adicionar mídia** para escolher uma imagem JPEG/PNG ou vídeo MP4 H.264/AAC. É possível visualizar, trocar e remover antes de salvar. A mídia fica no PostgreSQL e acompanha o backup do banco; não apague o volume postgres_data. Aplique migrations com `npm run db:deploy` após atualizar. Consulte [formatos, limites e validação](docs/campaign-media.md).
+Na criação/edição de rascunhos, use **Adicionar mídia** para escolher uma imagem JPEG/PNG ou vídeo MP4 H.264/AAC. É possível visualizar, trocar e remover antes de salvar. A mídia fica no MySQL e acompanha o backup do banco. Aplique migrations com `npm run db:deploy` após atualizar. Consulte [formatos, limites e validação](docs/campaign-media.md).

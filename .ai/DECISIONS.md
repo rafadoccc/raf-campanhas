@@ -269,3 +269,35 @@ Windows mata o processo sem rodar shutdown().
 **Justificativa.** Baileys é uma biblioteca Node e a aplicação já compartilha tipos TypeScript. Um processo reduz portas, chamadas HTTP internas, falhas de inicialização e custo operacional. A SPA same-origin permite cookies httpOnly sem CORS e sem duplicar lógica de sessão no servidor de renderização.
 
 **Consequências.** O painel será migrado antes da autenticação global. A fila continuará usando PostgreSQL, `claimDelivery` e o lease; não haverá retry automático. A transição precisa preservar rotas funcionais e testes. O checkpoint `pre-simplificacao` foi criado antes da mudança.
+---
+
+## ADR-010 — O banco passa a ser MySQL 8
+
+**Data:** 2026-09-21 · **Autor:** claude · **Status:** aceita (decisão do dono)
+**Substitui:** a escolha de PostgreSQL da ADR-008. A parte "o banco é a fila, sem Redis" continua valendo.
+
+**Contexto.** O dono desinstalou o PostgreSQL e passou a usar MySQL 8 (serviço `MySQL80`). O
+sistema ficou fora do ar: o banco configurado não existia mais.
+
+**Decisão.** Prisma com `provider = "mysql"`, banco `campanhas` em utf8mb4. O histórico de
+migrations de PostgreSQL foi substituído por uma baseline única
+(`20260921030000_mysql_baseline`); o histórico antigo continua no Git. Não havia dados a
+migrar (o PostgreSQL já tinha sido removido e o MySQL começou vazio).
+
+**Diferenças que exigiram código, não só configuração:**
+1. **Isolamento (a mais importante).** O InnoDB usa REPEATABLE READ e congela o snapshot na
+   primeira leitura da transação. Em `claimDelivery` essa leitura acontece antes do lock da
+   campanha, então uma pausa confirmada durante a espera pelo lock ficava invisível e a
+   entrega **saía com a campanha pausada** (violaria a ADR-003). Toda transação que chama
+   `lockCampaign` usa `LOCKING_TRANSACTION` (READ COMMITTED), que reproduz a semântica que a
+   fila sempre assumiu. Há teste de regressão, e ele foi verificado falhando sem a correção.
+2. **Identificadores.** Aspas duplas são texto no MySQL; o SQL bruto usa crases.
+3. **Tamanho de coluna.** `String` vira VARCHAR(191): mensagens, corpo da entrega e erros
+   são TEXT; nome de campanha VARCHAR(200); nomes de grupo e mídia VARCHAR(255).
+4. **Pacote.** `max_allowed_packet` precisa comportar o vídeo de 64 MB. O padrão do MySQL 8
+   (64 MB) basta; `npm run db:check` confere, e um blob de 64 MB foi gravado e relido íntegro.
+5. **Teste de integração.** Isolamento por banco descartável `campaign_test_*`, não por schema.
+
+**Consequências.** Comparar DATETIME com NOW() em SQL bruto continua proibido (fuso da sessão).
+No Linux (VPS) o MySQL diferencia maiúsculas em nomes de tabela: use sempre os nomes exatos do
+schema. As ADRs propostas de multi-tenant (004–007) seguem válidas no MySQL.
