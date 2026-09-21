@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-21T21:10Z · claude
+
+**Fiz:** o dono confirmou que o grupo 14 do teste real é "só administradores enviam" (conta não é admin): o WhatsApp aceitou o pedido e a mensagem nunca apareceu. `WhatsAppProvider.send` agora FALHA ANTES de enviar nesse caso (código `grupo:so-admins`); nada sai, então não há duplicação. Também estabilizei o teste "queue delay" (o atalho releaseNext disputava linhas com o despachante e às vezes caía em deadlock; agora usa lockCampaign + LOCKING_TRANSACTION).
+**Arquivos:** apps/server/src/whatsapp.ts, apps/server/src/whatsapp.test.ts, apps/server/src/integration.test.ts, .ai/TASKS.md
+**Tarefas:** T-088 (concluída), T-086 (descartada: dono manteve a ADR-003)
+**Estado:** compila · lint ok · npm test 35+2 ok · integração 35/35 (3 execuções seguidas)
+**Armadilhas:** o bloqueio só age quando a conta é ENCONTRADA na lista de participantes e não é admin; se a lista vier só com LIDs desconhecidos a situação fica "?" e o envio segue (a recusa, se houver, cai no ADR-012). A migration 20260921190000 ainda não tinha sido aplicada no banco local do dono (sistema antigo rodando) — aplica ao abrir o launcher.
+**Próximo passo sugerido:** no próximo teste real, conferir no painel se algum envio fica em "aguardando confirmação de entrega" por muito tempo e anotar o sendContext.
+
 ## 2026-09-21T19:30Z · claude
 
 **Fiz:** investiguei o teste real de 20 grupos (envio 14 "enviado" sem chegar; atrasos) e

@@ -105,8 +105,9 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 ```
 [x] T-084  Registrar tempos, tentativas e código de erro por envio     owner: —        since: —      
 [x] T-085  Capturar recusa do servidor e recibo de entrega pós-envio   owner: —        since: —      
-[ ] T-086  Intervalo ancorado na grade planejada (exige nova ADR)      owner: —        since: —
+[x] T-086  Grade planejada: descartada, dono manteve a ADR-003      owner: —        since: —
 [ ] T-087  Expirar recibos pendentes que nunca vão casar              owner: —        since: —
+[x] T-088  Bloquear envio a grupo só-admins quando a conta não é admin   owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS
