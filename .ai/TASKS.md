@@ -110,6 +110,10 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-088  Bloquear envio a grupo só-admins quando a conta não é admin   owner: —        since: —
 [x] T-089  Selo só admins / você é admin na escolha de grupos       owner: —        since: —
 [x] T-090  Railway: bind 0.0.0.0 e PUBLIC_URL pelo domínio do Railway  owner: —        since: —
+[x] T-091  Reenvio automático só do que comprovadamente não saiu   owner: —        since: —
+[x] T-092  Quantidade de membros por grupo                          owner: —        since: —
+[x] T-093  Previsão e motivo de atraso dos envios pendentes         owner: —        since: —
+[x] T-094  Limpeza geral da interface (textos, blocos de campanha)  owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

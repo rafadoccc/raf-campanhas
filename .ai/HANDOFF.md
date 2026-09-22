@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T05:30Z · claude
+
+**Fiz:** reenvio automático limitado (ADR-014): falha antes do sendMessage (marca `notSent`) e recusa do servidor voltam para a fila na mesma sequência, com 5 e 15 min de espera, até 3 tentativas; resultado incerto continua sem reenvio; recibo de entrega tardio cancela o reenvio. A cabeça da fila passou a ser o primeiro envio em andamento ou já vencido (`dueOrRunning`), para um reenvio agendado não travar os seguintes. `Group.participants` gravado na sincronização e a cada envio. `forecastQueue` dá a previsão e o motivo de espera de cada pendente (`wait` em /api/deliveries). Interface limpa: `components/ui.tsx` com selos, botões e formatos compartilhados; blocos de campanha com progresso e botão "Ver campanha"; menos texto em todas as telas.
+**Arquivos:** packages/database/src/{queue,delivery-events,client}.ts, packages/database/prisma/schema.prisma, migrations/20260922040000_group_participants, apps/server/src/{dispatcher,whatsapp,send-context,queue-forecast,app,campaign-routes,dashboard}.ts, testes, apps/web/src/** (área do codex: assumida por pedido do dono, codex sem tokens)
+**Tarefas:** T-091, T-092, T-093, T-094 (concluídas)
+**Estado:** compila · lint ok · npm test 47+2 ok · integração 38/38
+**Armadilhas:** @fastify/static está com `wildcard: false`: recompilar o painel com o servidor rodando deixa a página em branco até reiniciar (lista de arquivos é lida na partida). "Membros" só aparece depois de sincronizar os grupos. O backend e a UI nova dependem um do outro: a UI tolera servidor antigo (progress/delivered ausentes), mas reinicie os dois juntos.
+**Próximo passo sugerido:** teste real com um grupo só-admins sem permissão para ver as 3 tentativas e o "Falhou nas 3 tentativas"; depois começar multiusuário pelo isolamento de dados (T-010/T-011).
+
 ## 2026-09-22T03:45Z · claude
 
 **Fiz:** corrigi o 502 do Railway. Sem PUBLIC_URL, `loadConfig` caía no modo local e escutava em 127.0.0.1 (o proxy do Railway não alcança); além disso, as origens aceitas eram só localhost, então o login pelo domínio do Railway daria 403 "Origem não permitida". Agora, no Railway (RAILWAY_ENVIRONMENT_ID/RAILWAY_ENVIRONMENT/RAILWAY_PROJECT_ID), o host padrão é 0.0.0.0 e, sem PUBLIC_URL, vale https://RAILWAY_PUBLIC_DOMAIN. Local inalterado (127.0.0.1, PORT do .env, padrão 3000). PUBLIC_URL e HOST continuam tendo prioridade.

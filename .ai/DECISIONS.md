@@ -372,3 +372,31 @@ sincronização (`groupFetchAllParticipating`) e atualizados a cada envio (`grou
 "não deu para confirmar", e avisa quando há grupos selecionados que não vão receber.
 O bloqueio real continua no envio (`grupo:so-admins`, antes do sendMessage); o selo é só
 informação e reflete a última sincronização.
+
+## ADR-014 · Reenvio automático limitado, só do que comprovadamente não saiu
+
+**Data:** 2026-09-22 · **Status:** aceita (pedido explícito do dono) · **Autor:** claude
+**Altera:** ADR-003 ("falha nunca é repetida") para as falhas em que é certo que nada chegou.
+
+**Reenvia** (volta para a fila, mesma sequência, novo `scheduledAt`):
+- falha ANTES do `sendMessage` (desconectado, metadata do grupo, só-admins, grupo inativo…),
+  marcada com `notSent` em `WhatsAppProvider.prepareSend`;
+- recusa do servidor depois do envio (`messages.update` ERROR, ADR-012): comprova que não chegou.
+
+**Nunca reenvia:** `sendMessage` que lançou erro, retorno sem id, processo interrompido durante
+o envio (PROCESSING órfão) e "enviado sem confirmação de entrega". Nesses casos a mensagem pode
+ter chegado e o WhatsApp não deduplica.
+
+**Limite:** 3 tentativas no total (`MAX_SEND_ATTEMPTS`), esperando 5 min e depois 15 min
+(`retryAt`). Esgotou: `FAILED` com "Falhou nas 3 tentativas". Recibo de entrega da mensagem
+antiga chegando para um envio que aguarda reenvio cancela o reenvio (`SENT`).
+
+**Fila:** a cabeça passa a ser o primeiro envio (por sequência) em andamento ou já vencido
+(`dueOrRunning`). Como os horários planejados crescem com a sequência, para envios normais é a
+mesma cabeça de antes; a diferença é que um reenvio agendado não trava os seguintes. Continua:
+um envio por vez, intervalo contado do fim do anterior, reserva sob lock da campanha.
+
+**Contrato:** `GET /api/deliveries?campaignId` ganha `wait` (`expectedAt`, `lateMinutes`,
+`reason`) calculado por `forecastQueue` só na 1ª página; `group.participants`. `GET /api/campaigns`
+ganha `progress` (contagem por status). `Group.participants` (Int?) gravado na sincronização e
+a cada envio.
