@@ -1379,10 +1379,75 @@ test('isolation: userId in body, query or headers never widens or changes the sc
   assert.equal(anonymous.statusCode, 401);
 });
 
+// ─── Conexão de WhatsApp por usuário (ADR-019, Fase 4A) ─────────────────────────
+// Só o modelo e as regras do banco: o sistema continua usando a conexão global.
+const waUser = async (email: string) => prisma.user.upsert({ where: { email }, update: {}, create: { email, name: email.split('@')[0], passwordHash: 'x' } });
+
+test('whatsapp session (4A): one per user, and a paired number belongs to a single user', async () => {
+  const a = await waUser('wa-a@teste.local');
+  const b = await waUser('wa-b@teste.local');
+  const first = await prisma.whatsAppSession.create({ data: { userId: a.id } });
+  assert.deepEqual([first.accountJid, first.state, first.autoConnect, first.lastConnectedAt, first.lastError], [null, 'disconnected', true, null, null], 'começa desconectada, sem número');
+  await assert.rejects(prisma.whatsAppSession.create({ data: { userId: a.id } }), (e: { code?: string }) => e.code === 'P2002', 'um usuário, uma conexão');
+  // Antes do pareamento o número é nulo: vários nulos convivem.
+  const second = await prisma.whatsAppSession.create({ data: { userId: b.id } });
+  assert.equal(second.accountJid, null);
+  assert.equal(await prisma.whatsAppSession.count({ where: { userId: { in: [a.id, b.id] }, accountJid: null } }), 2);
+  // Depois do pareamento, o número é de um usuário só.
+  const jid = `5511${Date.now()}@s.whatsapp.net`;
+  await prisma.whatsAppSession.update({ where: { userId: a.id }, data: { accountJid: jid, state: 'connected', lastConnectedAt: new Date() } });
+  await assert.rejects(prisma.whatsAppSession.update({ where: { userId: b.id }, data: { accountJid: jid } }), (e: { code?: string }) => e.code === 'P2002', 'mesmo número em dois usuários: recusado');
+  await prisma.whatsAppSession.update({ where: { userId: b.id }, data: { accountJid: `5521${Date.now()}@s.whatsapp.net`, state: 'connected' } });
+  assert.equal(await prisma.whatsAppSession.count({ where: { userId: { in: [a.id, b.id] }, state: 'connected' } }), 2, 'duas conexões independentes convivem');
+});
+
+test('whatsapp session (4A): stores no credentials, and goes away with the user', async () => {
+  const columns = (await prisma.$queryRawUnsafe<{ COLUMN_NAME: string }[]>("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'WhatsAppSession'")).map(c => c.COLUMN_NAME).sort();
+  assert.deepEqual(columns, ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'state', 'updatedAt', 'userId'], 'nenhuma coluna de QR, creds ou chave do Baileys');
+  const temp = await prisma.user.create({ data: { email: `wa-temp-${Date.now()}@teste.local`, name: 'Temp', passwordHash: 'x' } });
+  await prisma.whatsAppSession.create({ data: { userId: temp.id } });
+  await prisma.user.delete({ where: { id: temp.id } }); // usuário sem dados pode ser apagado
+  assert.equal(await prisma.whatsAppSession.count({ where: { userId: temp.id } }), 0, 'a linha da conexão vai junto');
+});
+
+test('migration (real MySQL): WhatsAppSession is created without touching any existing data', async () => {
+  await withLegacyDatabase(async (db, apply, names) => {
+    const target = '20260922200000_whatsapp_session';
+    for (const name of names.slice(0, names.indexOf(target))) await apply(name);
+    const x = (sql: string) => db.$executeRawUnsafe(sql);
+    await x("INSERT INTO `User` (id, email, name, passwordHash, role, updatedAt) VALUES ('u-dono', 'dono@x', 'Dono', 'h', 'SUPER_ADMIN', NOW(3))");
+    await x("INSERT INTO `Group` (id, userId, externalId, name, updatedAt) VALUES ('g1', 'u-dono', '1203001@g.us', 'Grupo', NOW(3))");
+    await x("INSERT INTO `Campaign` (id, userId, name, startsAt, endsAt, status, provider, accountJid, mode, intervalSeconds, updatedAt) VALUES ('c1', 'u-dono', 'Campanha', NOW(3), NOW(3), 'ACTIVE', 'baileys', '5511@s.whatsapp.net', 'IMMEDIATE', 180, NOW(3))");
+    await x("INSERT INTO `CampaignGroup` (campaignId, groupId, userId, position) VALUES ('c1', 'g1', 'u-dono', 0)");
+    await x("INSERT INTO `Delivery` (id, campaignId, groupId, messageBody, scheduledAt, status, provider, sequence, updatedAt) VALUES ('d1', 'c1', 'g1', 'oi', NOW(3), 'SENT', 'baileys', 0, NOW(3))");
+    await x("INSERT INTO `WhatsAppAccount` (id, nextAvailableAt, lastSendEndedAt, lastIntervalSeconds) VALUES ('5511@s.whatsapp.net', '2026-09-21 17:03:05.000', '2026-09-21 17:00:05.000', 180)");
+    const tables = ['User', 'Group', 'Campaign', 'CampaignGroup', 'Delivery', 'WhatsAppAccount'];
+    const count = async () => Object.fromEntries(await Promise.all(tables.map(async t => [t, Number((await db.$queryRawUnsafe<{ n: bigint }[]>(`SELECT COUNT(*) AS n FROM \`${t}\``))[0].n)])));
+    const before = await count();
+    const paceBefore = JSON.stringify(await db.$queryRawUnsafe('SELECT * FROM `WhatsAppAccount`'));
+    const campaignBefore = JSON.stringify(await db.$queryRawUnsafe('SELECT * FROM `Campaign`'));
+
+    await apply(target);
+
+    assert.deepEqual(await count(), before, 'nenhuma linha mudou de número');
+    assert.equal(JSON.stringify(await db.$queryRawUnsafe('SELECT * FROM `WhatsAppAccount`')), paceBefore, 'ritmo por número intacto');
+    assert.equal(JSON.stringify(await db.$queryRawUnsafe('SELECT * FROM `Campaign`')), campaignBefore, 'campanhas intactas');
+    assert.equal(Number((await db.$queryRawUnsafe<{ n: bigint }[]>("SELECT COUNT(*) AS n FROM `WhatsAppSession`"))[0].n), 0, 'tabela nova nasce vazia');
+    // As regras valem já no banco migrado.
+    await db.$executeRawUnsafe("INSERT INTO `User` (id, email, name, passwordHash, updatedAt) VALUES ('u-b', 'b@x', 'B', 'h', NOW(3))");
+    await db.$executeRawUnsafe("INSERT INTO `WhatsAppSession` (id, userId, updatedAt) VALUES ('s1', 'u-dono', NOW(3)), ('s2', 'u-b', NOW(3))");
+    await assert.rejects(db.$executeRawUnsafe("INSERT INTO `WhatsAppSession` (id, userId, updatedAt) VALUES ('s3', 'u-dono', NOW(3))"), /Duplicate/, 'uma conexão por usuário');
+    await db.$executeRawUnsafe("UPDATE `WhatsAppSession` SET accountJid = '5511@s.whatsapp.net' WHERE id = 's1'");
+    await assert.rejects(db.$executeRawUnsafe("UPDATE `WhatsAppSession` SET accountJid = '5511@s.whatsapp.net' WHERE id = 's2'"), /Duplicate/, 'um número, um usuário');
+    await assert.rejects(db.$executeRawUnsafe("INSERT INTO `WhatsAppSession` (id, userId, updatedAt) VALUES ('s4', 'nao-existe', NOW(3))"), /foreign key/i);
+  });
+});
+
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
   await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto
+  await prisma.whatsAppSession.deleteMany();
   await prisma.campaignMedia.deleteMany();
   await prisma.group.deleteMany();
   await prisma.user.deleteMany();

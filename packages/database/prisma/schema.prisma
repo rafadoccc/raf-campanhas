@@ -216,6 +216,7 @@ model User {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sessions     AuthSession[]
+  whatsapp     WhatsAppSession?
   campaigns    Campaign[]
   groups       Group[]
   media        CampaignMedia[]
@@ -250,4 +251,26 @@ model WhatsAppAccount {
   lastIntervalSeconds Int?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @default(now()) @updatedAt
+}
+
+// Conexão de WhatsApp de um usuário (ADR-019, Fase 4A). Guarda só o que o painel e a partida
+// precisam saber; NADA de credencial: creds.json e as chaves do Baileys continuam em arquivos,
+// na pasta da sessão daquele usuário (session-paths.ts). QR nunca é persistido.
+// Nesta arquitetura inicial: uma conexão por usuário e um número em um só usuário.
+model WhatsAppSession {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Número pareado (JID). Fica null até o pareamento; vários null convivem, mas um número
+  // pareado pertence a um único usuário (@unique).
+  accountJid      String?   @unique
+  // Último estado conhecido, só para exibição: disconnected, connecting, qr, connected,
+  // reconnecting, error. A verdade em tempo real continua na memória do provider.
+  state           String    @default("disconnected") @db.VarChar(20)
+  lastConnectedAt DateTime?
+  lastError       String?   @db.VarChar(255)
+  // Reconectar sozinho na partida (Fase 4B). Usuário desativado não reconecta.
+  autoConnect     Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
