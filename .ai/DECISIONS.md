@@ -450,3 +450,29 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
   vazio) = SUPER_ADMIN; depois `user:create` = USER; SUPER_ADMIN só com `--super-admin` +
   confirmação digitada. `user:create` nunca altera o papel de conta existente.
 - SUPER_ADMIN não verá conteúdo privado de campanhas/mensagens dos usuários (Fase 5/6).
+
+
+## ADR-017 · Dono dos dados por userId (multiusuário, Fase 2)
+
+**Data:** 2026-09-22 · **Status:** aceita (decisão do dono) · **Autor:** claude
+**Substitui:** a ADR-004 (organizationId) e parte da ADR-005 (grupo por sessão → grupo por dono).
+
+- `Group`, `Campaign` e `CampaignMedia` têm `userId` obrigatório (FK `User`, ON DELETE RESTRICT:
+  conta com dados não pode ser apagada — desative com `disabledAt`).
+- Os demais dados herdam o dono pela campanha: `CampaignMessage`, `CampaignSchedule`, `Delivery`,
+  `DeliveryRead`. `CampaignGroup` ganha `userId` só para as chaves compostas.
+- Chaves compostas fazem o BANCO recusar mistura de donos:
+  `CampaignGroup(userId, campaignId) → Campaign(userId, id)`,
+  `CampaignGroup(userId, groupId) → Group(userId, id)`,
+  `Campaign(userId, mediaId) → CampaignMedia(userId, id)`.
+- `Group.externalId` deixa de ser único global: `@@unique([userId, externalId])`.
+- Migration `20260922160000_data_ownership`: dados existentes vão para o ÚNICO SUPER_ADMIN ativo.
+  Com dados e zero ou mais de um SUPER_ADMIN ativo, a migration para na 1ª instrução (CHECK numa
+  tabela temporária) sem alterar nada; banco vazio não exige SUPER_ADMIN.
+- Dono SEMPRE vem de `request.user.id`: criação de grupo, mídia e campanha e a sincronização de
+  grupos (`WhatsAppProvider.sync(ownerId)`, que só desativa grupos do próprio dono).
+- **Ainda não (Fase 3):** leitura, edição e listagem continuam sem filtro por dono.
+- `WhatsAppAccount` (ritmo por número, ADR-015) fica sem dono até a Fase 4: a chave é o número, e
+  a linha passará a pertencer à sessão de WhatsApp do usuário.
+- `Delivery` não tem userId nem FK composta para o grupo: é criada a partir de `CampaignGroup`
+  (já protegido) pelo planejador.

@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T17:30Z · claude
+
+**Fiz:** multiusuário Fase 2 (ADR-017): `userId` obrigatório em Group, Campaign e CampaignMedia, chaves compostas que impedem campanha com grupo/mídia de outro dono, grupo único por (userId, externalId). Migration com trava (exatamente um SUPER_ADMIN ativo quando há dados) e backfill para o SUPER_ADMIN. Criação de grupo/mídia/campanha e sincronização de grupos usam o usuário da sessão.
+**Arquivos:** packages/database/prisma/schema.prisma, migrations/20260922160000_data_ownership, apps/server/src/{app,media,whatsapp}.ts, apps/server/src/integration.test.ts
+**Tarefas:** T-097 (concluída)
+**Estado:** compila · lint ok · npm test 47+2 ok · integração 60/60 · ensaio da migration numa cópia do banco local do dono: contagens idênticas em todas as tabelas, tudo atribuído ao SUPER_ADMIN
+**Armadilhas:** o banco local do dono ainda não aplicou pace/roles/ownership (sistema antigo aberto); aplicam em sequência ao reiniciar. Apagar usuário com dados agora falha (RESTRICT) — testes que limpam usuários precisam apagar campanhas, mídias e grupos antes. `prepareSend` ainda atualiza os selos de TODAS as linhas do mesmo externalId (Fase 4). Leituras/edições ainda não filtram por dono (Fase 3). `prisma migrate diff` contra banco no Windows continua mostrando ruído de minúsculas; compare schema com schema (--from-schema-datamodel).
+**Próximo passo sugerido:** aguardar aprovação do dono para a Fase 3 (filtro por dono em todas as rotas + testes de isolamento por rota).
+
 ## 2026-09-22T15:00Z · claude
 
 **Fiz:** multiusuário Fase 1 (ADR-016): enum `UserRole` (SUPER_ADMIN/USER, padrão USER), migration que converte OWNER → SUPER_ADMIN sem tocar em sessões, `requireSuperAdmin` para futuras rotas admin, bootstrapAdmin cria SUPER_ADMIN, `user:create` cria USER (SUPER_ADMIN só com `--super-admin` + confirmação; primeira conta do sistema é SUPER_ADMIN).
