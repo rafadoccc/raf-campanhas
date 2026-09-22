@@ -476,3 +476,25 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
   a linha passará a pertencer à sessão de WhatsApp do usuário.
 - `Delivery` não tem userId nem FK composta para o grupo: é criada a partir de `CampaignGroup`
   (já protegido) pelo planejador.
+
+
+## ADR-018 · APIs isoladas por usuário (multiusuário, Fase 3)
+
+**Data:** 2026-09-22 · **Status:** aceita (decisão do dono) · **Autor:** claude
+
+- Toda rota de dados usa `request.user.id` (sessão validada no servidor) como escopo. Nenhum
+  `userId` do corpo, da query ou de cabeçalho é lido.
+- Recurso de outro usuário responde **404 com o mesmo corpo** de um recurso inexistente
+  (`NotFoundError` em security.ts). Vale para GET/PATCH/DELETE de campanha, mudança de status e
+  download de mídia. Listagens simplesmente não trazem dados alheios (inclusive
+  `/api/deliveries?campaignId=<de outro>`, que devolve lista vazia).
+- Rotas escopadas: `GET /api/groups`, `GET /api/campaigns`, `GET/PATCH/DELETE /api/campaigns/:id`,
+  `PATCH /api/campaigns/:id/status`, `GET /api/deliveries` (e a previsão), `GET /api/dashboard`
+  (`dashboardSummary(userId)`: todas as contagens pelas campanhas do usuário), `GET /api/media/:id`.
+  Criação (grupo, mídia, campanha) já usava a sessão desde a ADR-017.
+- SUPER_ADMIN nas rotas normais vê só os próprios dados. Visão global será `/api/admin/*` com
+  `requireSuperAdmin` (ainda não existe).
+- **Fora do isolamento até a Fase 4:** `/api/whatsapp/*` (conexão única global), ativação de
+  campanha real (usa o número global), processos do sistema (despachante, recibos, eventos do
+  servidor) e os selos de grupo gravados no envio (`prepareSend` atualiza todas as linhas do mesmo
+  externalId).

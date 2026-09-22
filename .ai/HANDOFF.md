@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T19:00Z · claude
+
+**Fiz:** multiusuário Fase 3 (ADR-018): todas as rotas de dados escopadas por `request.user.id`; recurso alheio = 404 idêntico ao inexistente (`NotFoundError`); dashboard por usuário; download de mídia só do dono. 7 testes de isolamento/IDOR com dois usuários reais + SUPER_ADMIN.
+**Arquivos:** apps/server/src/{app,campaign-routes,dashboard,media,security}.ts, apps/server/src/integration.test.ts
+**Tarefas:** T-098 (concluída)
+**Estado:** compila · lint ok · npm test 47+2 ok · integração 67/67 (2 execuções) · frontend sem mudanças
+**Armadilhas:** /api/whatsapp/* continua GLOBAL (qualquer usuário logado vê QR/número, conecta/desconecta e sincroniza os grupos do WhatsApp global para a própria conta); ativar campanha real usa o número global. Não criar contas USER para terceiros antes da Fase 4. Testes de isolamento compartilham um "mundo" (isoWorld) criado sob demanda; testes seguintes podem acrescentar dados a A/B — compare com o banco, não com listas fixas.
+**Próximo passo sugerido:** aguardar aprovação do dono para a Fase 4 (WhatsApp por usuário).
+
 ## 2026-09-22T17:30Z · claude
 
 **Fiz:** multiusuário Fase 2 (ADR-017): `userId` obrigatório em Group, Campaign e CampaignMedia, chaves compostas que impedem campanha com grupo/mídia de outro dono, grupo único por (userId, externalId). Migration com trava (exatamente um SUPER_ADMIN ativo quando há dados) e backfill para o SUPER_ADMIN. Criação de grupo/mídia/campanha e sincronização de grupos usam o usuário da sessão.

@@ -117,6 +117,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-095  Intervalo mínimo por número de WhatsApp (ADR-006)       owner: —        since: —
 [x] T-096  Multiusuário Fase 1: papéis SUPER_ADMIN/USER e autorização  owner: —        since: —
 [x] T-097  Multiusuário Fase 2: dono (userId) em Campaign/Group/Media  owner: —        since: —
+[x] T-098  Multiusuário Fase 3: isolamento das APIs por usuário      owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS
