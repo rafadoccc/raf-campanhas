@@ -9,8 +9,10 @@ import {
   acquireLease,
   renewLease,
   releaseLease,
+  dueOrRunning,
 } from '@campaign/database';
 import type { WhatsAppProvider } from './whatsapp';
+import { isNotSent, notSent } from './send-context';
 
 // O que o despachante usa do conector. Permite testar o fluxo inteiro com um conector falso.
 export type SendingProvider = Pick<WhatsAppProvider, 'status' | 'send' | 'flushReads' | 'flushDeliveryEvents'>;
@@ -53,7 +55,7 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
     if (!delivery) return;
     lastSendAt = Date.now();
     try {
-      if (!delivery.group.active) throw new Error('Grupo inativo.');
+      if (!delivery.group.active) throw notSent(new Error('Grupo inativo. Sincronize os grupos.'));
       let providerId: string;
       let context: string | undefined;
       if (delivery.provider === 'simulator') {
@@ -76,10 +78,13 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
       // SENT = o WhatsApp recebeu o pedido. Entrega ou recusa chegam depois (ADR-012).
       await finishDelivery(prisma, id, { providerId, context });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha no envio';
+      const message = error instanceof Error ? error.message : 'Falha no envio.';
+      // Só o que comprovadamente não saiu volta para a fila (ADR-014); o resto é incerto.
+      const retryable = isNotSent(error);
       await finishDelivery(prisma, id, {
-        error: `${message} Resultado pode ser incerto. Sem repetição automática para evitar duplicatas.`,
+        error: retryable ? message : `${message} Resultado incerto: confira no celular. Sem reenvio automático para não duplicar.`,
         code: errorCodeOf(error),
+        retryable,
       });
     }
   }
@@ -104,7 +109,7 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
         },
         include: {
           deliveries: {
-            where: { status: { in: ['PENDING', 'PROCESSING'] } },
+            where: dueOrRunning(now),
             orderBy: { sequence: 'asc' },
             take: 1,
           },

@@ -31,6 +31,8 @@ model Group {
   // Situação na última sincronização/envio; null = desconhecida.
   adminOnly  Boolean?
   isAdmin    Boolean?
+  // Quantidade de membros na última sincronização/envio (identifica grupos de nome igual).
+  participants Int?
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
   deliveries Delivery[]

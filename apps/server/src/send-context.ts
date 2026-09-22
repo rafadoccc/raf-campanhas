@@ -23,6 +23,15 @@ export function describeGroupForSend(group: GroupInfo, me: { id?: string; lid?: 
   ].join(' ');
   // isAdmin: null quando a conta não foi encontrada (desconhecido, nunca "não").
   const isAdmin = self ? Boolean(self.admin) : null;
+  const participants = group.size ?? group.participants?.length ?? null;
   // Só afirma o bloqueio quando tem certeza: grupo restrito E a conta encontrada sem ser admin.
-  return { context, onlyAdmins, isAdmin, adminOnlyWithoutPermission: onlyAdmins && isAdmin === false };
+  return { context, onlyAdmins, isAdmin, participants, adminOnlyWithoutPermission: onlyAdmins && isAdmin === false };
 }
+
+// Falha antes de o sendMessage ser chamado: nada saiu, então o envio pode ser tentado de novo
+// (ADR-014). Qualquer falha sem esta marca é tratada como resultado incerto.
+export function notSent(error: unknown): Error {
+  const e = error instanceof Error ? error : new Error(String(error));
+  return Object.assign(e, { notSent: true });
+}
+export const isNotSent = (error: unknown) => (error as { notSent?: unknown } | null)?.notSent === true;

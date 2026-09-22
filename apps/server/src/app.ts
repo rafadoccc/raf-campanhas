@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION } from '@campaign/database';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS } from '@campaign/database';
+import { forecastQueue } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
 import { registerMediaRoutes } from './media';
@@ -58,29 +59,43 @@ app.post('/api/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
-app.get('/api/campaigns', async () => { await completeFinished(prisma); return prisma.campaign.findMany({
-  where: { deletedAt: null },
-  orderBy: { createdAt: 'desc' },
-  include: {
-    groups: { orderBy: { position: 'asc' }, include: { group: { select: { id: true, name: true } } } },
-    messages: { orderBy: { position: 'asc' } },
-    schedules: { orderBy: { time: 'asc' } },
-    _count: { select: { deliveries: true } }
-  }
-}); });
+app.get('/api/campaigns', async () => {
+  await completeFinished(prisma);
+  const campaigns = await prisma.campaign.findMany({
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      groups: { orderBy: { position: 'asc' }, include: { group: { select: { id: true, name: true } } } },
+      messages: { orderBy: { position: 'asc' } },
+      schedules: { orderBy: { time: 'asc' } },
+      _count: { select: { deliveries: true } }
+    }
+  });
+  // Contagem por status, para o bloco da campanha mostrar o progresso sem abrir o detalhe.
+  const counts = await prisma.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: campaigns.map(c => c.id) } }, _count: { _all: true } });
+  return campaigns.map(campaign => ({
+    ...campaign,
+    progress: Object.fromEntries(counts.filter(row => row.campaignId === campaign.id).map(row => [row.status, row._count._all])),
+  }));
+});
 
 app.get('/api/deliveries', async (request) => {
   const query = request.query as { status?: string; campaignId?: string; page?: string };
   const statuses = ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'CANCELLED'] as const;
   const status = statuses.find(item => item === query.status);
-  return prisma.delivery.findMany({
+  const page = Math.max(0, Math.min(10000, parseInt(query.page ?? '0') || 0));
+  const deliveries = await prisma.delivery.findMany({
     where: { ...(status ? { status } : {}), ...(query.campaignId ? { campaignId: query.campaignId } : {}) },
     orderBy: query.campaignId ? { sequence: 'asc' } : { scheduledAt: 'desc' },
     take: 100,
-    skip: Math.max(0, Math.min(10000, parseInt(query.page ?? '0') || 0)) * 100,
+    skip: page * 100,
     // Sem messageBody: a listagem não precisa do texto das mensagens e não deve expô-lo.
-    select: { id: true, campaignId: true, groupId: true, status: true, provider: true, sequence: true, scheduledAt: true, sentAt: true, error: true, attemptedAt: true, sendReturnedAt: true, deliveredAt: true, serverRejectedAt: true, errorCode: true, attempts: true, sendContext: true, campaign: { select: { name: true } }, group: { select: { name: true } }, _count: { select: { reads: true } } }
+    select: { id: true, campaignId: true, groupId: true, status: true, provider: true, sequence: true, scheduledAt: true, sentAt: true, error: true, attemptedAt: true, sendReturnedAt: true, deliveredAt: true, serverRejectedAt: true, errorCode: true, attempts: true, sendContext: true, campaign: { select: { name: true } }, group: { select: { name: true, participants: true } }, _count: { select: { reads: true } } }
   });
+  // Previsão e motivo de espera dos pendentes (só na 1ª página: as anteriores definem a fila).
+  const campaign = query.campaignId && page === 0 && !status ? await prisma.campaign.findUnique({ where: { id: query.campaignId } }) : null;
+  const forecast = campaign ? forecastQueue(deliveries, campaign, await currentTime(), provider.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
+  return deliveries.map(delivery => ({ ...delivery, wait: forecast?.get(delivery.id) ?? null }));
 });
 
 for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/api/campaigns' : '/api/campaigns/:id', handler: async (request, reply) => {

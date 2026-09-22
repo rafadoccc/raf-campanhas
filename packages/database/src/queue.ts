@@ -25,6 +25,25 @@ export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
   await tx.$queryRaw`SELECT id FROM \`Campaign\` WHERE id = ${id} FOR UPDATE`;
 }
 
+// Reenvio automático (ADR-014): só de falhas em que é CERTO que nada chegou ao grupo (falha
+// antes do sendMessage ou recusa do servidor). Envio de resultado incerto nunca é repetido.
+export const MAX_SEND_ATTEMPTS = 3;
+const RETRY_DELAYS_MS = [5 * 60_000, 15 * 60_000];
+
+/** Quando tentar de novo depois da tentativa número `attempts`; null = esgotou. */
+export function retryAt(attempts: number, at: Date): Date | null {
+  if (attempts >= MAX_SEND_ATTEMPTS) return null;
+  const delay = RETRY_DELAYS_MS[Math.min(Math.max(attempts, 1), RETRY_DELAYS_MS.length) - 1];
+  return new Date(at.getTime() + delay);
+}
+
+// Cabeça da fila: o primeiro envio (por sequência) em andamento ou já vencido. Na criação os
+// horários crescem com a sequência, então isto é a mesma cabeça de sempre; a diferença é que
+// um reenvio agendado para mais tarde não trava os envios seguintes.
+export const dueOrRunning = (at: Date) => ({
+  OR: [{ status: 'PROCESSING' as const }, { status: 'PENDING' as const, scheduledAt: { lte: at } }],
+});
+
 // One durable claim per delivery. A crash after this point is deliberately NOT retried.
 export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
   now ??= await currentTime();
@@ -35,7 +54,7 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
     await lockCampaign(tx, candidate.campaignId);
     const campaign = await tx.campaign.findUnique({ where: { id: candidate.campaignId } });
     if (!campaign || campaign.deletedAt || campaign.status !== 'ACTIVE' || (campaign.nextAvailableAt && campaign.nextAvailableAt > at)) return null;
-    const head = await tx.delivery.findFirst({ where: { campaignId: campaign.id, status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: { sequence: 'asc' }, include: { group: true } });
+    const head = await tx.delivery.findFirst({ where: { campaignId: campaign.id, ...dueOrRunning(at) }, orderBy: { sequence: 'asc' }, include: { group: true } });
     if (!head || head.id !== id || head.status !== 'PENDING' || head.scheduledAt > at) return null;
     const claimed = await tx.delivery.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'PROCESSING', attemptedAt: at, updatedAt: at, error: null, attempts: { increment: 1 } } });
     if (!claimed.count) return null;
@@ -46,7 +65,8 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
 
 // Resultado do envio. context descreve o grupo no momento do envio; code é o código
 // técnico da falha (ex.: status do Baileys), guardado à parte da mensagem legível.
-export type SendOutcome = ({ providerId: string } | { error: string; code?: string }) & { context?: string };
+// retryable = a falha aconteceu antes de qualquer coisa sair (ADR-014).
+export type SendOutcome = ({ providerId: string } | { error: string; code?: string; retryable?: boolean }) & { context?: string };
 
 export async function finishDelivery(db: PrismaClient, id: string, outcome: SendOutcome, now?: Date) {
   now ??= await currentTime();
@@ -56,9 +76,18 @@ export async function finishDelivery(db: PrismaClient, id: string, outcome: Send
     if (!delivery) return;
     await lockCampaign(tx, delivery.campaignId);
     const campaign = await tx.campaign.findUniqueOrThrow({ where: { id: delivery.campaignId } });
-    const changed = await tx.delivery.updateMany({ where: { id, status: 'PROCESSING' }, data: 'providerId' in outcome
-      ? { status: 'SENT', providerId: outcome.providerId, sentAt: at, sendReturnedAt: at, updatedAt: at, error: null, sendContext: outcome.context?.slice(0, 160) }
-      : { status: 'FAILED', sendReturnedAt: at, updatedAt: at, error: outcome.error, errorCode: outcome.code?.slice(0, 64), sendContext: outcome.context?.slice(0, 160) } });
+    const context = outcome.context?.slice(0, 160);
+    let data: Prisma.DeliveryUpdateManyMutationInput;
+    if ('providerId' in outcome) {
+      data = { status: 'SENT', providerId: outcome.providerId, sentAt: at, sendReturnedAt: at, updatedAt: at, error: null, errorCode: null, serverRejectedAt: null, sendContext: context };
+    } else {
+      const failure = { sendReturnedAt: at, updatedAt: at, errorCode: outcome.code?.slice(0, 64), sendContext: context };
+      const retry = outcome.retryable && !campaign.deletedAt && ['ACTIVE', 'PAUSED'].includes(campaign.status) ? retryAt(delivery.attempts, at) : null;
+      data = retry
+        ? { ...failure, status: 'PENDING', scheduledAt: retry, error: outcome.error }
+        : { ...failure, status: 'FAILED', error: outcome.retryable && delivery.attempts > 1 ? `Falhou nas ${delivery.attempts} tentativas. ${outcome.error}` : outcome.error };
+    }
+    const changed = await tx.delivery.updateMany({ where: { id, status: 'PROCESSING' }, data });
     if (!changed.count) return;
     // Full interval after completion, even after a slow send or a restart.
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: new Date(at.getTime() + campaign.intervalSeconds * 1000), updatedAt: at, ...(campaign.status === 'PAUSED' ? { pausedAt: at } : {}) } });

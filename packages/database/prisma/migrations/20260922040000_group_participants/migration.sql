@@ -1,0 +1,1 @@
+ALTER TABLE `Group` ADD COLUMN `participants` INTEGER NULL;

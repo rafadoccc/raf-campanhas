@@ -54,6 +54,16 @@ test('provider errors propagate instead of recording success', async () => {
   Object.assign(provider, { socket: { groupMetadata: async () => { throw new Error('No permission'); } } });
   await assert.rejects(provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), /No permission/);
 });
+test('only failures before sendMessage are marked as not sent (safe to retry)', async () => {
+  const { isNotSent } = await import('./send-context.js');
+  const { provider } = fake();
+  const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;
+  Object.assign(socket, { groupMetadata: async () => { throw new Error('metadata'); } });
+  await assert.rejects(provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), (e: unknown) => isNotSent(e));
+  Object.assign(socket, { groupMetadata: async () => ({}), sendMessage: async () => { throw new Error('Timed Out'); } });
+  await assert.rejects(provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), (e: unknown) => !isNotSent(e) && /Timed Out/.test(String(e)));
+  await assert.rejects(new WhatsAppProvider().send('a@g.us', 'x', null), (e: unknown) => isNotSent(e), 'desconectado: nada saiu');
+});
 
 for (const kind of ['image', 'video'] as const) test(`${kind} and caption are exactly one provider message`, async () => {
   const { provider, sent } = fake();

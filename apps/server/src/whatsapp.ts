@@ -2,7 +2,7 @@ import path from 'node:path';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads, applyServerEvent, type ServerEvent } from '@campaign/database';
-import { describeGroupForSend } from './send-context';
+import { describeGroupForSend, notSent } from './send-context';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
 import { closeAction } from './connection-policy';
@@ -223,25 +223,33 @@ export class WhatsAppProvider {
       for (const group of groups) {
         // Grupos sem assunto (antigos ou comunidades) derrubariam a sincronização inteira.
         const name = groupName(group.subject, group.id);
-        const { onlyAdmins: adminOnly, isAdmin } = describeGroupForSend(group, me);
-        const data = { name, adminOnly, isAdmin };
+        const { onlyAdmins: adminOnly, isAdmin, participants } = describeGroupForSend(group, me);
+        const data = { name, adminOnly, isAdmin, participants };
         await tx.group.upsert({ where: { externalId: group.id }, update: { ...data, active: true }, create: { externalId: group.id, ...data } });
       }
     }, { timeout: 30000 });
     return { count: groups.length };
   }
   async send(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null) {
+    // Tudo até o sendMessage: uma falha aqui garante que nada saiu (reenvio permitido, ADR-014).
+    const { sock, content, group } = await this.prepareSend(groupJid, text, accountJid, media).catch(error => { throw notSent(error); });
+    // Daqui em diante o resultado pode ser incerto: nunca é reenviado automaticamente.
+    const result = await sock.sendMessage(groupJid, content);
+    if (!result?.key.id) throw new Error('Resultado do envio desconhecido. Confira no celular antes de reenviar.');
+    // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
+    return { messageId: result.key.id, context: group.context };
+  }
+  private async prepareSend(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null) {
     const sock = this.connected();
     if (accountJid !== this.data.accountJid) throw new Error('Número conectado difere do número da campanha.');
     if (!groupJid.endsWith('@g.us')) throw new Error('Destino não é um grupo.');
     // Registra a situação do grupo (membro, admin, só admins enviam) para explicar uma
     // eventual recusa do servidor.
     const group = describeGroupForSend(await sock.groupMetadata(groupJid), { id: sock.user?.id, lid: sock.user?.lid });
-    // Mantém o selo do painel (só admins / você é admin) atualizado; falha aqui não impede o envio.
-    await prisma.group.updateMany({ where: { externalId: groupJid }, data: { adminOnly: group.onlyAdmins, isAdmin: group.isAdmin } }).catch(() => undefined);
+    // Mantém selo (só admins / você é admin) e membros atualizados; falha aqui não impede o envio.
+    await prisma.group.updateMany({ where: { externalId: groupJid }, data: { adminOnly: group.onlyAdmins, isAdmin: group.isAdmin, participants: group.participants } }).catch(() => undefined);
     // Grupo só para administradores e a conta comprovadamente não é admin: o WhatsApp
-    // aceita o pedido mas a mensagem nunca aparece (teste real, 2026-09-21). Falha ANTES de
-    // enviar — nada saiu, então não há risco de duplicar.
+    // aceita o pedido mas a mensagem nunca aparece (teste real, 2026-09-21).
     if (group.adminOnlyWithoutPermission) {
       throw Object.assign(new Error('Só administradores podem enviar neste grupo e a conta conectada não é administradora.'), { code: 'grupo:so-admins' });
     }
@@ -250,10 +258,7 @@ export class WhatsAppProvider {
     const content = !media ? { text } : media.kind === 'image'
       ? { image: Buffer.from(media.data), mimetype: media.mimeType, caption: text }
       : { video: Buffer.from(media.data), mimetype: media.mimeType, caption: text };
-    const result = await sock.sendMessage(groupJid, content);
-    if (!result?.key.id) throw new Error('Resultado do envio desconhecido. Confira no celular antes de reenviar.');
-    // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
-    return { messageId: result.key.id, context: group.context };
+    return { sock, content, group };
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { dashboardSummary } from './dashboard';
 import { publicMessage } from './security';
 import { mediaMetadata } from './media';
-import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION } from '@campaign/database';
+import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION, dueOrRunning } from '@campaign/database';
 
 export function registerCampaignRoutes(app: FastifyInstance) {
   app.get('/api/campaigns/:id', async (request, reply) => {
@@ -11,7 +11,10 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     const campaign = await prisma.campaign.findFirst({ where: { id, deletedAt: null }, include: { media: { select: mediaMetadata }, groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
     if (!campaign) return reply.code(404).send({ error: 'Campanha não encontrada.' });
     const counts = await prisma.delivery.groupBy({ by: ['status'], where: { campaignId: id }, _count: { _all: true } });
-    const next = await prisma.delivery.findFirst({ where: { campaignId: id, status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: { sequence: 'asc' } });
+    // Próximo a sair: a cabeça já vencida; senão, o pendente de horário mais cedo (ADR-014).
+    const now = await currentTime();
+    const next = await prisma.delivery.findFirst({ where: { campaignId: id, ...dueOrRunning(now) }, orderBy: { sequence: 'asc' } })
+      ?? await prisma.delivery.findFirst({ where: { campaignId: id, status: 'PENDING' }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }] });
     const nextAt = next && campaign.status === 'ACTIVE' ? new Date(Math.max(next.scheduledAt.getTime(), campaign.nextAvailableAt?.getTime() ?? 0)) : null;
     const reads = await campaignReads(prisma, id);
     const readsByGroup = campaign.groups.map(({ group }) => ({ groupId: group.id, name: group.name, count: reads.find(r => r.groupId === group.id)?.count ?? 0 }));

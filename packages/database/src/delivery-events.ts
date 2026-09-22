@@ -1,17 +1,19 @@
 import type { PrismaClient } from '@prisma/client';
+import { LOCKING_TRANSACTION, lockCampaign, retryAt, MAX_SEND_ATTEMPTS } from './queue';
 
 // O que o servidor do WhatsApp informa DEPOIS do sendMessage (ADR-012).
 //
 // sendMessage só escreve a mensagem no socket e devolve um id: ele não espera o servidor
 // aceitá-la. Se o servidor recusar, chega um "ack" de erro separado; se aceitar e entregar,
 // chegam recibos de entrega dos participantes. Estes eventos transformam "pedido feito" em
-// "entregue" ou "recusado". Nada aqui reenvia mensagem (ADR-003).
+// "entregue" ou "recusado". Uma recusa comprova que nada chegou ao grupo: o envio volta à
+// fila para nova tentativa, até o limite (ADR-014).
 export type ServerEvent =
   | { kind: 'delivered'; messageId: string; groupJid: string; accountJid: string; at: Date }
   | { kind: 'rejected'; messageId: string; groupJid: string; accountJid: string; at: Date; code: string };
 
 export const REJECTED_MESSAGE = (code: string) =>
-  `O WhatsApp recusou a mensagem depois do envio (código ${code}); ela não aparece no grupo. Não foi reenviada automaticamente.`;
+  `O WhatsApp recusou a mensagem (código ${code}); ela não aparece no grupo.`;
 
 /**
  * Aplica um evento a uma entrega enviada pelo sistema. Devolve true quando o evento já está
@@ -23,30 +25,48 @@ export async function applyServerEvent(db: PrismaClient, event: ServerEvent): Pr
   const matches = await db.delivery.findMany({
     where: { provider: 'baileys', providerId: event.messageId, campaign: { accountJid: event.accountJid }, group: { externalId: event.groupJid } },
     take: 2,
-    select: { id: true, status: true, deliveredAt: true, serverRejectedAt: true },
+    select: { id: true, campaignId: true },
   });
   if (!matches.length) return false;
   // Associação ambígua: nunca atribui o evento a uma entrega qualquer.
   if (matches.length > 1) return true;
-  const [delivery] = matches;
+  const [{ id, campaignId }] = matches;
 
-  if (event.kind === 'delivered') {
-    if (!delivery.deliveredAt) {
-      await db.delivery.updateMany({ where: { id: delivery.id, deliveredAt: null }, data: { deliveredAt: event.at } });
+  await db.$transaction(async tx => {
+    await lockCampaign(tx, campaignId);
+    const delivery = await tx.delivery.findUniqueOrThrow({ where: { id } });
+    // O reenvio já saiu com outro id: este evento é da mensagem antiga.
+    if (delivery.providerId !== event.messageId) return;
+
+    if (event.kind === 'delivered') {
+      if (delivery.status === 'PENDING') {
+        // Estava esperando reenvio por causa de uma recusa, mas a mensagem chegou: cancela
+        // o reenvio (nunca duplicar).
+        await tx.delivery.update({ where: { id }, data: { status: 'SENT', deliveredAt: event.at, error: null, updatedAt: event.at } });
+      } else if (!delivery.deliveredAt) {
+        await tx.delivery.update({ where: { id }, data: { deliveredAt: event.at } });
+      }
+      return;
     }
-    return true;
-  }
 
-  if (delivery.serverRejectedAt) return true;
-  // Já houve recibo de entrega: a mensagem chegou a alguém. Registra o código, mas não
-  // declara falha de algo que foi entregue.
-  if (delivery.deliveredAt) {
-    await db.delivery.updateMany({ where: { id: delivery.id }, data: { serverRejectedAt: event.at, errorCode: `servidor:${event.code}`.slice(0, 64) } });
-    return true;
-  }
-  await db.delivery.updateMany({
-    where: { id: delivery.id, status: 'SENT' },
-    data: { status: 'FAILED', serverRejectedAt: event.at, errorCode: `servidor:${event.code}`.slice(0, 64), error: REJECTED_MESSAGE(event.code), updatedAt: event.at },
-  });
+    if (delivery.serverRejectedAt) return;
+    const errorCode = `servidor:${event.code}`.slice(0, 64);
+    // Já houve recibo de entrega: a mensagem chegou a alguém. Registra o código, mas não
+    // declara falha de algo que foi entregue.
+    if (delivery.deliveredAt || delivery.status !== 'SENT') {
+      await tx.delivery.update({ where: { id }, data: { serverRejectedAt: event.at, errorCode } });
+      return;
+    }
+    const campaign = await tx.campaign.findUniqueOrThrow({ where: { id: campaignId } });
+    const retry = !campaign.deletedAt && ['ACTIVE', 'PAUSED', 'COMPLETED'].includes(campaign.status) ? retryAt(delivery.attempts, event.at) : null;
+    if (retry) {
+      await tx.delivery.update({ where: { id }, data: { status: 'PENDING', scheduledAt: retry, serverRejectedAt: event.at, errorCode, error: REJECTED_MESSAGE(event.code), updatedAt: event.at } });
+      // A campanha pode ter terminado entre o envio e a recusa: reabre para a nova tentativa.
+      if (campaign.status === 'COMPLETED') await tx.campaign.update({ where: { id: campaignId }, data: { status: 'ACTIVE', updatedAt: event.at } });
+      return;
+    }
+    const tries = delivery.attempts > 1 ? `Falhou nas ${Math.min(delivery.attempts, MAX_SEND_ATTEMPTS)} tentativas. ` : '';
+    await tx.delivery.update({ where: { id }, data: { status: 'FAILED', serverRejectedAt: event.at, errorCode, error: tries + REJECTED_MESSAGE(event.code), updatedAt: event.at } });
+  }, LOCKING_TRANSACTION);
   return true;
 }

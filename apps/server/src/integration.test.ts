@@ -609,14 +609,14 @@ test('sendMessage throwing: failed with the technical code, one attempt, never r
     const failed = await waitFor(async () => { const d = await fresh(row.id); return d.status === 'FAILED' && d; }, 'falha gravada');
     assert.equal(failed.errorCode, 'baileys:408');
     assert.equal(failed.attempts, 1);
-    assert.match(failed.error ?? '', /Timed Out.*Sem repetição automática/);
+    assert.match(failed.error ?? '', /Timed Out.*incerto.*Sem reenvio automático/);
     assert.ok(failed.sendReturnedAt, 'o momento da falha fica registrado');
     await sleep(400); // vários ciclos do despachante
     assert.equal(wa.calls.length, 1, 'falha não é repetida');
   } finally { await dispatcher.stop(); }
 });
 
-test('send accepted locally but refused by the server afterwards: becomes a failure, never resent, even if the refusal arrives first', async () => {
+test('send accepted locally but refused by the server afterwards: goes back to the queue for a later retry, even if the refusal arrives first', async () => {
   const { rows: [row] } = await realCampaign(1);
   const rejected = { kind: 'rejected' as const, messageId: '3EB0RECUSADO', groupJid: row.group.externalId!, accountJid: ACCOUNT, at: new Date(), code: '479' };
   // A recusa pode chegar antes de o envio ser gravado: não aplica e pede nova tentativa.
@@ -625,14 +625,85 @@ test('send accepted locally but refused by the server afterwards: becomes a fail
   const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
   try { await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio gravado'); }
   finally { await dispatcher.stop(); }
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: row.campaignId } })).status, 'COMPLETED', 'terminou antes da recusa');
   assert.equal(await applyServerEvent(prisma, rejected), true, 'reaplicada depois da gravação');
+  const requeued = await fresh(row.id);
+  assert.equal(requeued.status, 'PENDING', 'recusa comprova que nada chegou: volta para a fila');
+  assert.equal(requeued.errorCode, 'servidor:479');
+  assert.ok(requeued.serverRejectedAt);
+  assert.match(requeued.error ?? '', /recusou/);
+  const wait = requeued.scheduledAt.getTime() - rejected.at.getTime();
+  assert.ok(wait >= 4.9 * 60_000 && wait <= 5.1 * 60_000, 'nova tentativa em 5 minutos, não imediata');
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: row.campaignId } })).status, 'ACTIVE', 'campanha reaberta para a nova tentativa');
+  assert.equal(await applyServerEvent(prisma, rejected), true, 'recusa repetida é idempotente');
+  assert.equal((await fresh(row.id)).scheduledAt.getTime(), requeued.scheduledAt.getTime(), 'recusa repetida não reagenda');
+  assert.equal(wa.calls.length, 1);
+  // Se, apesar da recusa, chegar o recibo de entrega da mensagem antiga: cancela o reenvio.
+  await applyServerEvent(prisma, { kind: 'delivered', messageId: '3EB0RECUSADO', groupJid: row.group.externalId!, accountJid: ACCOUNT, at: new Date() });
+  const delivered = await fresh(row.id);
+  assert.equal(delivered.status, 'SENT', 'chegou: não reenvia (nunca duplicar)');
+  assert.ok(delivered.deliveredAt);
+});
+
+test('server refusal on the last allowed attempt: final failure, no more retries', async () => {
+  const { rows: [row] } = await realCampaign(1);
+  const wa = fakeWhatsApp(async () => ({ messageId: '3EB0ULTIMA', context: 'membro=sim admin=nao so-admins=nao participantes=9' }));
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try { await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio gravado'); }
+  finally { await dispatcher.stop(); }
+  await prisma.delivery.update({ where: { id: row.id }, data: { attempts: 3 } });
+  await applyServerEvent(prisma, { kind: 'rejected', messageId: '3EB0ULTIMA', groupJid: row.group.externalId!, accountJid: ACCOUNT, at: new Date(), code: '463' });
   const failed = await fresh(row.id);
   assert.equal(failed.status, 'FAILED');
-  assert.equal(failed.errorCode, 'servidor:479');
-  assert.ok(failed.serverRejectedAt);
-  assert.match(failed.error ?? '', /recusou.*Não foi reenviada/);
-  assert.equal(await applyServerEvent(prisma, rejected), true, 'recusa repetida é idempotente');
-  assert.equal(wa.calls.length, 1);
+  assert.match(failed.error ?? '', /Falhou nas 3 tentativas.*recusou/);
+});
+
+test('failure before anything was sent: retried later up to 3 attempts, without holding back the other groups', async () => {
+  const { campaign, rows: [first, second] } = await realCampaign(2, 60);
+  const { notSent } = await import('./send-context.js');
+  let failFirst = 2; // falha as duas primeiras tentativas no primeiro grupo; a terceira passa
+  const wa = fakeWhatsApp(async (jid, call) => {
+    if (jid === first.group.externalId && failFirst-- > 0) throw notSent(new Error('Conexão interrompida antes do envio.'));
+    return { messageId: `3EB0REENVIO${call}`, context: 'membro=sim admin=nao so-admins=nao participantes=5' };
+  });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    const retry = await waitFor(async () => { const d = await fresh(first.id); return d.status === 'PENDING' && d.attempts === 1 && d; }, '1ª falha volta para a fila');
+    assert.equal(retry.sequence, first.sequence, 'mantém a posição');
+    assert.ok(retry.scheduledAt.getTime() > Date.now() + 4 * 60_000, 'espera ~5 min');
+    assert.match(retry.error ?? '', /interrompida/);
+    // O segundo grupo não fica preso atrás do reenvio agendado.
+    await releaseNext(campaign.id, second.id);
+    await waitFor(async () => (await fresh(second.id)).status === 'SENT', 'segundo grupo enviado antes do reenvio');
+    await releaseNext(campaign.id, first.id);
+    await waitFor(async () => { const d = await fresh(first.id); return d.status === 'PENDING' && d.attempts === 2 && d; }, '2ª falha');
+    await releaseNext(campaign.id, first.id);
+    const sent = await waitFor(async () => { const d = await fresh(first.id); return d.status === 'SENT' && d; }, '3ª tentativa enviada');
+    assert.equal(sent.attempts, 3);
+    assert.equal(sent.error, null);
+    assert.equal(wa.calls.filter(jid => jid === first.group.externalId).length, 3);
+    assert.equal(wa.calls.filter(jid => jid === second.group.externalId).length, 1, 'nenhum grupo recebeu em dobro');
+    await waitFor(async () => (await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status === 'COMPLETED', 'campanha concluída');
+  } finally { await dispatcher.stop(); }
+});
+
+test('failure before sending, every time: stops after 3 attempts with a final failure', async () => {
+  const { campaign, rows: [row] } = await realCampaign(1);
+  const { notSent } = await import('./send-context.js');
+  const wa = fakeWhatsApp(async () => { throw notSent(Object.assign(new Error('Só administradores podem enviar neste grupo.'), { code: 'grupo:so-admins' })); });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    for (const attempt of [1, 2]) {
+      await waitFor(async () => { const d = await fresh(row.id); return d.status === 'PENDING' && d.attempts === attempt; }, `falha ${attempt}`);
+      await releaseNext(campaign.id, row.id);
+    }
+    const failed = await waitFor(async () => { const d = await fresh(row.id); return d.status === 'FAILED' && d; }, 'falha final');
+    assert.equal(failed.attempts, 3);
+    assert.equal(failed.errorCode, 'grupo:so-admins');
+    assert.match(failed.error ?? '', /Falhou nas 3 tentativas/);
+    await sleep(300);
+    assert.equal(wa.calls.length, 3, 'para depois de 3 tentativas');
+  } finally { await dispatcher.stop(); }
 });
 
 test('a delivery receipt wins over a late refusal: something that reached the group is not declared failed', async () => {
