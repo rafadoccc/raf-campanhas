@@ -27,10 +27,13 @@ No PowerShell use `npm.cmd`; o `npm` puro é bloqueado pela política de scripts
 
 ### Login
 
-Todo o painel e toda a API exigem login. Não há cadastro público: usuários são criados
-por `npm run user:create` (que também redefine senhas) ou, na primeira subida em um
-servidor, pelas variáveis `ADMIN_EMAIL` e `ADMIN_PASSWORD`. A senha é trocada em
-**Minha conta**. O login vale 7 dias e se renova com o uso.
+Todo o painel e toda a API exigem login. Não há cadastro público. Papéis: `SUPER_ADMIN`
+(administra o sistema) e `USER`. A primeira conta — criada pelo inicializador, por
+`npm run user:create` com o banco vazio ou, num servidor, por `ADMIN_EMAIL`/`ADMIN_PASSWORD` —
+é `SUPER_ADMIN`. Depois, `npm run user:create` cria `USER`; um novo `SUPER_ADMIN` exige
+`npm run user:create -- --super-admin` e confirmação digitada. O mesmo comando redefine a
+senha de uma conta existente (sem mudar o papel). A senha é trocada em **Minha conta**.
+O login vale 7 dias e se renova com o uso.
 
 ## Conectar WhatsApp
 

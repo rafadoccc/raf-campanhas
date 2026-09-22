@@ -38,7 +38,7 @@ No app, abra **Variáveis de ambiente** e cadastre:
 |---|---|---|
 | `DATABASE_URL` | `mysql://u123456789_user:SENHA@localhost:3306/u123456789_campanhas` | Caracteres especiais na senha precisam ser codificados: `@` → `%40`, `#` → `%23`, `/` → `%2F`, `:` → `%3A`. |
 | `PUBLIC_URL` | `https://campanhas.seudominio.com.br` | Obrigatória. Com e sem `www.` funcionam. |
-| `ADMIN_EMAIL` | `voce@seudominio.com.br` | Cria o primeiro usuário na primeira subida. |
+| `ADMIN_EMAIL` | `voce@seudominio.com.br` | Cria o primeiro usuário (`SUPER_ADMIN`) na primeira subida. |
 | `ADMIN_PASSWORD` | uma senha com 10+ caracteres | **Apague depois do primeiro login.** |
 | `ADMIN_NAME` | `Seu nome` | Opcional. |
 

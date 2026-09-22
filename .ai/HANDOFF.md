@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T15:00Z · claude
+
+**Fiz:** multiusuário Fase 1 (ADR-016): enum `UserRole` (SUPER_ADMIN/USER, padrão USER), migration que converte OWNER → SUPER_ADMIN sem tocar em sessões, `requireSuperAdmin` para futuras rotas admin, bootstrapAdmin cria SUPER_ADMIN, `user:create` cria USER (SUPER_ADMIN só com `--super-admin` + confirmação; primeira conta do sistema é SUPER_ADMIN).
+**Arquivos:** packages/database/prisma/schema.prisma, migrations/20260922140000_user_roles, apps/server/src/auth.ts, scripts/user-create.mjs, apps/server/src/integration.test.ts, README.md, docs/deploy-hostinger.md
+**Tarefas:** T-096 (concluída)
+**Estado:** compila · lint ok · npm test 47+2 ok · integração 52/52
+**Armadilhas:** nenhuma rota usa requireSuperAdmin ainda (não há rotas admin). `prisma migrate diff` no Windows mostra "tudo diferente" por causa de lower_case_table_names (nomes de tabela minúsculos no MySQL do Windows); não é drift. Campanhas, grupos, WhatsApp, despachante e pacing NÃO foram alterados — isolamento de dados é a Fase 2.
+**Próximo passo sugerido:** aguardar aprovação do dono para a Fase 2 (userId em Campaign/Group/CampaignMedia).
+
 ## 2026-09-22T13:00Z · claude
 
 **Fiz:** intervalo mínimo por NÚMERO (ADR-015, parte da ADR-006). Nova tabela `WhatsAppAccount` com o relógio do número, travada antes da campanha em `claimDelivery`/`finishDelivery`; reinício com envio interrompido segura o número por um intervalo inteiro; despachante reveza campanhas (quem espera há mais tempo primeiro); previsão do painel considera o relógio do número.

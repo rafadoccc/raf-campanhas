@@ -431,3 +431,22 @@ depois o número.
 **Multiusuário:** a linha por número é o que a ADR-006 previa. Com um WhatsApp por usuário, a
 chave continua sendo o número (ou passa a ser o id da sessão) e a tabela ganha o dono; claim e
 finish não mudam.
+
+
+## ADR-016 · Papéis SUPER_ADMIN e USER (multiusuário, Fase 1)
+
+**Data:** 2026-09-22 · **Status:** aceita (decisão do dono) · **Autor:** claude
+**Substitui:** o OWNER/OPERATOR da ADR-009. **Contexto do plano:** isolamento por `userId`, sem
+organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não implementadas).
+
+- `User.role` passa a enum `UserRole { SUPER_ADMIN, USER }`, padrão `USER`. Migration
+  `20260922140000_user_roles`: `OWNER` → `SUPER_ADMIN`; qualquer outro valor → `USER` (o menor
+  acesso); só a coluna muda (senhas, sessões e `disabledAt` intactos).
+- O papel vem SEMPRE do banco, lido a cada requisição pela sessão (`resolveSession`). Nada do
+  navegador decide permissão. Mudar o papel no banco vale na próxima requisição.
+- `requireSuperAdmin` (auth.ts) é o preHandler das futuras rotas `/api/admin/*`: 401 sem sessão,
+  403 para USER.
+- Criação: primeira conta do sistema (bootstrapAdmin, inicializador, `user:create` com banco
+  vazio) = SUPER_ADMIN; depois `user:create` = USER; SUPER_ADMIN só com `--super-admin` +
+  confirmação digitada. `user:create` nunca altera o papel de conta existente.
+- SUPER_ADMIN não verá conteúdo privado de campanhas/mensagens dos usuários (Fase 5/6).
