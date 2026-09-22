@@ -109,6 +109,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [ ] T-087  Expirar recibos pendentes que nunca vão casar              owner: —        since: —
 [x] T-088  Bloquear envio a grupo só-admins quando a conta não é admin   owner: —        since: —
 [x] T-089  Selo só admins / você é admin na escolha de grupos       owner: —        since: —
+[x] T-090  Railway: bind 0.0.0.0 e PUBLIC_URL pelo domínio do Railway  owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

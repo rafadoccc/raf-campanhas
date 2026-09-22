@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T03:45Z · claude
+
+**Fiz:** corrigi o 502 do Railway. Sem PUBLIC_URL, `loadConfig` caía no modo local e escutava em 127.0.0.1 (o proxy do Railway não alcança); além disso, as origens aceitas eram só localhost, então o login pelo domínio do Railway daria 403 "Origem não permitida". Agora, no Railway (RAILWAY_ENVIRONMENT_ID/RAILWAY_ENVIRONMENT/RAILWAY_PROJECT_ID), o host padrão é 0.0.0.0 e, sem PUBLIC_URL, vale https://RAILWAY_PUBLIC_DOMAIN. Local inalterado (127.0.0.1, PORT do .env, padrão 3000). PUBLIC_URL e HOST continuam tendo prioridade.
+**Arquivos:** apps/server/src/config.ts, apps/server/src/config.test.ts (novo), package.json (script test inclui config.test.js), .env.example
+**Tarefas:** T-090 (concluída)
+**Estado:** compila · lint ok · npm test 40+2 ok · integração 35/35 · bind verificado: local 127.0.0.1, Railway simulado 0.0.0.0
+**Armadilhas:** no Railway o disco do contêiner é apagado a cada deploy; a sessão do WhatsApp (SESSIONS_DIR) precisa de um Volume, senão pede QR de novo a cada deploy. Mídias ficam no banco (CampaignMedia.data), não precisam de volume. Não rodar campanhas no PC e no Railway ao mesmo tempo com o mesmo número.
+**Próximo passo sugerido:** criar o Volume no Railway (ex.: /data) e definir SESSIONS_DIR=/data/sessions.
+
 ## 2026-09-21T21:40Z · claude
 
 **Fiz:** selo "só admins" com a situação da conta (admin / não admin / desconhecido) na lista de grupos do formulário de campanha, mais aviso quando um grupo selecionado não vai receber (ADR-013).
