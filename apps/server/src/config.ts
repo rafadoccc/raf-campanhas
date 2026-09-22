@@ -26,9 +26,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = Number(env.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`PORT inválida: "${env.PORT}".`);
 
+  // No Railway o domínio público vem em RAILWAY_PUBLIC_DOMAIN (sem protocolo, sempre HTTPS);
+  // PUBLIC_URL, se definida, tem prioridade (ex.: domínio próprio).
+  const onRailway = Boolean(env.RAILWAY_ENVIRONMENT_ID || env.RAILWAY_ENVIRONMENT || env.RAILWAY_PROJECT_ID);
+  const railwayUrl = env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : undefined;
+
   let publicUrl: URL;
   try {
-    publicUrl = new URL(env.PUBLIC_URL ?? `http://localhost:${port}`);
+    publicUrl = new URL(env.PUBLIC_URL ?? railwayUrl ?? `http://localhost:${port}`);
   } catch {
     throw new Error(`PUBLIC_URL inválida: "${env.PUBLIC_URL}". Exemplo: https://campanhas.seudominio.com.br`);
   }
@@ -62,7 +67,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     port,
-    host: env.HOST ?? (deployed ? '0.0.0.0' : '127.0.0.1'),
+    // Local: só o próprio computador (127.0.0.1). Publicado ou em contêiner de plataforma: o
+    // proxy chega por outra interface, então precisa de 0.0.0.0.
+    host: env.HOST ?? (deployed || onRailway ? '0.0.0.0' : '127.0.0.1'),
     publicUrl,
     deployed,
     allowedOrigins,
