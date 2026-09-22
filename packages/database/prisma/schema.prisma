@@ -29,9 +29,15 @@ enum DeliveryStatus {
   CANCELLED
 }
 
+// Dono dos dados (ADR-017): Group, Campaign e CampaignMedia pertencem a um User. Os demais dados
+// herdam o dono pela campanha. Chaves compostas (userId, id) permitem que o BANCO recuse vincular
+// campanha a grupo ou mídia de outro usuário.
 model Group {
   id         String          @id @default(cuid())
-  externalId String?         @unique
+  userId     String
+  user       User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  // Único por dono: dois usuários podem participar do mesmo grupo do WhatsApp.
+  externalId String?
   name       String          @db.VarChar(255)
   active     Boolean         @default(true)
   // Situação na última sincronização/envio; null = desconhecida.
@@ -43,11 +49,17 @@ model Group {
   updatedAt  DateTime        @updatedAt
   deliveries Delivery[]
   campaigns  CampaignGroup[]
+
+  @@unique([userId, externalId])
+  @@unique([userId, id])
 }
 
 model Campaign {
+  userId          String
+  user            User               @relation(fields: [userId], references: [id], onDelete: Restrict)
   mediaId         String?
-  media           CampaignMedia?     @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  // A mídia precisa ser do mesmo dono da campanha (chave composta).
+  media           CampaignMedia?     @relation(fields: [userId, mediaId], references: [userId, id], onDelete: Restrict)
   id              String             @id @default(cuid())
   name            String             @db.VarChar(200)
   startsAt        DateTime
@@ -66,18 +78,27 @@ model Campaign {
   schedules       CampaignSchedule[]
   deliveries      Delivery[]
   groups          CampaignGroup[]
+
+  @@unique([userId, id])
+  @@index([userId, mediaId])
+  // Índice criado pelo MySQL junto com a antiga chave da mídia; mantido (útil e sem risco).
+  @@index([mediaId], map: "Campaign_mediaId_fkey")
 }
 
 model CampaignGroup {
   campaignId String
   groupId    String
+  // Dono da campanha E do grupo: as duas chaves compostas exigem que sejam o mesmo usuário.
+  userId     String
   position   Int      @default(0)
   createdAt  DateTime @default(now())
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  group      Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  campaign   Campaign @relation(fields: [userId, campaignId], references: [userId, id], onDelete: Cascade)
+  group      Group    @relation(fields: [userId, groupId], references: [userId, id], onDelete: Cascade)
 
   @@id([campaignId, groupId])
   @@index([groupId])
+  @@index([userId, campaignId])
+  @@index([userId, groupId])
 }
 
 model CampaignMessage {
@@ -138,6 +159,8 @@ model Delivery {
 
 model CampaignMedia {
   id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Restrict)
   name      String     @db.VarChar(255)
   mimeType  String
   kind      String
@@ -145,6 +168,8 @@ model CampaignMedia {
   data      Bytes
   createdAt DateTime   @default(now())
   campaigns Campaign[]
+
+  @@unique([userId, id])
 }
 
 model PendingRead {
@@ -191,6 +216,9 @@ model User {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sessions     AuthSession[]
+  campaigns    Campaign[]
+  groups       Group[]
+  media        CampaignMedia[]
 }
 
 // Sessão de login. O cookie leva um token aleatório; aqui fica só o hash SHA-256 dele,

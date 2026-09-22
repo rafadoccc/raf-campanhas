@@ -63,7 +63,7 @@ export function registerMediaRoutes(app: FastifyInstance) {
       const kind = await validateMedia(data, mimeType);
       const rawName = (request.query as { name?: string }).name;
       const name = (typeof rawName === 'string' ? rawName.split(/[\\/]/).pop()! : 'mídia').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 180) || 'mídia';
-      return reply.code(201).send(await prisma.campaignMedia.create({ data: { name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer> }, select: mediaMetadata }));
+      return reply.code(201).send(await prisma.campaignMedia.create({ data: { userId: request.user!.id, name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer> }, select: mediaMetadata }));
     } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Arquivo inválido.') }); }
   });
   app.get('/api/media/:id', async (request, reply) => {

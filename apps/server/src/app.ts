@@ -22,12 +22,13 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
   registerSecurity(app, config);
   registerAuth(app, config);
   for (const [path, method] of [['status', 'GET'], ['connect', 'POST'], ['disconnect', 'POST'], ['sync', 'POST']] as const) {
-    app.route({ method, url: `/api/whatsapp/${path}`, handler: async (_request, reply) => {
+    app.route({ method, url: `/api/whatsapp/${path}`, handler: async (request, reply) => {
       try {
         if (path === 'status') return provider.status();
         if (path === 'connect') return await provider.connect();
         if (path === 'disconnect') return await provider.disconnect();
-        return await provider.sync();
+        // Os grupos sincronizados pertencem a quem está logado (dono vem da sessão, ADR-017).
+        return await provider.sync(request.user!.id);
       } catch (error) {
         return reply.code(503).send({ error: publicMessage(error, 'Conector indisponível.') });
       }
@@ -54,7 +55,8 @@ app.post('/api/groups', async (request, reply) => {
   const externalId = undefined; // Only the connector may assign real WhatsApp group identifiers.
   if (!name) return reply.status(400).send({ error: 'O nome do grupo é obrigatório.' });
   if (name.length > 255) return reply.status(400).send({ error: 'O nome do grupo pode ter no máximo 255 caracteres.' });
-  return reply.status(201).send(await prisma.group.create({ data: { name, externalId: externalId || null } }));
+  // Dono = usuário da sessão; nada do corpo define o dono (ADR-017).
+  return reply.status(201).send(await prisma.group.create({ data: { name, externalId: externalId || null, userId: request.user!.id } }));
 });
 
 registerMediaRoutes(app);
@@ -105,7 +107,7 @@ app.get('/api/deliveries', async (request) => {
 
 for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/api/campaigns' : '/api/campaigns/:id', handler: async (request, reply) => {
   const body = request.body as { name?: unknown; startsAt?: unknown; endsAt?: unknown; groupIds?: unknown; messages?: unknown; times?: unknown; mode?: unknown; intervalSeconds?: unknown; mediaId?: unknown };
-  if (body?.mediaId !== undefined && body.mediaId !== null && (typeof body.mediaId !== 'string' || !await prisma.campaignMedia.count({ where: { id: body.mediaId } }))) return reply.code(400).send({ error: 'Mídia inválida. Selecione um arquivo novamente.' });
+  if (body?.mediaId !== undefined && body.mediaId !== null && (typeof body.mediaId !== 'string' || !await prisma.campaignMedia.count({ where: { id: body.mediaId, userId: request.user!.id } }))) return reply.code(400).send({ error: 'Mídia inválida. Selecione um arquivo novamente.' });
   const mediaId = typeof body?.mediaId === 'string' ? body.mediaId : body?.mediaId === null ? null : undefined;
   const mode = body?.mode ?? 'SCHEDULED';
   const intervalSeconds = body?.intervalSeconds ?? 180;
@@ -128,7 +130,8 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   if (!name || name.length > 200 || Number.isNaN(startsAt.valueOf()) || Number.isNaN(endsAt.valueOf()) || endsAt < startsAt || !groupIds.length || groupIds.length > 500 || !messages.length || messages.length > 20 || messages.some(m => m.length > 10000) || (mode === 'SCHEDULED' && !times.length)) {
     return reply.status(400).send({ error: 'Informe nome, período válido, pelo menos um grupo, uma mensagem e um horário.' });
   }
-  const groupsFound = await prisma.group.count({ where: { id: { in: groupIds }, active: true } });
+  // Só grupos do próprio usuário (o banco também recusa, pela chave composta de CampaignGroup).
+  const groupsFound = await prisma.group.count({ where: { id: { in: groupIds }, active: true, userId: request.user!.id } });
   if (groupsFound !== new Set(groupIds).size) return reply.status(400).send({ error: 'Um ou mais grupos selecionados não existem ou estão inativos.' });
 
   if (mode === 'SCHEDULED' && !times.some(time => DateTime.fromISO(`${String(body.endsAt)}T${time}`, { zone: 'America/Sao_Paulo' }).toMillis() > now.getTime())) return reply.code(400).send({ error: 'Todos os horários já passaram no fuso de São Paulo. Escolha um horário futuro, outra data ou Fila única.' });
@@ -153,6 +156,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   }
   return reply.status(201).send(await prisma.campaign.create({
     data: {
+      userId: request.user!.id, // dono = sessão; body.userId é ignorado (ADR-017)
       name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, createdAt: now, updatedAt: now, mediaId,
       groups: { create: [...new Set(groupIds)].map((groupId, position) => ({ groupId, position })) },
       messages: { create: messages.map((content, position) => ({ content, position })) },

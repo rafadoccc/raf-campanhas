@@ -214,18 +214,20 @@ export class WhatsAppProvider {
       else if (event.kind === 'rejected') console.warn('[WhatsApp] Recusa do servidor sem entrega correspondente; descartada:', event.messageId);
     }
   }
-  async sync() {
+  /** Importa os grupos da conta conectada para o usuário `ownerId` (ADR-017). */
+  async sync(ownerId: string) {
     const sock = this.connected();
     const groups = Object.values(await sock.groupFetchAllParticipating());
     const me = { id: sock.user?.id, lid: sock.user?.lid };
     await prisma.$transaction(async tx => {
-      await tx.group.updateMany({ where: { externalId: { not: null } }, data: { active: false } });
+      // Só os grupos deste dono: a sincronização de um usuário nunca desativa os de outro.
+      await tx.group.updateMany({ where: { userId: ownerId, externalId: { not: null } }, data: { active: false } });
       for (const group of groups) {
         // Grupos sem assunto (antigos ou comunidades) derrubariam a sincronização inteira.
         const name = groupName(group.subject, group.id);
         const { onlyAdmins: adminOnly, isAdmin, participants } = describeGroupForSend(group, me);
         const data = { name, adminOnly, isAdmin, participants };
-        await tx.group.upsert({ where: { externalId: group.id }, update: { ...data, active: true }, create: { externalId: group.id, ...data } });
+        await tx.group.upsert({ where: { userId_externalId: { userId: ownerId, externalId: group.id } }, update: { ...data, active: true }, create: { userId: ownerId, externalId: group.id, ...data } });
       }
     }, { timeout: 30000 });
     return { count: groups.length };

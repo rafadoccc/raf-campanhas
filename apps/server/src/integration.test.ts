@@ -5,7 +5,7 @@ import { buildApp } from './app';
 import { hashPassword, requireSuperAdmin, bootstrapAdmin } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
 import { loadConfig } from './config';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -33,8 +33,10 @@ const apiPath = (url: string) => url.startsWith('/api/') ? url : `/api${url}`;
 // cookie, sempre com a origem do painel (exigida em ações que alteram dados).
 const PANEL = 'http://localhost:3000';
 let cookie = '';
+// Dono dos dados que os testes criam direto no banco: o mesmo usuário logado (ADR-017).
+let ownerId = '';
 before(async () => {
-  await prisma.user.create({ data: { email: 'dono@teste.local', name: 'Dono', passwordHash: await hashPassword('senha-de-teste-123') } });
+  ownerId = (await prisma.user.create({ data: { email: 'dono@teste.local', name: 'Dono', passwordHash: await hashPassword('senha-de-teste-123') } })).id;
   const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { host: 'localhost', origin: PANEL }, payload: { email: 'dono@teste.local', password: 'senha-de-teste-123' } });
   assert.equal(login.statusCode, 200, login.body);
   cookie = String(login.headers['set-cookie']).split(';')[0];
@@ -42,7 +44,7 @@ before(async () => {
 const auth = (extra: Record<string, string> = {}) => ({ host: 'localhost', origin: PANEL, cookie, ...extra });
 const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) => app.inject({ method, url: apiPath(url), payload, headers: auth() });
 async function create(count = 3) {
-  const groups = await Promise.all(Array.from({ length: count }, (_, i) => prisma.group.create({ data: { name: `Teste ${i}` } })));
+  const groups = await Promise.all(Array.from({ length: count }, (_, i) => prisma.group.create({ data: { name: `Teste ${i}`, userId: ownerId } })));
   const r = await request('POST', '/campaigns', { name: 'Fila de teste', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['teste'], groupIds: groups.map(g => g.id) });
   assert.equal(r.statusCode, 201, r.body); return { id: r.json().id as string, groups };
 }
@@ -402,7 +404,7 @@ test('health reports the database, text columns keep long content and accents in
   assert.deepEqual(health.json(), { status: 'ok', database: 'ok' });
 
   const longMessage = 'Olá, ação! 🎉 ' + 'x'.repeat(9_980);
-  const group = await prisma.group.create({ data: { name: 'São João — Coração 💚' } });
+  const group = await prisma.group.create({ data: { name: 'São João — Coração 💚', userId: ownerId } });
   const r = await request('POST', '/campaigns', { name: 'Ç'.repeat(200), mode: 'IMMEDIATE', intervalSeconds: 60, messages: [longMessage], groupIds: [group.id] });
   assert.equal(r.statusCode, 201, r.body);
   const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: r.json().id }, include: { messages: true } });
@@ -546,9 +548,9 @@ async function realCampaign(groupCount: number, intervalSeconds = 60) {
   await prisma.whatsAppAccount.deleteMany();
   const now = new Date();
   const groups = [];
-  for (let i = 0; i < groupCount; i++) groups.push(await prisma.group.create({ data: { name: `Real ${i}`, externalId: `120363${Date.now()}${jidSeq++}@g.us` } }));
+  for (let i = 0; i < groupCount; i++) groups.push(await prisma.group.create({ data: { name: `Real ${i}`, userId: ownerId, externalId: `120363${Date.now()}${jidSeq++}@g.us` } }));
   const campaign = await prisma.campaign.create({ data: {
-    name: 'Envio real', startsAt: now, endsAt: now, status: 'ACTIVE', provider: 'baileys', accountJid: ACCOUNT, mode: 'IMMEDIATE', intervalSeconds, nextAvailableAt: now,
+    name: 'Envio real', userId: ownerId, startsAt: now, endsAt: now, status: 'ACTIVE', provider: 'baileys', accountJid: ACCOUNT, mode: 'IMMEDIATE', intervalSeconds, nextAvailableAt: now,
     groups: { create: groups.map((g, position) => ({ groupId: g.id, position })) },
     messages: { create: [{ content: 'oi', position: 0 }] },
     deliveries: { create: groups.map((g, sequence) => ({ groupId: g.id, messageBody: 'oi', provider: 'baileys', sequence, scheduledAt: new Date(now.getTime() + sequence * intervalSeconds * 1000) })) },
@@ -800,9 +802,9 @@ async function sameNumberCampaigns(count: number, groupsEach: number, intervalSe
   const campaigns = [];
   for (let c = 0; c < count; c++) {
     const groups = [];
-    for (let i = 0; i < groupsEach; i++) groups.push(await prisma.group.create({ data: { name: `Ritmo ${c}.${i}`, externalId: `120399${Date.now()}${jidSeq++}@g.us` } }));
+    for (let i = 0; i < groupsEach; i++) groups.push(await prisma.group.create({ data: { name: `Ritmo ${c}.${i}`, userId: ownerId, externalId: `120399${Date.now()}${jidSeq++}@g.us` } }));
     const campaign = await prisma.campaign.create({ data: {
-      name: `Mesmo número ${c}`, startsAt: now, endsAt: now, status: 'ACTIVE', provider: 'baileys', accountJid: ACCOUNT, mode: 'IMMEDIATE', intervalSeconds, nextAvailableAt: now,
+      name: `Mesmo número ${c}`, userId: ownerId, startsAt: now, endsAt: now, status: 'ACTIVE', provider: 'baileys', accountJid: ACCOUNT, mode: 'IMMEDIATE', intervalSeconds, nextAvailableAt: now,
       groups: { create: groups.map((g, position) => ({ groupId: g.id, position })) },
       messages: { create: [{ content: 'oi', position: 0 }] },
       deliveries: { create: groups.map((g, sequence) => ({ groupId: g.id, messageBody: 'oi', provider: 'baileys', sequence, scheduledAt: new Date(now.getTime() + sequence * intervalSeconds * 1000) })) },
@@ -1044,8 +1046,192 @@ test('migration: a legacy OWNER becomes SUPER_ADMIN keeping password and session
   }
 });
 
+// ─── Dono dos dados (ADR-017) ───────────────────────────────────────────────────
+async function otherUser() {
+  return prisma.user.upsert({ where: { email: 'intruso@teste.local' }, update: {}, create: { email: 'intruso@teste.local', name: 'Intruso', passwordHash: await hashPassword('senha-de-teste-123') } });
+}
+const pngBytes = () => sharp({ create: { width: 2, height: 2, channels: 3, background: '#654321' } }).png().toBuffer();
+
+test('ownership: group, media and campaign created through the API belong to the logged-in user; a userId from the client is ignored', async () => {
+  const other = await otherUser();
+  const group = await app.inject({ method: 'POST', url: `/api/groups?userId=${other.id}`, headers: auth({ 'x-user-id': other.id }), payload: { name: 'Grupo do dono', userId: other.id } });
+  assert.equal(group.statusCode, 201, group.body);
+  assert.equal(group.json().userId, ownerId, 'grupo: dono = sessão');
+  const media = await app.inject({ method: 'POST', url: `/api/media?name=dono.png&userId=${other.id}`, headers: auth({ 'content-type': 'image/png', 'x-user-id': other.id }), payload: await pngBytes() });
+  assert.equal(media.statusCode, 201, media.body);
+  assert.equal((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: media.json().id } })).userId, ownerId, 'mídia: dono = sessão');
+  const campaign = await app.inject({ method: 'POST', url: '/api/campaigns', headers: auth({ 'x-user-id': other.id }), payload: { name: 'Do dono', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [group.json().id], mediaId: media.json().id, userId: other.id } });
+  assert.equal(campaign.statusCode, 201, campaign.body);
+  const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.json().id }, include: { groups: true } });
+  assert.equal(saved.userId, ownerId, 'campanha: dono = sessão');
+  assert.deepEqual(saved.groups.map(g => g.userId), [ownerId], 'vínculo campanha-grupo herda o dono');
+  assert.equal(saved.mediaId, media.json().id);
+});
+
+test('ownership: two users may own the same WhatsApp group; one user cannot own it twice', async () => {
+  const other = await otherUser();
+  const jid = `120377${Date.now()}@g.us`;
+  const mine = await prisma.group.create({ data: { name: 'Compartilhado', externalId: jid, userId: ownerId } });
+  const theirs = await prisma.group.create({ data: { name: 'Compartilhado', externalId: jid, userId: other.id } });
+  assert.notEqual(mine.id, theirs.id, 'cada usuário tem a sua linha do mesmo grupo');
+  await assert.rejects(prisma.group.create({ data: { name: 'Repetido', externalId: jid, userId: ownerId } }), (e: { code?: string }) => e.code === 'P2002', 'mesmo dono + mesmo grupo: recusado');
+});
+
+test('ownership: the database refuses a campaign using another user\'s group or media, and the API answers 400', async () => {
+  const other = await otherUser();
+  const theirGroup = await prisma.group.create({ data: { name: 'Grupo do intruso', userId: other.id } });
+  const theirMedia = await prisma.campaignMedia.create({ data: { name: 'intruso.png', mimeType: 'image/png', kind: 'image', size: 4, data: new Uint8Array([1, 2, 3, 4]), userId: other.id } });
+  const myGroup = await prisma.group.create({ data: { name: 'Meu grupo', userId: ownerId } });
+  const now = new Date();
+  const mine = await prisma.campaign.create({ data: { name: 'Minha', userId: ownerId, startsAt: now, endsAt: now, groups: { create: [{ groupId: myGroup.id, position: 0 }] } } });
+  // Banco: grupo de outro usuário, com qualquer userId no vínculo.
+  await assert.rejects(prisma.campaignGroup.create({ data: { campaignId: mine.id, groupId: theirGroup.id, userId: ownerId } }), 'vínculo com grupo alheio (dono da campanha)');
+  await assert.rejects(prisma.campaignGroup.create({ data: { campaignId: mine.id, groupId: theirGroup.id, userId: other.id } }), 'vínculo com grupo alheio (dono do grupo)');
+  // Banco: mídia de outro usuário.
+  await assert.rejects(prisma.campaign.update({ where: { id: mine.id }, data: { mediaId: theirMedia.id } }), 'mídia alheia');
+  await assert.rejects(prisma.campaign.create({ data: { name: 'Com mídia alheia', userId: ownerId, startsAt: now, endsAt: now, mediaId: theirMedia.id } }));
+  assert.equal((await prisma.campaignGroup.count({ where: { campaignId: mine.id } })), 1, 'nada foi vinculado');
+  // API: recusa com mensagem clara em vez de erro do banco.
+  const withGroup = await request('POST', '/campaigns', { name: 'X', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [theirGroup.id] });
+  assert.equal(withGroup.statusCode, 400, withGroup.body);
+  const withMedia = await request('POST', '/campaigns', { name: 'X', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [myGroup.id], mediaId: theirMedia.id });
+  assert.equal(withMedia.statusCode, 400, withMedia.body);
+  const draft = await request('POST', '/campaigns', { name: 'Rascunho', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [myGroup.id] });
+  const edit = await request('PATCH', `/campaigns/${draft.json().id}`, { name: 'Rascunho', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [theirGroup.id] });
+  assert.equal(edit.statusCode, 400, edit.body);
+});
+
+test('ownership: WhatsApp sync imports groups for the logged-in user and never deactivates another user\'s groups', async () => {
+  const { WhatsAppProvider } = await import('./whatsapp.js');
+  const other = await otherUser();
+  const shared = `120388${Date.now()}@g.us`;
+  const onlyMine = `120389${Date.now()}@g.us`;
+  const fakeSync = (groups: string[]) => {
+    const provider = new WhatsAppProvider(mkdtempSync(join(tmpdir(), 'wa-sync-')));
+    Object.assign(provider, {
+      data: { state: 'connected', accountJid: ACCOUNT },
+      socket: { user: { id: ACCOUNT }, groupFetchAllParticipating: async () => Object.fromEntries(groups.map(id => [id, { id, subject: `Grupo ${id.slice(6, 12)}`, size: 7, participants: [] }])) },
+    });
+    return provider;
+  };
+  await fakeSync([shared, onlyMine]).sync(ownerId);
+  await fakeSync([shared]).sync(other.id);
+  const rows = await prisma.group.findMany({ where: { externalId: { in: [shared, onlyMine] } } });
+  assert.deepEqual(rows.filter(r => r.externalId === shared).map(r => r.userId).sort(), [ownerId, other.id].sort(), 'o mesmo grupo para os dois donos');
+  assert.ok(rows.every(r => r.active), 'a sincronização do intruso não desativou nada do dono');
+  // Nova sincronização do dono sem o grupo compartilhado: desativa só a linha DELE.
+  await fakeSync([onlyMine]).sync(ownerId);
+  const after = await prisma.group.findMany({ where: { externalId: shared } });
+  assert.equal(after.find(r => r.userId === ownerId)?.active, false);
+  assert.equal(after.find(r => r.userId === other.id)?.active, true);
+});
+
+// Migrations aplicadas uma a uma num MySQL real e descartável, a partir de um estado antigo.
+const MIGRATIONS_DIR = join(process.cwd(), 'packages/database/prisma/migrations');
+function migrationStatements(name: string) {
+  return readFileSync(join(MIGRATIONS_DIR, name, 'migration.sql'), 'utf8')
+    .split('\n').filter(line => !line.trim().startsWith('--')).join('\n')
+    .split(/;\s*(?:\n|$)/).map(sql => sql.trim()).filter(Boolean);
+}
+async function withLegacyDatabase(fn: (db: import('@prisma/client').PrismaClient, apply: (name: string) => Promise<void>, names: string[]) => Promise<void>) {
+  const { randomBytes } = await import('node:crypto');
+  const { PrismaClient } = await import('@prisma/client');
+  const names = readdirSync(MIGRATIONS_DIR).filter(name => /^\d{14}_/.test(name)).sort();
+  const legacy = `campaign_test_${randomBytes(8).toString('hex')}`;
+  const url = new URL(process.env.DATABASE_URL!);
+  url.pathname = `/${legacy}`;
+  url.searchParams.set('connection_limit', '1'); // a trava da migration usa tabela temporária (mesma conexão)
+  await prisma.$executeRawUnsafe(`CREATE DATABASE \`${legacy}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  const db = new PrismaClient({ datasources: { db: { url: url.toString() } } });
+  const apply = async (name: string) => { for (const sql of migrationStatements(name)) await db.$executeRawUnsafe(sql); };
+  try { await fn(db, apply, names); }
+  finally { await db.$disconnect(); await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS \`${legacy}\``); }
+}
+const OWNERSHIP = '20260922160000_data_ownership';
+const hasColumn = async (db: import('@prisma/client').PrismaClient, table: string, column: string) =>
+  Number((await db.$queryRawUnsafe<{ n: bigint }[]>(`SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${table}' AND COLUMN_NAME = '${column}'`))[0].n) > 0;
+
+test('migration (real MySQL): legacy OWNER data goes through roles + ownership intact, owned by the SUPER_ADMIN', async () => {
+  await withLegacyDatabase(async (db, apply, names) => {
+    // Estado do banco local do dono hoje: até a migration de ritmo, conta OWNER, dados reais.
+    for (const name of names.slice(0, names.indexOf('20260922140000_user_roles'))) await apply(name);
+    const x = (sql: string) => db.$executeRawUnsafe(sql);
+    await x("INSERT INTO `User` (id, email, name, passwordHash, role, updatedAt) VALUES ('u-dono', 'dono@antigo', 'Dono', 'h', 'OWNER', NOW(3))");
+    await x("INSERT INTO `AuthSession` (id, userId, tokenHash, expiresAt) VALUES ('s1', 'u-dono', REPEAT('b', 64), DATE_ADD(NOW(3), INTERVAL 1 DAY))");
+    await x("INSERT INTO `Group` (id, externalId, name, updatedAt) VALUES ('g1', '1203001@g.us', 'Arraxta', NOW(3)), ('g2', '1203002@g.us', 'Arraxta', NOW(3)), ('g3', NULL, 'Manual', NOW(3))");
+    await x("INSERT INTO `CampaignMedia` (id, name, mimeType, kind, size, data) VALUES ('m1', 'a.png', 'image/png', 'image', 3, 0x010203)");
+    await x("INSERT INTO `Campaign` (id, name, startsAt, endsAt, status, provider, accountJid, mode, intervalSeconds, nextAvailableAt, mediaId, updatedAt) VALUES ('c1', 'Festival', '2026-09-21 17:00:00.000', '2026-09-21 17:00:00.000', 'ACTIVE', 'baileys', '5511@s.whatsapp.net', 'SCHEDULED', 180, '2026-09-21 17:03:00.000', 'm1', NOW(3)), ('c2', 'Rascunho', NOW(3), NOW(3), 'DRAFT', 'simulator', NULL, 'IMMEDIATE', 60, NULL, NULL, NOW(3))");
+    await x("INSERT INTO `CampaignGroup` (campaignId, groupId, position) VALUES ('c1', 'g1', 0), ('c1', 'g2', 1), ('c2', 'g3', 0)");
+    await x("INSERT INTO `CampaignMessage` (id, campaignId, content) VALUES ('msg1', 'c1', 'Garanta seu ingresso')");
+    await x("INSERT INTO `CampaignSchedule` (id, campaignId, time) VALUES ('sch1', 'c1', '14:00')");
+    await x("INSERT INTO `Delivery` (id, campaignId, groupId, messageBody, scheduledAt, sentAt, status, provider, providerId, sequence, deliveredAt, updatedAt) VALUES ('d1', 'c1', 'g1', 'oi', '2026-09-21 17:00:00.000', '2026-09-21 17:00:05.000', 'SENT', 'baileys', '3EB0A', 0, '2026-09-21 17:00:09.000', NOW(3)), ('d2', 'c1', 'g2', 'oi', '2026-09-21 17:03:00.000', NULL, 'PENDING', 'baileys', NULL, 1, NULL, NOW(3))");
+    await x("INSERT INTO `DeliveryRead` (id, deliveryId, recipientHash, readAt) VALUES ('r1', 'd1', 'h1', NOW(3)), ('r2', 'd1', 'h2', NOW(3))");
+    await x("INSERT INTO `PendingRead` (id, messageId, groupJid, accountJid, participant, readAt) VALUES ('p1', '3EB0Z', '1203001@g.us', '5511@s.whatsapp.net', 'x', NOW(3))");
+    await x("INSERT INTO `WhatsAppAccount` (id, nextAvailableAt, lastSendEndedAt, lastIntervalSeconds) VALUES ('5511@s.whatsapp.net', '2026-09-21 17:03:05.000', '2026-09-21 17:00:05.000', 180)");
+    const tables = ['User', 'AuthSession', 'Group', 'CampaignMedia', 'Campaign', 'CampaignGroup', 'CampaignMessage', 'CampaignSchedule', 'Delivery', 'DeliveryRead', 'PendingRead', 'WhatsAppAccount'];
+    const count = async () => Object.fromEntries(await Promise.all(tables.map(async t => [t, Number((await db.$queryRawUnsafe<{ n: bigint }[]>(`SELECT COUNT(*) AS n FROM \`${t}\``))[0].n)])));
+    const snapshot = 'SELECT id, campaignId, groupId, scheduledAt, sentAt, status, providerId, deliveredAt, sequence FROM `Delivery` ORDER BY id';
+    const before = await count();
+    const deliveriesBefore = JSON.stringify(await db.$queryRawUnsafe(snapshot));
+    const paceBefore = JSON.stringify(await db.$queryRawUnsafe('SELECT * FROM `WhatsAppAccount`'));
+
+    for (const name of names.slice(names.indexOf('20260922140000_user_roles'), names.indexOf(OWNERSHIP) + 1)) await apply(name);
+
+    assert.deepEqual(await count(), before, 'nenhuma linha apagada ou duplicada em nenhuma tabela');
+    assert.equal(JSON.stringify(await db.$queryRawUnsafe(snapshot)), deliveriesBefore, 'envios, horários e agendamento intactos');
+    assert.equal(JSON.stringify(await db.$queryRawUnsafe('SELECT * FROM `WhatsAppAccount`')), paceBefore, 'ritmo do número intacto');
+    assert.equal((await db.$queryRawUnsafe<{ role: string }[]>("SELECT role FROM `User` WHERE id = 'u-dono'"))[0].role, 'SUPER_ADMIN');
+    for (const t of ['Group', 'Campaign', 'CampaignMedia', 'CampaignGroup']) {
+      assert.deepEqual(await db.$queryRawUnsafe(`SELECT DISTINCT userId FROM \`${t}\``), [{ userId: 'u-dono' }], `${t}: tudo do SUPER_ADMIN`);
+    }
+    // Relações continuam de pé: leituras → envio → campanha (com mídia) → grupos.
+    const reads = await db.$queryRawUnsafe<{ n: bigint }[]>("SELECT COUNT(*) AS n FROM `DeliveryRead` r JOIN `Delivery` d ON d.id = r.deliveryId JOIN `Campaign` c ON c.id = d.campaignId JOIN `CampaignMedia` m ON m.id = c.mediaId AND m.userId = c.userId WHERE c.id = 'c1'");
+    assert.equal(Number(reads[0].n), 2, 'métricas ligadas ao envio, à campanha e à mídia do mesmo dono');
+    assert.equal(Number((await db.$queryRawUnsafe<{ n: bigint }[]>("SELECT COUNT(*) AS n FROM `AuthSession` WHERE userId = 'u-dono'"))[0].n), 1, 'sessão mantida');
+    // As novas proteções já valem no banco migrado.
+    await db.$executeRawUnsafe("INSERT INTO `User` (id, email, name, passwordHash, updatedAt) VALUES ('u-b', 'b@antigo', 'B', 'h', NOW(3))");
+    await db.$executeRawUnsafe("INSERT INTO `Group` (id, userId, externalId, name, updatedAt) VALUES ('g1b', 'u-b', '1203001@g.us', 'Arraxta', NOW(3))");
+    await assert.rejects(db.$executeRawUnsafe("INSERT INTO `Group` (id, userId, externalId, name, updatedAt) VALUES ('g1c', 'u-dono', '1203001@g.us', 'X', NOW(3))"), /Duplicate/);
+    await assert.rejects(db.$executeRawUnsafe("INSERT INTO `CampaignGroup` (campaignId, groupId, userId) VALUES ('c2', 'g1b', 'u-dono')"), /foreign key/i);
+    await assert.rejects(db.$executeRawUnsafe("DELETE FROM `User` WHERE id = 'u-dono'"), /foreign key/i, 'conta com dados não pode ser apagada');
+  });
+});
+
+for (const scenario of [
+  { name: 'two active SUPER_ADMINs', users: "('a1', 'a1@x', 'A', 'h', 'SUPER_ADMIN', NULL), ('a2', 'a2@x', 'B', 'h', 'SUPER_ADMIN', NULL)" },
+  { name: 'no SUPER_ADMIN at all', users: "('u1', 'u1@x', 'U', 'h', 'USER', NULL)" },
+]) test(`migration (real MySQL): with data and ${scenario.name}, it stops before changing anything`, async () => {
+  await withLegacyDatabase(async (db, apply, names) => {
+    for (const name of names.slice(0, names.indexOf(OWNERSHIP))) await apply(name);
+    await db.$executeRawUnsafe(`INSERT INTO \`User\` (id, email, name, passwordHash, role, disabledAt, updatedAt) VALUES ${scenario.users.replaceAll(', NULL)', ', NULL, NOW(3))')}`);
+    await db.$executeRawUnsafe("INSERT INTO `Group` (id, externalId, name, updatedAt) VALUES ('g1', '1203001@g.us', 'Grupo', NOW(3))");
+    await assert.rejects(apply(OWNERSHIP), /fase2_precisa_de_um_unico_SUPER_ADMIN_ativo/);
+    assert.equal(await hasColumn(db, 'Group', 'userId'), false, 'nenhuma tabela foi alterada');
+    assert.equal(await hasColumn(db, 'Campaign', 'userId'), false);
+    assert.equal(Number((await db.$queryRawUnsafe<{ n: bigint }[]>('SELECT COUNT(*) AS n FROM `Group`'))[0].n), 1, 'dados intactos');
+  });
+});
+
+test('migration (real MySQL): a disabled SUPER_ADMIN does not count; an empty database needs no SUPER_ADMIN', async () => {
+  await withLegacyDatabase(async (db, apply, names) => {
+    for (const name of names.slice(0, names.indexOf(OWNERSHIP))) await apply(name);
+    await db.$executeRawUnsafe("INSERT INTO `User` (id, email, name, passwordHash, role, disabledAt, updatedAt) VALUES ('ativo', 'a@x', 'A', 'h', 'SUPER_ADMIN', NULL, NOW(3)), ('inativo', 'i@x', 'I', 'h', 'SUPER_ADMIN', NOW(3), NOW(3))");
+    await db.$executeRawUnsafe("INSERT INTO `Group` (id, externalId, name, updatedAt) VALUES ('g1', '1203001@g.us', 'Grupo', NOW(3))");
+    await apply(OWNERSHIP);
+    assert.deepEqual(await db.$queryRawUnsafe('SELECT userId FROM `Group`'), [{ userId: 'ativo' }]);
+  });
+  await withLegacyDatabase(async (db, apply, names) => {
+    for (const name of names) await apply(name); // instalação nova: nenhum usuário, nenhum dado
+    assert.equal(await hasColumn(db, 'Campaign', 'userId'), true);
+  });
+});
+
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
+  // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
+  await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto
+  await prisma.campaignMedia.deleteMany();
+  await prisma.group.deleteMany();
   await prisma.user.deleteMany();
   const logs: string[] = [];
   assert.equal(await bootstrapAdmin({ ADMIN_EMAIL: 'Primeiro@Teste.local', ADMIN_PASSWORD: 'senha-de-teste-123' }, m => logs.push(m)), 'created');
