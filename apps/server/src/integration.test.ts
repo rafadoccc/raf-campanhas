@@ -1226,6 +1226,159 @@ test('migration (real MySQL): a disabled SUPER_ADMIN does not count; an empty da
   });
 });
 
+// ─── Isolamento das APIs por usuário (ADR-018) ──────────────────────────────────
+// Usuários reais, login pela rota real, dados criados pela API. B tenta tudo com ids de A e
+// vice-versa; de fora, recurso alheio e recurso inexistente precisam ser indistinguíveis.
+type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+async function isoUser(email: string, role: 'USER' | 'SUPER_ADMIN' = 'USER') {
+  const user = await prisma.user.upsert({ where: { email }, update: {}, create: { email, name: email.split('@')[0], role, passwordHash: await hashPassword('senha-de-teste-123') } });
+  const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { host: 'localhost', origin: PANEL }, payload: { email, password: 'senha-de-teste-123' } });
+  assert.equal(login.statusCode, 200, login.body);
+  const session = String(login.headers['set-cookie']).split(';')[0];
+  const call = (method: Method, url: string, payload?: object | Buffer, extra: Record<string, string> = {}) =>
+    app.inject({ method, url: apiPath(url), payload, headers: { host: 'localhost', origin: PANEL, cookie: session, ...extra } });
+  return { user, call };
+}
+type IsoUser = Awaited<ReturnType<typeof isoUser>>;
+const draftBody = (groupIds: string[], extra: object = {}) => ({ name: 'Rascunho', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds, ...extra });
+async function ownData(who: IsoUser, label: string) {
+  const group = await who.call('POST', '/groups', { name: `Grupo ${label}` });
+  assert.equal(group.statusCode, 201, group.body);
+  const media = await who.call('POST', `/media?name=${label}.png`, await pngBytes(), { 'content-type': 'image/png' });
+  assert.equal(media.statusCode, 201, media.body);
+  const campaign = await who.call('POST', '/campaigns', { ...draftBody([group.json().id], { mediaId: media.json().id }), name: `Campanha ${label}` });
+  assert.equal(campaign.statusCode, 201, campaign.body);
+  return { groupId: group.json().id as string, mediaId: media.json().id as string, campaignId: campaign.json().id as string };
+}
+let isoWorldPromise: Promise<{ a: IsoUser; b: IsoUser; A: Awaited<ReturnType<typeof ownData>>; B: Awaited<ReturnType<typeof ownData>> }> | undefined;
+const isoWorld = () => isoWorldPromise ??= (async () => {
+  const a = await isoUser('iso-a@teste.local');
+  const b = await isoUser('iso-b@teste.local');
+  const A = await ownData(a, 'A');
+  const B = await ownData(b, 'B');
+  // A campanha de B fica ativa (simulação): passa a ter envios e histórico.
+  const on = await b.call('PATCH', `/campaigns/${B.campaignId}/status`, { status: 'ACTIVE', provider: 'simulator' });
+  assert.equal(on.statusCode, 200, on.body);
+  return { a, b, A, B };
+})();
+const ids = (rows: { id: string }[]) => rows.map(r => r.id).sort();
+const withoutClock = (dashboard: Record<string, unknown>) => { const { serverNow: _ignored, ...rest } = dashboard; return rest; };
+
+test('isolation: each user lists only their own campaigns, groups and deliveries', async () => {
+  const { a, b, A, B } = await isoWorld();
+  assert.deepEqual(ids((await a.call('GET', '/campaigns')).json()), [A.campaignId], '1. A lista só as campanhas de A');
+  assert.deepEqual(ids((await b.call('GET', '/campaigns')).json()), [B.campaignId], '2. B lista só as campanhas de B');
+  assert.deepEqual(ids((await a.call('GET', '/groups')).json()), [A.groupId]);
+  assert.deepEqual(ids((await b.call('GET', '/groups')).json()), [B.groupId]);
+  const historyB = (await b.call('GET', '/deliveries')).json() as { campaignId: string }[];
+  assert.ok(historyB.length > 0 && historyB.every(d => d.campaignId === B.campaignId), 'B vê o próprio histórico');
+  assert.deepEqual((await a.call('GET', '/deliveries')).json(), [], '10. histórico de A não mostra B');
+  assert.deepEqual((await a.call('GET', `/deliveries?campaignId=${B.campaignId}`)).json(), [], 'nem filtrando pelo id da campanha de B');
+  assert.deepEqual((await a.call('GET', `/deliveries?campaignId=${B.campaignId}&status=PENDING`)).json(), []);
+});
+
+test('isolation (IDOR): A cannot open, edit, delete or change the status of B\'s campaign; same answer as a nonexistent id', async () => {
+  const { a, b, A, B } = await isoWorld();
+  const before = await prisma.campaign.findUniqueOrThrow({ where: { id: B.campaignId }, include: { groups: true, messages: true } });
+  const attempts: [Method, (id: string) => string, object?][] = [
+    ['GET', id => `/campaigns/${id}`],
+    ['PATCH', id => `/campaigns/${id}`, draftBody([A.groupId])],
+    ['DELETE', id => `/campaigns/${id}`],
+    ['PATCH', id => `/campaigns/${id}/status`, { status: 'PAUSED' }],
+    ['PATCH', id => `/campaigns/${id}/status`, { status: 'CANCELLED' }],
+    ['PATCH', id => `/campaigns/${id}/status`, { status: 'ACTIVE', provider: 'simulator' }],
+  ];
+  for (const [method, url, payload] of attempts) {
+    const foreign = await a.call(method, url(B.campaignId), payload);
+    const missing = await a.call(method, url('campanha-que-nao-existe'), payload);
+    assert.equal(foreign.statusCode, 404, `${method} ${url('B')}: ${foreign.body}`);
+    assert.equal(foreign.body, missing.body, `${method} ${url('B')}: resposta igual à de um id inexistente`);
+  }
+  const after = await prisma.campaign.findUniqueOrThrow({ where: { id: B.campaignId }, include: { groups: true, messages: true } });
+  assert.deepEqual([after.status, after.name, after.deletedAt, after.groups.map(g => g.groupId), after.messages.map(m => m.content)], [before.status, before.name, before.deletedAt, before.groups.map(g => g.groupId), before.messages.map(m => m.content)], 'a campanha de B não mudou');
+  assert.equal((await b.call('GET', `/campaigns/${B.campaignId}`)).statusCode, 200, 'B continua abrindo a sua');
+});
+
+test('isolation (IDOR): A cannot use B\'s group or media, nor download B\'s media', async () => {
+  const { a, A, B } = await isoWorld();
+  assert.equal((await a.call('POST', '/campaigns', draftBody([B.groupId]))).statusCode, 400, '7. grupo de B numa campanha nova');
+  assert.equal((await a.call('POST', '/campaigns', draftBody([A.groupId], { mediaId: B.mediaId }))).statusCode, 400, '8. mídia de B numa campanha nova');
+  assert.equal((await a.call('PATCH', `/campaigns/${A.campaignId}`, draftBody([B.groupId]))).statusCode, 400, 'grupo de B na edição');
+  assert.equal((await a.call('PATCH', `/campaigns/${A.campaignId}`, draftBody([A.groupId], { mediaId: B.mediaId }))).statusCode, 400, 'mídia de B na edição');
+  const foreign = await a.call('GET', `/media/${B.mediaId}`);
+  const missing = await a.call('GET', '/media/midia-que-nao-existe');
+  assert.equal(foreign.statusCode, 404, '9. A não baixa a mídia de B');
+  assert.equal(foreign.body, missing.body);
+  assert.equal((await a.call('GET', `/media/${B.mediaId}`, undefined, { range: 'bytes=0-10' })).statusCode, 404, 'nem por pedaço');
+  assert.equal((await a.call('GET', `/media/${A.mediaId}`)).statusCode, 200, 'a própria mídia continua acessível');
+  const mine = await prisma.campaign.findUniqueOrThrow({ where: { id: A.campaignId }, include: { groups: true } });
+  assert.deepEqual([mine.mediaId, mine.groups.map(g => g.groupId)], [A.mediaId, [A.groupId]], 'a campanha de A continua só com dados de A');
+});
+
+test('isolation: the dashboard and campaign metrics count only the logged-in user', async () => {
+  const { a, b, A, B } = await isoWorld();
+  const dashboardA = withoutClock((await a.call('GET', '/dashboard')).json());
+  const dashboardB = withoutClock((await b.call('GET', '/dashboard')).json());
+  // Atividade real de B hoje: um envio pelo WhatsApp e três leituras.
+  const [delivery] = await prisma.delivery.findMany({ where: { campaignId: B.campaignId }, take: 1 });
+  await prisma.delivery.update({ where: { id: delivery.id }, data: { provider: 'baileys', status: 'SENT', sentAt: new Date(), providerId: '3EB0ISOB' } });
+  for (const r of ['r1', 'r2', 'r3']) await prisma.deliveryRead.create({ data: { deliveryId: delivery.id, recipientHash: `${delivery.id}-${r}`, readAt: new Date() } });
+  assert.deepEqual(withoutClock((await a.call('GET', '/dashboard')).json()), dashboardA, '11. o painel de A não conta nada de B');
+  const nowB = (await b.call('GET', '/dashboard')).json();
+  assert.equal(nowB.sentToday, (dashboardB.sentToday as number) + 1, 'o painel de B conta o envio de B');
+  assert.equal(nowB.readsToday, (dashboardB.readsToday as number) + 3);
+  assert.deepEqual(nowB.runningCampaigns.map((c: { id: string }) => c.id), [B.campaignId]);
+  assert.ok(nowB.recentActivity.every((e: { campaignId: string }) => e.campaignId === B.campaignId));
+  // 12. Leituras de B aparecem só para B.
+  assert.equal((await b.call('GET', `/campaigns/${B.campaignId}`)).json().readsTotal, 3);
+  assert.equal((await a.call('GET', `/campaigns/${A.campaignId}`)).json().readsTotal, 0);
+  assert.equal((await a.call('GET', `/campaigns/${B.campaignId}`)).statusCode, 404);
+  assert.deepEqual((await a.call('GET', '/deliveries?status=SENT')).json(), []);
+});
+
+test('isolation: the same WhatsApp group can exist for A and B, each sees only their own row', async () => {
+  const { a, b } = await isoWorld();
+  const jid = `120366${Date.now()}@g.us`;
+  const rowA = await prisma.group.create({ data: { name: 'Mesmo grupo', externalId: jid, userId: a.user.id } });
+  const rowB = await prisma.group.create({ data: { name: 'Mesmo grupo', externalId: jid, userId: b.user.id } });
+  const seenByA = (await a.call('GET', '/groups')).json() as { id: string; externalId: string }[];
+  const seenByB = (await b.call('GET', '/groups')).json() as { id: string; externalId: string }[];
+  assert.deepEqual(seenByA.filter(g => g.externalId === jid).map(g => g.id), [rowA.id], '13. A vê a linha dele');
+  assert.deepEqual(seenByB.filter(g => g.externalId === jid).map(g => g.id), [rowB.id], 'B vê a linha dele');
+  assert.equal((await a.call('POST', '/campaigns', draftBody([rowB.id]))).statusCode, 400, 'e não usa a linha de B');
+});
+
+test('isolation: SUPER_ADMIN sees only their own data on the normal routes', async () => {
+  const { A, B } = await isoWorld();
+  const admin = await isoUser('iso-super@teste.local', 'SUPER_ADMIN');
+  const own = await ownData(admin, 'S');
+  assert.deepEqual(ids((await admin.call('GET', '/campaigns')).json()), [own.campaignId], '14. só as campanhas dele');
+  assert.deepEqual(ids((await admin.call('GET', '/groups')).json()), [own.groupId]);
+  assert.deepEqual((await admin.call('GET', '/deliveries')).json(), []);
+  const dashboard = (await admin.call('GET', '/dashboard')).json();
+  assert.equal(dashboard.activeCampaigns, 0, 'a campanha ativa de B não conta para o SUPER_ADMIN');
+  assert.equal(dashboard.sentToday, 0);
+  for (const url of [`/campaigns/${B.campaignId}`, `/campaigns/${A.campaignId}`, `/media/${B.mediaId}`]) {
+    assert.equal((await admin.call('GET', url)).statusCode, 404, `SUPER_ADMIN não abre ${url} pelas rotas normais`);
+  }
+  assert.equal((await admin.call('PATCH', `/campaigns/${B.campaignId}/status`, { status: 'PAUSED' })).statusCode, 404);
+});
+
+test('isolation: userId in body, query or headers never widens or changes the scope', async () => {
+  const { a, b, A, B } = await isoWorld();
+  const spoof = { 'x-user-id': b.user.id, 'x-owner-id': b.user.id, cookie: '' };
+  const asA = (method: Method, url: string, payload?: object) => a.call(method, url, payload, { 'x-user-id': b.user.id, 'x-role': 'SUPER_ADMIN' });
+  assert.deepEqual(ids((await asA('GET', `/campaigns?userId=${b.user.id}`)).json()), [A.campaignId], '15. query/cabeçalho ignorados');
+  assert.deepEqual(ids((await asA('GET', `/groups?userId=${b.user.id}`)).json()), ids(await prisma.group.findMany({ where: { userId: a.user.id } })), 'só os grupos de A');
+  assert.deepEqual((await asA('GET', `/deliveries?userId=${b.user.id}`)).json(), []);
+  assert.deepEqual(withoutClock((await asA('GET', `/dashboard?userId=${b.user.id}`)).json()), withoutClock((await a.call('GET', '/dashboard')).json()));
+  assert.equal((await asA('PATCH', `/campaigns/${B.campaignId}/status`, { status: 'PAUSED', userId: b.user.id })).statusCode, 404, 'corpo com userId de B não abre a campanha de B');
+  assert.equal((await asA('GET', `/media/${B.mediaId}?userId=${b.user.id}`)).statusCode, 404);
+  // Sem a sessão, nada: o escopo nunca vem de outro lugar.
+  const anonymous = await app.inject({ method: 'GET', url: '/api/campaigns', headers: { host: 'localhost', ...spoof } });
+  assert.equal(anonymous.statusCode, 401);
+});
+
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.

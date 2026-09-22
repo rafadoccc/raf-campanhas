@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { dashboardSummary } from './dashboard';
-import { publicMessage } from './security';
+import { publicMessage, NotFoundError } from './security';
 import { mediaMetadata } from './media';
 import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION, dueOrRunning } from '@campaign/database';
 
@@ -8,7 +8,8 @@ export function registerCampaignRoutes(app: FastifyInstance) {
   app.get('/api/campaigns/:id', async (request, reply) => {
     await completeFinished(prisma);
     const { id } = request.params as { id: string };
-    const campaign = await prisma.campaign.findFirst({ where: { id, deletedAt: null }, include: { media: { select: mediaMetadata }, groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
+    // Só campanha própria; de outro usuário responde igual a inexistente (ADR-018).
+    const campaign = await prisma.campaign.findFirst({ where: { id, deletedAt: null, userId: request.user!.id }, include: { media: { select: mediaMetadata }, groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
     if (!campaign) return reply.code(404).send({ error: 'Campanha não encontrada.' });
     const counts = await prisma.delivery.groupBy({ by: ['status'], where: { campaignId: id }, _count: { _all: true } });
     // Próximo a sair: a cabeça já vencida; senão, o pendente de horário mais cedo (ADR-014).
@@ -27,14 +28,17 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     try { return await prisma.$transaction(async tx => {
       await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id } });
-      if (!campaign) throw new Error('Campanha não encontrada.');
+      if (!campaign || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
       if (campaign.deletedAt) return { deleted: true };
       if (!['DRAFT', 'CANCELLED', 'COMPLETED'].includes(campaign.status)) throw new Error('Encerre antes de excluir.');
       if (await tx.delivery.count({ where: { campaignId: id, status: 'PROCESSING' } })) throw new Error('Aguarde o envio em andamento.');
       await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED', error: 'Campanha excluída.' } });
       await tx.campaign.update({ where: { id }, data: { deletedAt: await currentTime(), status: campaign.status === 'DRAFT' ? 'CANCELLED' : campaign.status } });
       return { deleted: true };
-    }, LOCKING_TRANSACTION); } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Falha ao excluir.') }); }
+    }, LOCKING_TRANSACTION); } catch (error) {
+      if (error instanceof NotFoundError) return reply.code(404).send({ error: error.message });
+      return reply.code(400).send({ error: publicMessage(error, 'Falha ao excluir.') });
+    }
   });
-  app.get('/api/dashboard', async () => dashboardSummary());
+  app.get('/api/dashboard', async request => dashboardSummary(request.user!.id));
 }

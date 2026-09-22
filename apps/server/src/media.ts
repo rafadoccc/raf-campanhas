@@ -67,7 +67,8 @@ export function registerMediaRoutes(app: FastifyInstance) {
     } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Arquivo inválido.') }); }
   });
   app.get('/api/media/:id', async (request, reply) => {
-    const media = await prisma.campaignMedia.findUnique({ where: { id: (request.params as { id: string }).id } });
+    // Só a mídia do próprio usuário; de outro usuário responde igual a inexistente (ADR-018).
+    const media = await prisma.campaignMedia.findFirst({ where: { id: (request.params as { id: string }).id, userId: request.user!.id } });
     if (!media) return reply.code(404).send({ error: 'Mídia não encontrada.' });
     reply.header('Content-Type', media.mimeType).header('X-Content-Type-Options', 'nosniff').header('Accept-Ranges', 'bytes');
     const buffer = Buffer.from(media.data); const range = request.headers.range;

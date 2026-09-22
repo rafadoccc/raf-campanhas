@@ -8,7 +8,7 @@ import { registerMediaRoutes } from './media';
 import type { WhatsAppProvider } from './whatsapp';
 import { loadConfig, type AppConfig } from './config';
 import { registerAuth } from './auth';
-import { registerSecurity, registerWeb, publicMessage } from './security';
+import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync'>;
 
@@ -47,7 +47,8 @@ app.get('/api/health', async (_request, reply) => {
   }
 });
 
-app.get('/api/groups', async () => prisma.group.findMany({ orderBy: { name: 'asc' } }));
+// Tudo abaixo é escopado pelo usuário da sessão (ADR-018); nada do cliente define o escopo.
+app.get('/api/groups', async request => prisma.group.findMany({ where: { userId: request.user!.id }, orderBy: { name: 'asc' } }));
 
 app.post('/api/groups', async (request, reply) => {
   const body = request.body as { name?: unknown; externalId?: unknown };
@@ -61,10 +62,10 @@ app.post('/api/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
-app.get('/api/campaigns', async () => {
+app.get('/api/campaigns', async request => {
   await completeFinished(prisma);
   const campaigns = await prisma.campaign.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, userId: request.user!.id },
     orderBy: { createdAt: 'desc' },
     include: {
       groups: { orderBy: { position: 'asc' }, include: { group: { select: { id: true, name: true } } } },
@@ -87,7 +88,7 @@ app.get('/api/deliveries', async (request) => {
   const status = statuses.find(item => item === query.status);
   const page = Math.max(0, Math.min(10000, parseInt(query.page ?? '0') || 0));
   const deliveries = await prisma.delivery.findMany({
-    where: { ...(status ? { status } : {}), ...(query.campaignId ? { campaignId: query.campaignId } : {}) },
+    where: { campaign: { userId: request.user!.id }, ...(status ? { status } : {}), ...(query.campaignId ? { campaignId: query.campaignId } : {}) },
     orderBy: query.campaignId ? { sequence: 'asc' } : { scheduledAt: 'desc' },
     take: 100,
     skip: page * 100,
@@ -95,7 +96,7 @@ app.get('/api/deliveries', async (request) => {
     select: { id: true, campaignId: true, groupId: true, status: true, provider: true, sequence: true, scheduledAt: true, sentAt: true, error: true, attemptedAt: true, sendReturnedAt: true, deliveredAt: true, serverRejectedAt: true, errorCode: true, attempts: true, sendContext: true, campaign: { select: { name: true } }, group: { select: { name: true, participants: true } }, _count: { select: { reads: true } } }
   });
   // Previsão e motivo de espera dos pendentes (só na 1ª página: as anteriores definem a fila).
-  const campaign = query.campaignId && page === 0 && !status ? await prisma.campaign.findUnique({ where: { id: query.campaignId } }) : null;
+  const campaign = query.campaignId && page === 0 && !status ? await prisma.campaign.findFirst({ where: { id: query.campaignId, userId: request.user!.id } }) : null;
   // O número pode estar ocupado por outra campanha (ADR-006): a previsão parte do mais tarde dos dois relógios.
   const accountId = campaign ? paceKey(campaign.provider, campaign.accountJid) : null;
   const account = accountId ? await prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : null;
@@ -142,7 +143,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
       const updated = await prisma.$transaction(async tx => {
         await lockCampaign(tx, id);
         const campaign = await tx.campaign.findUnique({ where: { id } });
-        if (!campaign || campaign.deletedAt) throw new Error('Campanha não encontrada.');
+        if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
         if (campaign.status !== 'DRAFT') throw new Error('Somente rascunhos podem ser editados.');
         return tx.campaign.update({ where: { id }, data: {
           name, startsAt, endsAt, mode: String(mode), intervalSeconds, updatedAt: now, mediaId,
@@ -152,7 +153,10 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
         } });
       }, LOCKING_TRANSACTION);
       return reply.send(updated);
-    } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Não foi possível salvar.') }); }
+    } catch (error) {
+      if (error instanceof NotFoundError) return reply.code(404).send({ error: error.message });
+      return reply.code(400).send({ error: publicMessage(error, 'Não foi possível salvar.') });
+    }
   }
   return reply.status(201).send(await prisma.campaign.create({
     data: {
@@ -176,7 +180,7 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
     return await prisma.$transaction(async tx => {
       await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id }, include: { groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
-      if (!campaign || campaign.deletedAt) throw new Error('Campanha não encontrada.');
+      if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
       const transitions: Record<string, string[]> = { DRAFT: ['ACTIVE', 'CANCELLED'], ACTIVE: ['PAUSED', 'CANCELLED'], PAUSED: ['ACTIVE', 'CANCELLED'], CANCELLED: [], COMPLETED: [] };
       if (!transitions[campaign.status].includes(next)) throw new Error('Mudança de status não permitida.');
       let campaignProvider = campaign.provider; let accountJid = campaign.accountJid;
@@ -205,7 +209,10 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       if (next === 'CANCELLED') await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
       return tx.campaign.update({ where: { id }, data: { updatedAt: now, status: next, provider: campaignProvider, accountJid, nextAvailableAt, pausedAt: next === 'PAUSED' ? now : null } });
     }, { ...LOCKING_TRANSACTION, timeout: 30000 });
-  } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Falha ao atualizar.') }); }
+  } catch (error) {
+    if (error instanceof NotFoundError) return reply.code(404).send({ error: error.message });
+    return reply.code(400).send({ error: publicMessage(error, 'Falha ao atualizar.') });
+  }
 });
 
   registerWeb(app, config);

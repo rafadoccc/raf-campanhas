@@ -70,6 +70,10 @@ export function registerWeb(app: FastifyInstance, config: AppConfig) {
   });
 }
 
+// Recurso inexistente OU de outro usuário (ADR-018): as rotas respondem 404 com a mesma mensagem
+// nos dois casos, para não revelar que o recurso existe.
+export class NotFoundError extends Error {}
+
 // Erros de domínio (lançados por nós com texto para o usuário) podem ir para a tela; os
 // do Prisma ou do sistema não, porque carregam detalhes internos.
 export function publicMessage(error: unknown, fallback: string) {
