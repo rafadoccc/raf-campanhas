@@ -203,3 +203,17 @@ model AuthSession {
   @@index([userId])
   @@index([expiresAt])
 }
+
+// Ritmo de envio de um número de WhatsApp (ADR-006). Todas as campanhas que usam o mesmo
+// número compartilham esta linha: o intervalo vale para o NÚMERO, não para cada campanha.
+// id = JID da conta (Campaign.accountJid). Persistido para valer também após reinício.
+model WhatsAppAccount {
+  id                  String    @id
+  // Antes disto nenhuma campanha pode enviar por este número.
+  nextAvailableAt     DateTime?
+  // Fim do último envio (ou falha) e o intervalo da campanha que enviou.
+  lastSendEndedAt     DateTime?
+  lastIntervalSeconds Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+}

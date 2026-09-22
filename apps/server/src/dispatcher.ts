@@ -10,6 +10,7 @@ import {
   renewLease,
   releaseLease,
   dueOrRunning,
+  holdInterruptedAccounts,
 } from '@campaign/database';
 import type { WhatsAppProvider } from './whatsapp';
 import { isNotSent, notSent } from './send-context';
@@ -29,6 +30,8 @@ export function errorCodeOf(error: unknown): string | undefined {
 const LEASE_TTL_MS = 30_000;
 const LEASE_RENEW_MS = 10_000;
 const SCAN_INTERVAL_MS = 5_000;
+// Folga mínima entre dois envios quaisquer, em memória. NÃO é o que garante o intervalo: isso
+// é o relógio persistido de cada número (WhatsAppAccount, ADR-006), conferido em claimDelivery.
 const SEND_SPACING_MS = 1_500;
 
 export type Dispatcher = {
@@ -107,6 +110,8 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
           deletedAt: null,
           OR: [{ nextAvailableAt: null }, { nextAvailableAt: { lte: now } }],
         },
+        // Quem espera há mais tempo tenta primeiro: campanhas no mesmo número se revezam.
+        orderBy: [{ nextAvailableAt: 'asc' }, { createdAt: 'asc' }],
         include: {
           deliveries: {
             where: dueOrRunning(now),
@@ -147,6 +152,8 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
     await delay(2_000);
   }
 
+  // O envio interrompido pode ter saído pouco antes da queda: o número espera um intervalo inteiro.
+  await holdInterruptedAccounts(prisma, await currentTime());
   await prisma.delivery.updateMany({
     where: { status: 'PROCESSING' },
     data: {

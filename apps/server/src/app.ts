@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS } from '@campaign/database';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey } from '@campaign/database';
 import { forecastQueue } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
@@ -94,7 +94,12 @@ app.get('/api/deliveries', async (request) => {
   });
   // Previsão e motivo de espera dos pendentes (só na 1ª página: as anteriores definem a fila).
   const campaign = query.campaignId && page === 0 && !status ? await prisma.campaign.findUnique({ where: { id: query.campaignId } }) : null;
-  const forecast = campaign ? forecastQueue(deliveries, campaign, await currentTime(), provider.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
+  // O número pode estar ocupado por outra campanha (ADR-006): a previsão parte do mais tarde dos dois relógios.
+  const accountId = campaign ? paceKey(campaign.provider, campaign.accountJid) : null;
+  const account = accountId ? await prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : null;
+  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + (campaign?.intervalSeconds ?? 0) * 1000 : 0);
+  const paced = campaign ? { ...campaign, nextAvailableAt: new Date(Math.max(campaign.nextAvailableAt?.getTime() ?? 0, numberFreeAt)) } : null;
+  const forecast = paced ? forecastQueue(deliveries, paced, await currentTime(), provider.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
   return deliveries.map(delivery => ({ ...delivery, wait: forecast?.get(delivery.id) ?? null }));
 });
 

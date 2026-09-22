@@ -542,6 +542,8 @@ let jidSeq = 0;
 async function realCampaign(groupCount: number, intervalSeconds = 60) {
   // Só esta campanha fica ativa, para o despachante não processar sobras de outros testes.
   await prisma.campaign.updateMany({ where: { status: 'ACTIVE' }, data: { status: 'PAUSED' } });
+  // O relógio do número (ADR-006) é persistido: cada teste começa sem histórico de envio.
+  await prisma.whatsAppAccount.deleteMany();
   const now = new Date();
   const groups = [];
   for (let i = 0; i < groupCount; i++) groups.push(await prisma.group.create({ data: { name: `Real ${i}`, externalId: `120363${Date.now()}${jidSeq++}@g.us` } }));
@@ -569,6 +571,9 @@ const fresh = (id: string) => prisma.delivery.findUniqueOrThrow({ where: { id } 
 // Libera a próxima entrega "agora" (simula o intervalo já decorrido).
 const releaseNext = async (campaignId: string, deliveryId: string) => {
   const past = new Date(Date.now() - 1000);
+  // O intervalo do número também "passou". Fora da transação abaixo: a fila trava número
+  // antes de campanha, e este atalho não pode inverter essa ordem.
+  await prisma.whatsAppAccount.updateMany({ data: { nextAvailableAt: past, lastSendEndedAt: null } });
   // Mesmo lock da fila: sem ele este atalho do teste disputa as linhas com o despachante
   // em execução e o MySQL às vezes o escolhe como vítima de deadlock.
   await prisma.$transaction(async tx => {
@@ -749,6 +754,11 @@ test('restart during a campaign: the interrupted send is marked uncertain and ne
   const wa = fakeWhatsApp(async () => ({ messageId: '3EB0APOSREINICIO', context: 'membro=sim admin=nao so-admins=nao participantes=5' }));
   const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
   try {
+    // O envio interrompido pode ter saído pouco antes da queda: o número espera um intervalo
+    // inteiro a partir do reinício (ADR-006) antes do próximo envio.
+    await sleep(400);
+    assert.equal(wa.calls.length, 0, 'nada sai durante o intervalo após a queda');
+    await releaseNext(campaign.id, second.id);
     await waitFor(async () => (await fresh(second.id)).status === 'SENT', 'segundo envio após reinício');
     const interrupted = await fresh(first.id);
     assert.equal(interrupted.status, 'FAILED');
@@ -772,5 +782,147 @@ test('duplicate prevention: a concurrent claim during a slow send gets nothing a
     assert.equal(wa.calls.length, 1);
     assert.equal((await fresh(row.id)).attempts, 1);
     assert.equal(await claimDelivery(prisma, row.id), null, 'enviado não é reservado de novo');
+  } finally { await dispatcher.stop(); }
+});
+
+// ─── Intervalo mínimo por NÚMERO (ADR-006) ──────────────────────────────────────
+// Invariante: para um mesmo número, início do envio N+1 − fim do envio N ≥ intervalo, somando
+// todas as campanhas. Intervalos curtos (2 s) medem o tempo real sem deixar a suíte lenta;
+// antes da correção as campanhas se revezavam a cada 1,5 s (SEND_SPACING_MS).
+const PACE_S = 2;
+// O relógio do número é persistido; cada teste começa sem histórico de envio.
+const resetPace = () => prisma.$executeRawUnsafe('DELETE FROM `WhatsAppAccount`').catch(() => 0);
+
+async function sameNumberCampaigns(count: number, groupsEach: number, intervalSeconds = PACE_S) {
+  await prisma.campaign.updateMany({ where: { status: 'ACTIVE' }, data: { status: 'PAUSED' } });
+  await resetPace();
+  const now = new Date(Date.now() - 1000);
+  const campaigns = [];
+  for (let c = 0; c < count; c++) {
+    const groups = [];
+    for (let i = 0; i < groupsEach; i++) groups.push(await prisma.group.create({ data: { name: `Ritmo ${c}.${i}`, externalId: `120399${Date.now()}${jidSeq++}@g.us` } }));
+    const campaign = await prisma.campaign.create({ data: {
+      name: `Mesmo número ${c}`, startsAt: now, endsAt: now, status: 'ACTIVE', provider: 'baileys', accountJid: ACCOUNT, mode: 'IMMEDIATE', intervalSeconds, nextAvailableAt: now,
+      groups: { create: groups.map((g, position) => ({ groupId: g.id, position })) },
+      messages: { create: [{ content: 'oi', position: 0 }] },
+      deliveries: { create: groups.map((g, sequence) => ({ groupId: g.id, messageBody: 'oi', provider: 'baileys', sequence, scheduledAt: new Date(now.getTime() + sequence * intervalSeconds * 1000) })) },
+    } });
+    campaigns.push(campaign);
+  }
+  return campaigns;
+}
+const campaignRows = (ids: string[]) => prisma.delivery.findMany({ where: { campaignId: { in: ids } }, include: { group: true } });
+const okSend = (jid: string, call: number) => sleep(40).then(() => ({ messageId: `3EB0RITMO${call}${jid.slice(6, 14)}`, context: 'membro=sim admin=nao so-admins=nao participantes=5' }));
+
+// Todo par de tentativas consecutivas no número respeita o intervalo (fim → início).
+function assertPaced(rows: { attemptedAt: Date | null; sendReturnedAt: Date | null }[], minMs: number) {
+  const attempts = rows.filter(r => r.attemptedAt && r.sendReturnedAt).sort((a, b) => a.attemptedAt!.getTime() - b.attemptedAt!.getTime());
+  for (let i = 1; i < attempts.length; i++) {
+    const gap = attempts[i].attemptedAt!.getTime() - attempts[i - 1].sendReturnedAt!.getTime();
+    assert.ok(gap >= minMs, `tentativa ${i + 1} saiu ${gap} ms depois da anterior (mínimo ${minMs} ms)`);
+  }
+}
+
+test('pace, one campaign: keeps sending in order with the interval between sends', async () => {
+  const [campaign] = await sameNumberCampaigns(1, 3);
+  const wa = fakeWhatsApp(okSend);
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    await waitFor(async () => (await campaignRows([campaign.id])).every(d => d.status === 'SENT'), 'campanha enviada', 20_000);
+    const rows = await campaignRows([campaign.id]);
+    assertPaced(rows, PACE_S * 1000);
+    const order = rows.sort((x, y) => x.attemptedAt!.getTime() - y.attemptedAt!.getTime()).map(r => r.sequence);
+    assert.deepEqual(order, [0, 1, 2]);
+    assert.equal(wa.calls.length, 3);
+  } finally { await dispatcher.stop(); }
+});
+
+for (const count of [2, 3]) test(`pace, ${count} campaigns on the same number: never faster than the interval`, async () => {
+  const campaigns = await sameNumberCampaigns(count, 2);
+  const ids = campaigns.map(c => c.id);
+  const wa = fakeWhatsApp(okSend);
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    await waitFor(async () => (await campaignRows(ids)).every(d => d.status === 'SENT'), 'todas enviadas', 30_000);
+    const rows = await campaignRows(ids);
+    assertPaced(rows, PACE_S * 1000);
+    assert.equal(wa.calls.length, count * 2, 'um envio por grupo');
+    // Revezamento justo: a segunda campanha não espera a primeira terminar tudo.
+    const order = rows.sort((x, y) => x.attemptedAt!.getTime() - y.attemptedAt!.getTime()).map(r => r.campaignId);
+    assert.notEqual(order[0], order[1], 'as campanhas se revezam no número');
+  } finally { await dispatcher.stop(); }
+});
+
+test('pace, pause and resume: resuming a campaign does not bypass the number interval', async () => {
+  const [a, b] = await sameNumberCampaigns(2, 2);
+  const wa = fakeWhatsApp(okSend);
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    await waitFor(async () => (await campaignRows([a.id, b.id])).some(d => d.status === 'SENT'), 'primeiro envio');
+    // Pausa B como a rota faz e retoma logo depois, já com o próximo envio "vencido".
+    await prisma.$transaction(async tx => { await lockCampaign(tx, b.id); await tx.campaign.update({ where: { id: b.id }, data: { status: 'PAUSED', pausedAt: new Date() } }); }, LOCKING_TRANSACTION);
+    await sleep(300);
+    await prisma.$transaction(async tx => {
+      await lockCampaign(tx, b.id);
+      await tx.campaign.update({ where: { id: b.id }, data: { status: 'ACTIVE', pausedAt: null, nextAvailableAt: new Date(Date.now() - 60_000) } });
+    }, LOCKING_TRANSACTION);
+    await waitFor(async () => (await campaignRows([a.id, b.id])).every(d => d.status === 'SENT'), 'todas enviadas', 30_000);
+    assertPaced(await campaignRows([a.id, b.id]), PACE_S * 1000);
+    assert.equal(wa.calls.length, 4);
+  } finally { await dispatcher.stop(); }
+});
+
+test('pace, restart after a finished send: the new process still waits the interval since that send', async () => {
+  const [a, b] = await sameNumberCampaigns(2, 1, 3);
+  await prisma.campaign.update({ where: { id: b.id }, data: { status: 'PAUSED' } });
+  const wa = fakeWhatsApp(okSend);
+  let dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  await waitFor(async () => (await campaignRows([a.id])).every(d => d.status === 'SENT'), 'envio de A');
+  await dispatcher.stop();
+  await prisma.campaign.update({ where: { id: b.id }, data: { status: 'ACTIVE', nextAvailableAt: new Date(Date.now() - 60_000) } });
+  dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 }); // "reinício" do processo
+  try {
+    await waitFor(async () => (await campaignRows([b.id])).every(d => d.status === 'SENT'), 'envio de B', 20_000);
+    assertPaced(await campaignRows([a.id, b.id]), 3000);
+  } finally { await dispatcher.stop(); }
+});
+
+test('pace, crash in the middle of a send: after restart the number waits a full interval', async () => {
+  const [a, b] = await sameNumberCampaigns(2, 1, 3);
+  const [interrupted] = await campaignRows([a.id]);
+  // Reserva real (como o despachante faria) e o processo "morre" antes de gravar o resultado.
+  assert.ok(await claimDelivery(prisma, interrupted.id));
+  await prisma.campaign.update({ where: { id: b.id }, data: { nextAvailableAt: new Date(Date.now() - 60_000) } });
+  const bootAt = (await currentTime()).getTime(); // mesmo relógio da fila
+  const wa = fakeWhatsApp(okSend);
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    await waitFor(async () => (await campaignRows([b.id])).every(d => d.status === 'SENT'), 'envio de B', 20_000);
+    const [sentB] = await campaignRows([b.id]);
+    assert.ok(sentB.attemptedAt!.getTime() - bootAt >= 3000, 'o envio interrompido pode ter saído a qualquer momento antes do reinício');
+    assert.equal((await fresh(interrupted.id)).status, 'FAILED', 'interrompido continua incerto, sem reenvio');
+    assert.deepEqual(wa.calls, [sentB.group.externalId]);
+  } finally { await dispatcher.stop(); }
+});
+
+test('pace, failures and retries on a shared number: no duplicate and no send faster than the interval', async () => {
+  const [a, b] = await sameNumberCampaigns(2, 2);
+  const [aFirst, aSecond] = (await campaignRows([a.id])).sort((x, y) => x.sequence - y.sequence);
+  const { notSent } = await import('./send-context.js');
+  const wa = fakeWhatsApp(async (jid, call) => {
+    if (jid === aFirst.group.externalId) throw notSent(new Error('Conexão interrompida antes do envio.'));
+    if (jid === aSecond.group.externalId) throw new Error('Timed Out');
+    return okSend(jid, call);
+  });
+  const dispatcher = await startDispatcher(wa.provider, { scanIntervalMs: 50 });
+  try {
+    await waitFor(async () => {
+      const rows = await campaignRows([a.id, b.id]);
+      return rows.filter(r => r.campaignId === b.id).every(r => r.status === 'SENT') && rows.find(r => r.id === aSecond.id)?.status === 'FAILED';
+    }, 'B enviada e A processada', 30_000);
+    const rows = await campaignRows([a.id, b.id]);
+    assertPaced(rows, PACE_S * 1000);
+    assert.equal(rows.find(r => r.id === aFirst.id)?.status, 'PENDING', 'falha antes de enviar volta para a fila (5 min)');
+    for (const row of rows) assert.equal(wa.calls.filter(jid => jid === row.group.externalId).length, 1, `grupo ${row.group.name}: uma única tentativa`);
   } finally { await dispatcher.stop(); }
 });
