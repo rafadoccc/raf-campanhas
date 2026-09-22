@@ -400,3 +400,34 @@ um envio por vez, intervalo contado do fim do anterior, reserva sob lock da camp
 `reason`) calculado por `forecastQueue` só na 1ª página; `group.participants`. `GET /api/campaigns`
 ganha `progress` (contagem por status). `Group.participants` (Int?) gravado na sincronização e
 a cada envio.
+
+
+## ADR-015 · Intervalo mínimo por número de WhatsApp (aplica parte da ADR-006)
+
+**Data:** 2026-09-22 · **Status:** aceita (pedido do dono) · **Autor:** claude
+
+**Problema.** O intervalo vivia só em `Campaign.nextAvailableAt` e o lock era só da campanha.
+Entre campanhas diferentes a única folga era `SEND_SPACING_MS` (1,5 s, em memória): duas
+campanhas no mesmo número se revezavam a cada ~1,5 s, e um reinício zerava até isso.
+
+**Decisão.** Tabela `WhatsAppAccount` (id = JID do número = `Campaign.accountJid`) com o relógio
+do número: `nextAvailableAt`, `lastSendEndedAt`, `lastIntervalSeconds`. Persistida no banco.
+- `claimDelivery`: trava o número (`lockAccount`: INSERT IGNORE + SELECT … FOR UPDATE) ANTES da
+  campanha; só reserva se `nextAvailableAt <= agora` e `lastSendEndedAt + intervalo da campanha
+  <= agora`; ao reservar, ocupa o número até `agora + intervalo` (cobre o envio em andamento).
+- `finishDelivery`: mesma ordem de locks; grava o fim da tentativa (sucesso OU falha) e libera o
+  número em `fim + intervalo`.
+- Partida: `holdInterruptedAccounts` segura o número por um intervalo inteiro a partir do
+  reinício quando há envio interrompido (não se sabe quando ele saiu).
+- Despachante tenta primeiro a campanha que espera há mais tempo (`nextAvailableAt asc`).
+- Simulação não usa número (`paceKey` = null): não entra no ritmo.
+
+**Regra do intervalo entre campanhas diferentes:** vale o MAIOR entre o intervalo da campanha
+que enviou por último e o da que vai enviar.
+
+**Ordem de locks (obrigatória):** número → campanha. Nenhum código pode travar a campanha e
+depois o número.
+
+**Multiusuário:** a linha por número é o que a ADR-006 previa. Com um WhatsApp por usuário, a
+chave continua sendo o número (ou passa a ser o id da sessão) e a tabela ganha o dono; claim e
+finish não mudam.

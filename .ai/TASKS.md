@@ -114,6 +114,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-092  Quantidade de membros por grupo                          owner: —        since: —
 [x] T-093  Previsão e motivo de atraso dos envios pendentes         owner: —        since: —
 [x] T-094  Limpeza geral da interface (textos, blocos de campanha)  owner: —        since: —
+[x] T-095  Intervalo mínimo por número de WhatsApp (ADR-006)       owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

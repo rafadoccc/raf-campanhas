@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T13:00Z · claude
+
+**Fiz:** intervalo mínimo por NÚMERO (ADR-015, parte da ADR-006). Nova tabela `WhatsAppAccount` com o relógio do número, travada antes da campanha em `claimDelivery`/`finishDelivery`; reinício com envio interrompido segura o número por um intervalo inteiro; despachante reveza campanhas (quem espera há mais tempo primeiro); previsão do painel considera o relógio do número.
+**Arquivos:** packages/database/prisma/schema.prisma, migrations/20260922120000_whatsapp_account_pace, packages/database/src/{queue,client}.ts, apps/server/src/{dispatcher,app}.ts, apps/server/src/integration.test.ts
+**Tarefas:** T-095 (concluída)
+**Estado:** compila · lint ok · npm test 47+2 ok · integração 45/45 (2 execuções); os 7 testes novos de ritmo falhavam antes da correção (1,46 s entre envios; 31 ms após reinício)
+**Armadilhas:** ordem de locks número → campanha é obrigatória; atalhos de teste que mexem nos dois devem atualizar o número FORA da transação da campanha. O relógio do número é persistido: testes precisam limpar `WhatsAppAccount`. Após uma queda no meio de um envio, o próximo envio espera um intervalo inteiro (proposital).
+**Próximo passo sugerido:** multiusuário Fase 0 (decisões do dono) — nada de multiusuário foi iniciado.
+
 ## 2026-09-22T05:30Z · claude
 
 **Fiz:** reenvio automático limitado (ADR-014): falha antes do sendMessage (marca `notSent`) e recusa do servidor voltam para a fila na mesma sequência, com 5 e 15 min de espera, até 3 tentativas; resultado incerto continua sem reenvio; recibo de entrega tardio cancela o reenvio. A cabeça da fila passou a ser o primeiro envio em andamento ou já vencido (`dueOrRunning`), para um reenvio agendado não travar os seguintes. `Group.participants` gravado na sincronização e a cada envio. `forecastQueue` dá a previsão e o motivo de espera de cada pendente (`wait` em /api/deliveries). Interface limpa: `components/ui.tsx` com selos, botões e formatos compartilhados; blocos de campanha com progresso e botão "Ver campanha"; menos texto em todas as telas.
