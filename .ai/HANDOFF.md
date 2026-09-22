@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-22T21:00Z · claude
+
+**Fiz:** Fase 4A (ADR-019): modelo `WhatsAppSession` (uma conexão por usuário, número pareado exclusivo, sem credencial no banco) + `session-paths.ts` com o caminho seguro `SESSIONS_DIR/users/<userId>/whatsapp`. Migration só cria a tabela. Nada em uso ainda: o sistema continua com a conexão global.
+**Arquivos:** packages/database/prisma/schema.prisma, migrations/20260922200000_whatsapp_session, apps/server/src/session-paths.ts (novo), apps/server/src/session-paths.test.ts (novo), package.json (script test), apps/server/src/integration.test.ts
+**Tarefas:** T-099 (concluída)
+**Estado:** compila · lint ok · npm test 51+2 ok · integração 70/70 (2 execuções) · whatsapp.ts, dispatcher.ts, app.ts e packages/database/src NÃO foram alterados (git diff vazio)
+**Armadilhas:** a sessão real do dono continua em SESSIONS_DIR/whatsapp e NÃO pode ser movida antes da 4E (36.530 arquivos, 70 MB — usar rename, nunca cópia). `session-paths.ts` importa `defaultSessionsDir` de whatsapp.ts; na 4B essa função deve MUDAR DE CASA para session-paths.ts (senão vira ciclo de import).
+**Próximo passo sugerido:** aguardar aprovação do dono para a 4B (WhatsAppManager e providers por usuário).
+
 ## 2026-09-22T19:00Z · claude
 
 **Fiz:** multiusuário Fase 3 (ADR-018): todas as rotas de dados escopadas por `request.user.id`; recurso alheio = 404 idêntico ao inexistente (`NotFoundError`); dashboard por usuário; download de mídia só do dono. 7 testes de isolamento/IDOR com dois usuários reais + SUPER_ADMIN.

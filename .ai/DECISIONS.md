@@ -498,3 +498,22 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
   campanha real (usa o número global), processos do sistema (despachante, recibos, eventos do
   servidor) e os selos de grupo gravados no envio (`prepareSend` atualiza todas as linhas do mesmo
   externalId).
+
+
+## ADR-019 · Conexão de WhatsApp por usuário — modelo e caminhos (Fase 4A)
+
+**Data:** 2026-09-22 · **Status:** aceita (decisão do dono) · **Autor:** claude
+**Escopo:** só banco e caminhos. O sistema continua usando a conexão global (4B em diante).
+
+- `WhatsAppSession`: `userId` @unique (uma conexão por usuário), `accountJid` @unique e opcional
+  (vários null antes do pareamento; um número pareado pertence a um único usuário), `state`
+  (último estado conhecido, só exibição), `lastConnectedAt`, `lastError`, `autoConnect`.
+  FK para User com ON DELETE CASCADE. **Nenhuma credencial no banco**: creds.json e as chaves do
+  Baileys continuam em arquivos; o QR nunca é persistido.
+- `session-paths.ts`: `whatsappSessionDir(userId)` = `SESSIONS_DIR/users/<userId>/whatsapp`. O
+  caminho usa só o id interno (cuid), validado por `^[A-Za-z0-9_-]{1,64}$`, com `path.resolve` e
+  conferência de que o resultado fica dentro de `SESSIONS_DIR/users`. E-mail e nome nunca entram
+  no caminho. `legacyWhatsappSessionDir()` aponta para a pasta global atual, só para a 4E
+  encontrá-la — a 4A não lê, move nem apaga nada lá dentro.
+- `WhatsAppAccount` (ritmo por número) **não muda**: o ritmo pertence ao número, não ao usuário.
+- Nada usa ainda a nova estrutura: provider, despachante, rotas, eventos e partida seguem iguais.
