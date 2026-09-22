@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Cria um usuário do painel ou redefine a senha de um existente.
-// Uso: npm run user:create   (pergunta e-mail, nome e senha; a senha não aparece na tela)
+// Uso: npm run user:create                    cria USER (a senha não aparece na tela)
+//      npm run user:create -- --super-admin   cria SUPER_ADMIN (pede confirmação digitada)
+// A primeira conta de um banco vazio é sempre SUPER_ADMIN (senão ninguém administra o sistema).
+// Nunca altera o papel de uma conta existente: aqui só se redefine a senha dela.
 import { createInterface } from 'node:readline';
 import { createRequire } from 'node:module';
 
@@ -27,10 +30,19 @@ async function ask(question, hidden = false) {
 }
 const askHidden = question => ask(question, true);
 
+const wantsSuperAdmin = process.argv.slice(2).includes('--super-admin');
+
 try {
   const email = normalizeEmail(await ask('E-mail: '));
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('E-mail inválido.');
   const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing && wantsSuperAdmin) throw new Error('Este e-mail já existe. O papel de uma conta existente não muda por aqui.');
+  const firstUser = !existing && (await prisma.user.count()) === 0;
+  let role = firstUser ? 'SUPER_ADMIN' : 'USER';
+  if (!existing && !firstUser && wantsSuperAdmin) {
+    if ((await ask('Criar como SUPER_ADMIN (acesso administrativo total)? Digite SUPER_ADMIN para confirmar: ')).trim() !== 'SUPER_ADMIN') throw new Error('Confirmação não conferiu. Nada foi criado.');
+    role = 'SUPER_ADMIN';
+  }
   const name = existing ? existing.name : ((await ask('Nome: ')).trim() || 'Administrador');
   const password = await askHidden(existing ? 'Nova senha: ' : 'Senha: ');
   const problem = validateNewPassword(password);
@@ -42,8 +54,8 @@ try {
     await prisma.authSession.deleteMany({ where: { userId: existing.id } });
     console.log(`Senha de ${email} redefinida. Sessões antigas encerradas.`);
   } else {
-    await prisma.user.create({ data: { email, name, passwordHash, role: 'OWNER' } });
-    console.log(`Usuário ${email} criado.`);
+    await prisma.user.create({ data: { email, name, passwordHash, role } });
+    console.log(`Usuário ${email} criado como ${role}${firstUser ? ' (primeira conta do sistema)' : ''}.`);
   }
 } catch (error) {
   console.error(`Erro: ${error.message}`);

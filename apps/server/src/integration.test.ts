@@ -2,7 +2,7 @@ import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
-import { hashPassword } from './auth';
+import { hashPassword, requireSuperAdmin, bootstrapAdmin } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
 import { loadConfig } from './config';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -925,4 +925,132 @@ test('pace, failures and retries on a shared number: no duplicate and no send fa
     assert.equal(rows.find(r => r.id === aFirst.id)?.status, 'PENDING', 'falha antes de enviar volta para a fila (5 min)');
     for (const row of rows) assert.equal(wa.calls.filter(jid => jid === row.group.externalId).length, 1, `grupo ${row.group.name}: uma única tentativa`);
   } finally { await dispatcher.stop(); }
+});
+
+// ─── Papéis e autorização (ADR-016) ─────────────────────────────────────────────
+// Um app separado com uma rota administrativa de prova: ainda não existem rotas de admin.
+function roleApp() {
+  const probe = buildApp({ status: () => ({ state: 'disconnected' }), connect: async () => ({ state: 'disconnected' }), disconnect: async () => ({ state: 'disconnected' }), sync: async () => ({ count: 0 }) });
+  probe.get('/api/admin/probe', { preHandler: requireSuperAdmin }, async request => ({ ok: true, role: request.user!.role }));
+  probe.post('/api/admin/probe', { preHandler: requireSuperAdmin }, async () => ({ ok: true }));
+  return probe;
+}
+async function loginAs(target: ReturnType<typeof buildApp>, email: string, password = 'senha-de-teste-123') {
+  const r = await target.inject({ method: 'POST', url: '/api/auth/login', headers: { host: 'localhost', origin: PANEL }, payload: { email, password } });
+  return { status: r.statusCode, body: r.json(), cookie: r.statusCode === 200 ? String(r.headers['set-cookie']).split(';')[0] : '' };
+}
+const as = (sessionCookie: string, extra: Record<string, string> = {}) => ({ host: 'localhost', origin: PANEL, cookie: sessionCookie, ...extra });
+
+test('roles: SUPER_ADMIN and USER are recognized from the server session; new accounts default to USER', async () => {
+  const probe = roleApp();
+  try {
+    const passwordHash = await hashPassword('senha-de-teste-123');
+    const admin = await prisma.user.create({ data: { email: 'super@teste.local', name: 'Super', role: 'SUPER_ADMIN', passwordHash } });
+    const user = await prisma.user.create({ data: { email: 'comum@teste.local', name: 'Comum', passwordHash } });
+    assert.equal(user.role, 'USER', 'papel padrão é USER');
+    const a = await loginAs(probe, admin.email);
+    const u = await loginAs(probe, user.email);
+    assert.equal(a.body.user.role, 'SUPER_ADMIN');
+    assert.equal(u.body.user.role, 'USER');
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: as(a.cookie) })).json().user.role, 'SUPER_ADMIN');
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: as(u.cookie) })).json().user.role, 'USER');
+  } finally { await probe.close(); }
+});
+
+test('requireSuperAdmin: anonymous 401, USER 403 (even claiming to be admin), SUPER_ADMIN passes', async () => {
+  const probe = roleApp();
+  try {
+    const a = await loginAs(probe, 'super@teste.local');
+    const u = await loginAs(probe, 'comum@teste.local');
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/admin/probe', headers: { host: 'localhost' } })).statusCode, 401);
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/admin/probe', headers: as(u.cookie) })).statusCode, 403);
+    const ok = await probe.inject({ method: 'GET', url: '/api/admin/probe', headers: as(a.cookie) });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(ok.json().role, 'SUPER_ADMIN');
+    // Nada vindo do navegador decide o papel: cabeçalho, query, corpo e cookie extra são ignorados.
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'super@teste.local' } });
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/admin/probe?role=SUPER_ADMIN', headers: as(`${u.cookie}; role=SUPER_ADMIN`, { 'x-role': 'SUPER_ADMIN', 'x-user-id': admin.id }) })).statusCode, 403);
+    assert.equal((await probe.inject({ method: 'POST', url: '/api/admin/probe', headers: as(u.cookie), payload: { role: 'SUPER_ADMIN', userId: admin.id } })).statusCode, 403);
+  } finally { await probe.close(); }
+});
+
+test('roles: a USER keeps using the normal authenticated routes', async () => {
+  const probe = roleApp();
+  try {
+    const u = await loginAs(probe, 'comum@teste.local');
+    for (const url of ['/api/campaigns', '/api/groups', '/api/deliveries', '/api/dashboard', '/api/whatsapp/status', '/api/auth/me']) {
+      assert.equal((await probe.inject({ method: 'GET', url, headers: as(u.cookie) })).statusCode, 200, url);
+    }
+  } finally { await probe.close(); }
+});
+
+test('roles: a role change in the database applies on the next request, without logging in again', async () => {
+  const probe = roleApp();
+  try {
+    const a = await loginAs(probe, 'super@teste.local');
+    await prisma.user.update({ where: { email: 'super@teste.local' }, data: { role: 'USER' } });
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/admin/probe', headers: as(a.cookie) })).statusCode, 403, 'rebaixado perde o acesso na hora');
+    await prisma.user.update({ where: { email: 'super@teste.local' }, data: { role: 'SUPER_ADMIN' } });
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/admin/probe', headers: as(a.cookie) })).statusCode, 200);
+  } finally { await probe.close(); }
+});
+
+test('disabledAt: blocks open sessions and new logins, for USER and SUPER_ADMIN', async () => {
+  const probe = roleApp();
+  try {
+    for (const email of ['comum@teste.local', 'super@teste.local']) {
+      const session = await loginAs(probe, email);
+      await prisma.user.update({ where: { email }, data: { disabledAt: new Date() } });
+      assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: as(session.cookie) })).statusCode, 401, `${email}: sessão aberta cai`);
+      assert.equal((await probe.inject({ method: 'GET', url: '/api/admin/probe', headers: as(session.cookie) })).statusCode, 401);
+      assert.equal((await loginAs(probe, email)).status, 401, `${email}: login recusado`);
+      await prisma.user.update({ where: { email }, data: { disabledAt: null } });
+      assert.equal((await loginAs(probe, email)).status, 200, `${email}: reativado entra de novo`);
+    }
+  } finally { await probe.close(); }
+});
+
+test('migration: a legacy OWNER becomes SUPER_ADMIN keeping password and sessions; unknown roles become USER', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const { randomBytes } = await import('node:crypto');
+  const { PrismaClient } = await import('@prisma/client');
+  const dir = join(process.cwd(), 'packages/database/prisma/migrations');
+  const all = readdirSync(dir).filter(name => /^\d{14}_/.test(name)).sort();
+  const target = '20260922140000_user_roles';
+  assert.ok(all.includes(target));
+  const statements = (name: string) => readFileSync(join(dir, name, 'migration.sql'), 'utf8')
+    .split('\n').filter(line => !line.trim().startsWith('--')).join('\n')
+    .split(/;\s*(?:\n|$)/).map(sql => sql.trim()).filter(Boolean);
+  // Banco próprio e descartável, com as migrations ANTERIORES aplicadas: o estado de antes.
+  const legacy = `campaign_test_${randomBytes(8).toString('hex')}`;
+  const url = new URL(process.env.DATABASE_URL!);
+  url.pathname = `/${legacy}`;
+  await prisma.$executeRawUnsafe(`CREATE DATABASE \`${legacy}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  const db = new PrismaClient({ datasources: { db: { url: url.toString() } } });
+  try {
+    for (const name of all.slice(0, all.indexOf(target))) for (const sql of statements(name)) await db.$executeRawUnsafe(sql);
+    await db.$executeRawUnsafe("INSERT INTO `User` (id, email, name, passwordHash, role, updatedAt) VALUES ('u-owner', 'dono@antigo', 'Dono', 'scrypt$hash-original', 'OWNER', NOW(3)), ('u-other', 'x@antigo', 'X', 'h', 'OPERATOR', NOW(3))");
+    await db.$executeRawUnsafe("INSERT INTO `AuthSession` (id, userId, tokenHash, expiresAt) VALUES ('s1', 'u-owner', REPEAT('a', 64), DATE_ADD(NOW(3), INTERVAL 1 DAY))");
+    for (const sql of statements(target)) await db.$executeRawUnsafe(sql);
+    const rows = await db.$queryRawUnsafe<{ id: string; role: string; passwordHash: string }[]>('SELECT id, role, passwordHash FROM `User` ORDER BY id');
+    assert.deepEqual(rows.map(r => [r.id, r.role]), [['u-other', 'USER'], ['u-owner', 'SUPER_ADMIN']]);
+    assert.equal(rows.find(r => r.id === 'u-owner')?.passwordHash, 'scrypt$hash-original', 'senha intacta');
+    assert.equal(Number((await db.$queryRawUnsafe<{ n: bigint }[]>("SELECT COUNT(*) AS n FROM `AuthSession` WHERE userId = 'u-owner'"))[0].n), 1, 'sessão mantida');
+    await db.$executeRawUnsafe("INSERT INTO `User` (id, email, name, passwordHash, updatedAt) VALUES ('u-new', 'novo@antigo', 'Novo', 'h', NOW(3))");
+    assert.equal((await db.$queryRawUnsafe<{ role: string }[]>("SELECT role FROM `User` WHERE id = 'u-new'"))[0].role, 'USER', 'padrão novo é USER');
+  } finally {
+    await db.$disconnect();
+    await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS \`${legacy}\``);
+  }
+});
+
+// Por último: apaga os usuários deste banco de teste para simular a primeira subida.
+test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
+  await prisma.user.deleteMany();
+  const logs: string[] = [];
+  assert.equal(await bootstrapAdmin({ ADMIN_EMAIL: 'Primeiro@Teste.local', ADMIN_PASSWORD: 'senha-de-teste-123' }, m => logs.push(m)), 'created');
+  const first = await prisma.user.findUniqueOrThrow({ where: { email: 'primeiro@teste.local' } });
+  assert.equal(first.role, 'SUPER_ADMIN');
+  assert.equal(await bootstrapAdmin({ ADMIN_EMAIL: 'outro@teste.local', ADMIN_PASSWORD: 'senha-de-teste-123' }, m => logs.push(m)), 'exists');
+  assert.equal(await prisma.user.count(), 1);
 });

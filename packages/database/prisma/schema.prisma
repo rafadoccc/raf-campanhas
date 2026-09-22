@@ -15,6 +15,12 @@ enum CampaignStatus {
   COMPLETED
 }
 
+// Papéis (ADR-016). SUPER_ADMIN administra o sistema; USER opera só os próprios dados.
+enum UserRole {
+  SUPER_ADMIN
+  USER
+}
+
 enum DeliveryStatus {
   PENDING
   PROCESSING
@@ -180,7 +186,7 @@ model User {
   email        String        @unique @db.VarChar(191)
   name         String        @db.VarChar(120)
   passwordHash String        @db.VarChar(255)
-  role         String        @default("OWNER") @db.VarChar(20)
+  role         UserRole      @default(USER)
   disabledAt   DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt

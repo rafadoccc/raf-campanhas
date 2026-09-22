@@ -10,7 +10,10 @@ export const SESSION_COOKIE = 'campanhas_sessao';
 // Rotas da API acessíveis sem login. Todo o resto exige sessão (negar por padrão).
 const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup']);
 
-export type SessionUser = { id: string; email: string; name: string; role: string };
+// Papéis (ADR-016). O papel vem SEMPRE do banco, pela sessão validada no servidor; nada que o
+// navegador envie (corpo, cabeçalho, cookie próprio) decide permissão.
+export type Role = 'SUPER_ADMIN' | 'USER';
+export type SessionUser = { id: string; email: string; name: string; role: Role };
 declare module 'fastify' {
   interface FastifyRequest { user: SessionUser | null }
 }
@@ -121,6 +124,14 @@ async function resolveSession(request: FastifyRequest, reply: FastifyReply, conf
   return { id, email, name, role };
 }
 
+// ─── Autorização ────────────────────────────────────────────────────────────────
+// Para rotas administrativas: app.get('/api/admin/...', { preHandler: requireSuperAdmin }, ...).
+// Roda depois do hook de sessão, então request.user já é o usuário do banco (ou null).
+export async function requireSuperAdmin(request: FastifyRequest, reply: FastifyReply) {
+  if (!request.user) return reply.code(401).send({ error: 'Faça login para continuar.' });
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'Acesso restrito ao administrador.' });
+}
+
 // ─── Rotas e proteção ───────────────────────────────────────────────────────────
 export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = new LoginLimiter()) {
   app.decorateRequest('user', null);
@@ -181,7 +192,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
   });
 }
 
-// Primeira subida sem nenhum usuário: cria o dono a partir de ADMIN_EMAIL/ADMIN_PASSWORD.
+// Primeira subida sem nenhum usuário: cria o SUPER_ADMIN a partir de ADMIN_EMAIL/ADMIN_PASSWORD.
 // Idempotente — com qualquer usuário já cadastrado, não faz nada.
 export async function bootstrapAdmin(env: NodeJS.ProcessEnv, log: (message: string) => void = console.log) {
   if (await prisma.user.count()) return 'exists' as const;
@@ -193,7 +204,7 @@ export async function bootstrapAdmin(env: NodeJS.ProcessEnv, log: (message: stri
   if (!EMAIL.test(email)) throw new Error('ADMIN_EMAIL não é um e-mail válido.');
   const problem = validateNewPassword(env.ADMIN_PASSWORD);
   if (problem) throw new Error(`ADMIN_PASSWORD: ${problem}`);
-  await prisma.user.create({ data: { email, name: env.ADMIN_NAME?.trim() || 'Administrador', role: 'OWNER', passwordHash: await hashPassword(env.ADMIN_PASSWORD) } });
+  await prisma.user.create({ data: { email, name: env.ADMIN_NAME?.trim() || 'Administrador', role: 'SUPER_ADMIN', passwordHash: await hashPassword(env.ADMIN_PASSWORD) } });
   log(`Usuário administrador ${email} criado. Por segurança, remova ADMIN_PASSWORD das variáveis de ambiente.`);
   return 'created' as const;
 }
