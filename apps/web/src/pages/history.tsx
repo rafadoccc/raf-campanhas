@@ -1,6 +1,36 @@
 import { api } from '../lib/api';
 import { usePolling } from '../lib/use-polling';
-type Delivery = { id: string; status: string; provider: string; scheduledAt: string; sentAt: string | null; error: string | null; campaign: { name: string }; group: { name: string } };
-const labels: Record<string, string> = { PENDING: 'Pendente', PROCESSING: 'Processando', SENT: 'Enviada', FAILED: 'Falhou', CANCELLED: 'Cancelada' };
-const colors: Record<string, string> = { PENDING: 'bg-slate-100 text-slate-700', PROCESSING: 'bg-blue-100 text-blue-700', SENT: 'bg-emerald-100 text-emerald-700', FAILED: 'bg-red-100 text-red-700', CANCELLED: 'bg-amber-100 text-amber-700' };
-export default function HistoryPage() { const { data, error, reload } = usePolling(signal => api<Delivery[]>('/deliveries', { signal }), []); const deliveries = data; return <main className="p-6 md:p-12"><div className="mx-auto max-w-6xl"><header className="mb-8"><p className="text-sm font-semibold text-emerald-600">AUDITORIA</p><h1 className="mt-2 text-3xl font-bold">Histórico de envios</h1><p className="mt-2 text-slate-500">Horário de Brasília. Até 100 entregas. “Enviada” indica submissão ao provedor, não confirmação de leitura. Simulações aparecem identificadas.</p></header><div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">{deliveries === null ? (error ? <div role="alert" className="p-8 text-amber-800"><p>Não foi possível carregar o histórico. Verifique se o sistema está ligado e tente novamente.</p><button type="button" onClick={reload} className="mt-3 inline-block underline">Tentar novamente</button></div> : <p className="p-8 text-slate-500">Carregando…</p>) : deliveries.length === 0 ? <p className="p-8 text-slate-500">Nenhum envio foi gerado ainda.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-4">Campanha</th><th className="p-4">Grupo</th><th className="p-4">Agendado</th><th className="p-4">Status</th><th className="p-4">Detalhe</th></tr></thead><tbody className="divide-y divide-slate-100">{deliveries.map(delivery => <tr key={delivery.id}><td className="p-4 font-medium">{delivery.campaign.name}</td><td className="p-4">{delivery.group.name}</td><td className="p-4">{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(delivery.scheduledAt))}</td><td className="p-4"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${colors[delivery.status]}`}>{delivery.status === 'SENT' && delivery.provider === 'simulator' ? 'Simulada' : labels[delivery.status]}</span></td><td className="p-4 text-slate-500">{delivery.error ?? (delivery.sentAt ? `Enviada em ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(delivery.sentAt))}` : '—')}</td></tr>)}</tbody></table></div>}</div></div></main>; }
+import { card, dataHora, deliveryStatus, LoadError, PageHeader, page, Pill } from '../components/ui';
+
+type Delivery = {
+  id: string; status: string; provider: string; scheduledAt: string; sentAt: string | null; error: string | null;
+  deliveredAt: string | null; serverRejectedAt: string | null; attempts: number;
+  campaign: { name: string }; group: { name: string };
+};
+
+export default function HistoryPage() {
+  const { data: deliveries, error, reload } = usePolling(signal => api<Delivery[]>('/deliveries', { signal }), []);
+  return <main className={page}>
+    <PageHeader title="Histórico" />
+    <p className="-mt-4 mb-6 text-sm text-slate-500">Últimos 100 envios · horário de Brasília</p>
+    <div className={`${card} overflow-hidden`}>
+      {deliveries === null
+        ? (error ? <LoadError what="o histórico" onRetry={reload} /> : <p className="p-6 text-slate-500">Carregando…</p>)
+        : deliveries.length === 0
+          ? <p className="p-6 text-slate-500">Nenhum envio ainda.</p>
+          : <div className="overflow-x-auto"><table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="px-4 py-3">Grupo</th><th className="px-4 py-3">Campanha</th><th className="px-4 py-3">Previsto</th><th className="px-4 py-3">Situação</th><th className="px-4 py-3">Detalhe</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">{deliveries.map(d => {
+              const status = deliveryStatus(d);
+              return <tr key={d.id}>
+                <td className="px-4 py-3 font-medium">{d.group.name}</td>
+                <td className="px-4 py-3 text-slate-600">{d.campaign.name}</td>
+                <td className="whitespace-nowrap px-4 py-3">{dataHora(d.scheduledAt)}</td>
+                <td className="px-4 py-3"><Pill tone={status.tone} title={status.title}>{status.label}</Pill></td>
+                <td className="px-4 py-3 text-xs text-slate-500">{d.error ?? (d.sentAt ? `Saiu ${dataHora(d.sentAt)}` : '—')}</td>
+              </tr>;
+            })}</tbody>
+          </table></div>}
+    </div>
+  </main>;
+}

@@ -3,23 +3,31 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { ServerClock } from './server-clock';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
-type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null };
+import { card, membros, page, primaryButton } from './ui';
+
+type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null; participants: number | null };
 // Selo "só admins": diz também se a conta conectada é admin, para não precisar conferir no celular.
 function adminBadge(group: Group) {
   if (!group.adminOnly) return null;
-  if (group.isAdmin) return { text: "Só admins · você é admin ✓", tone: "bg-emerald-50 text-emerald-800" };
-  if (group.isAdmin === false) return { text: "Só admins · você não é admin — não vai receber", tone: "bg-red-50 text-red-700" };
-  return { text: "Só admins · não deu para confirmar se você é admin", tone: "bg-amber-50 text-amber-800" };
+  if (group.isAdmin) return { text: 'Só admins · você é admin ✓', tone: 'bg-emerald-50 text-emerald-800' };
+  if (group.isAdmin === false) return { text: 'Só admins · você não é admin', tone: 'bg-red-50 text-red-700' };
+  return { text: 'Só admins · não confirmado', tone: 'bg-amber-50 text-amber-800' };
 }
-const Badge = ({ group }: { group: Group }) => {
+function GroupLabel({ group }: { group: Group }) {
   const badge = adminBadge(group);
-  return badge ? <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.tone}`}>{badge.text}</span> : null;
-};
+  return <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+    <span>{group.name}{!group.externalId && ' (simulação)'}</span>
+    {membros(group.participants) && <span className="text-xs text-slate-400">{membros(group.participants)}</span>}
+    {badge && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.tone}`}>{badge.text}</span>}
+  </span>;
+}
 type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; intervalSeconds: number; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
 const field = 'mt-1 w-full rounded-lg border border-slate-300 p-2';
+const label = 'block text-sm font-medium';
 // Busca sem acento e sem diferenciar maiúsculas: "sao paulo" encontra "São Paulo".
 const normalize = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-const panel = 'space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm';
+const panel = `${card} space-y-4 p-6`;
+
 export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const navigate = useNavigate();
   const [media, setMedia] = useState<CampaignMedia | null>(null);
@@ -31,8 +39,10 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const [groupsLoaded, setGroupsLoaded] = useState(false);
   const term = normalize(search);
   const visible = term ? groups.filter(group => normalize(group.name).includes(term)) : groups;
+  const byId = (id: string) => groups.find(g => g.id === id);
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
   const selectVisible = () => setSelected(current => [...current, ...visible.map(group => group.id).filter(id => !current.includes(id))]);
+  const blocked = selected.filter(id => byId(id)?.adminOnly && byId(id)?.isAdmin === false).length;
   const [initial, setInitial] = useState({ name: '', startsAt: '', endsAt: '', messages: [''] });
   useEffect(() => {
     if (!campaignId) return;
@@ -58,45 +68,66 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
       navigate(`/campanhas/${data.id}`);
     } catch (e) { setError(errorMessage(e, 'Não foi possível salvar a campanha.')); } finally { setSaving(false); }
   }
-  return <main className="p-6 md:p-12"><form onSubmit={submit} className="mx-auto max-w-3xl space-y-7">
-    <header><p className="text-sm font-semibold text-emerald-600">PLANEJAMENTO</p><h1 className="mt-2 text-3xl font-bold">{campaignId ? 'Editar campanha' : 'Nova campanha'}</h1><p className="mt-2 text-slate-500">Salve, confira o resumo e só então inicie os envios.</p><ServerClock /></header>
-    {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">{error}</p>}
-    {!loaded && <p>Carregando rascunho…</p>}
-    {loaded && <><section className={panel}><label className="block text-sm font-medium">Nome<input defaultValue={initial.name} required maxLength={200} name="name" className={field} placeholder="Ex.: Festival de Inverno" /></label>
-      <label className="block text-sm font-medium">Quando enviar<select value={mode} onChange={e => setMode(e.target.value)} className={field}><option value="IMMEDIATE">Fila única — começa quando eu iniciar</option><option value="SCHEDULED">Horários diários — agendamento existente</option></select></label>
-{mode === 'SCHEDULED' && <><p className="text-sm text-slate-500">Datas inclusivas e horário de Brasília (America/Sao_Paulo). Se uma rodada atrasar, a próxima espera: nunca há envios simultâneos nesta campanha.</p><div className="grid gap-4 md:grid-cols-2"><label>Início<input defaultValue={initial.startsAt} required name="startsAt" type="date" className={field} /></label><label>Fim<input defaultValue={initial.endsAt} required name="endsAt" type="date" className={field} /></label></div><div className="space-y-2">{times.map((time, i) => <div key={i} className="flex gap-2"><input aria-label={`Horário ${i + 1}`} required type="time" value={time} onChange={e => setTimes(current => current.map((t, n) => n === i ? e.target.value : t))} className="rounded border p-2" />{times.length > 1 && <button type="button" onClick={() => setTimes(current => current.filter((_, n) => n !== i))}>Remover</button>}</div>)}<button type="button" disabled={times.length >= 24} onClick={() => setTimes(current => [...current, '18:00'])} className="text-emerald-700">+ Adicionar horário</button></div></>}
-      <label className="block text-sm font-medium">Intervalo entre envios (minutos)<input type="number" required min={1} max={60} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} className={field} /></label>
-    </section>
-    <section className={panel}><h2 className="font-bold">Grupos participantes</h2><p className="text-sm text-slate-500">Selecione na ordem desejada ou ajuste a fila abaixo. Para importar grupos, use Conexão WhatsApp.</p>
-      {!groupsLoaded && <p className="text-sm text-slate-500">Carregando grupos…</p>}
-      {groupsLoaded && !groups.length && <Link to="/configuracoes" className="text-emerald-700">Conectar e sincronizar grupos →</Link>}
-      {!!groups.length && <div className="space-y-2">
-        <input
-          type="search"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
-          placeholder="Buscar grupo pelo nome…"
-          aria-label="Buscar grupo pelo nome"
-          className={field}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
-          <span>{term ? `${visible.length} de ${groups.length} grupos` : `${groups.length} grupos`} · {selected.length} selecionados</span>
-          <span className="flex gap-3">
-            <button type="button" onClick={selectVisible} disabled={!visible.some(group => !selected.includes(group.id))} className="text-emerald-700 disabled:opacity-40">{term ? 'Selecionar exibidos' : 'Selecionar todos'}</button>
-            <button type="button" onClick={() => setSelected([])} disabled={!selected.length} className="text-slate-600 disabled:opacity-40">Limpar seleção</button>
-          </span>
+
+  return <main className={page}><form onSubmit={submit} className="mx-auto max-w-3xl space-y-5">
+    <header className="flex flex-wrap items-end justify-between gap-2"><h1 className="text-2xl font-bold">{campaignId ? 'Editar campanha' : 'Nova campanha'}</h1><ServerClock /></header>
+    {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+    {!loaded && <p className="text-slate-500">Carregando…</p>}
+    {loaded && <>
+      <section className={panel}>
+        <label className={label}>Nome<input defaultValue={initial.name} required maxLength={200} name="name" className={field} placeholder="Ex.: Festival de Inverno" /></label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className={label}>Quando enviar<select value={mode} onChange={e => setMode(e.target.value)} className={field}><option value="IMMEDIATE">Ao iniciar (fila única)</option><option value="SCHEDULED">Em horários diários</option></select></label>
+          <label className={label}>Intervalo entre grupos (min)<input type="number" required min={1} max={60} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} className={field} /></label>
         </div>
-      </div>}
-      <div className="max-h-64 space-y-2 overflow-y-auto">{visible.map(group => <label key={group.id} className="flex gap-2 text-sm"><input type="checkbox" checked={selected.includes(group.id)} onChange={() => toggle(group.id)} /><span className="flex flex-wrap items-center gap-2">{group.name}{!group.externalId && ' (simulação)'}<Badge group={group} /></span></label>)}</div>
-      {!!groups.length && !visible.length && <p className="text-sm text-slate-500">Nenhum grupo encontrado para “{search.trim()}”.</p>}
-      {(() => { const blocked = selected.filter(id => groups.find(g => g.id === id)?.adminOnly && groups.find(g => g.id === id)?.isAdmin === false).length; return blocked > 0 && <p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-700">{blocked === 1 ? '1 grupo selecionado é só para administradores e você não é admin nele: ele não vai receber a mensagem.' : `${blocked} grupos selecionados são só para administradores e você não é admin neles: eles não vão receber a mensagem.`}</p>; })()}
-      {!!selected.length && <ol className="space-y-2 border-t pt-4">{selected.map((id, i) => <li key={id} className="flex items-center gap-3 text-sm"><span className="flex flex-1 flex-wrap items-center gap-2">{i + 1}. {groups.find(g => g.id === id)?.name ?? 'Grupo indisponível'}{groups.find(g => g.id === id) && <Badge group={groups.find(g => g.id === id)!} />}</span><button type="button" aria-label={`Remover grupo ${i + 1}`} onClick={() => toggle(id)} className="rounded border px-2 text-red-700">×</button><button type="button" aria-label={`Subir grupo ${i + 1}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded border px-2 disabled:opacity-30">↑</button><button type="button" aria-label={`Descer grupo ${i + 1}`} disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="rounded border px-2 disabled:opacity-30">↓</button></li>)}</ol>}
-    </section>
-    <section className={panel}>{initial.messages.map((message, i) => <label key={i} className="block text-sm font-medium">Mensagem {initial.messages.length > 1 ? i + 1 : ''}<textarea defaultValue={message} required maxLength={10000} name="message" className={`${field} min-h-28`} /></label>)}<p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{selected.length} grupos · Intervalo: {interval} min · Aproximadamente {Math.max(0, selected.length - 1) * interval} min entre o primeiro e o último envio de cada rodada, sem contar pausas e atrasos.</p></section>
-    <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
-    <button disabled={saving || !selected.length} className="rounded-lg bg-emerald-600 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Validando e salvando…' : 'Salvar e conferir campanha'}</button>
+        {mode === 'SCHEDULED' && <>
+          <div className="grid gap-4 sm:grid-cols-2"><label className={label}>De<input defaultValue={initial.startsAt} required name="startsAt" type="date" className={field} /></label><label className={label}>Até<input defaultValue={initial.endsAt} required name="endsAt" type="date" className={field} /></label></div>
+          <div className="flex flex-wrap items-center gap-2">
+            {times.map((time, i) => <span key={i} className="flex items-center gap-1"><input aria-label={`Horário ${i + 1}`} required type="time" value={time} onChange={e => setTimes(current => current.map((t, n) => n === i ? e.target.value : t))} className="rounded-lg border border-slate-300 p-2" />{times.length > 1 && <button type="button" aria-label={`Remover horário ${i + 1}`} onClick={() => setTimes(current => current.filter((_, n) => n !== i))} className="px-1 text-slate-400 hover:text-red-700">×</button>}</span>)}
+            <button type="button" disabled={times.length >= 24} onClick={() => setTimes(current => [...current, '18:00'])} className="text-sm text-emerald-700">+ horário</button>
+          </div>
+        </>}
+      </section>
+
+      <section className={panel}>
+        <h2 className="font-semibold">Grupos</h2>
+        {!groupsLoaded && <p className="text-sm text-slate-500">Carregando grupos…</p>}
+        {groupsLoaded && !groups.length && <Link to="/configuracoes" className="text-sm text-emerald-700">Conectar e sincronizar grupos →</Link>}
+        {!!groups.length && <div className="space-y-2">
+          <input type="search" value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }} placeholder="Buscar grupo…" aria-label="Buscar grupo pelo nome" className={field} />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+            <span>{term ? `${visible.length} de ${groups.length}` : `${groups.length} grupos`} · {selected.length} selecionados</span>
+            <span className="flex gap-3">
+              <button type="button" onClick={selectVisible} disabled={!visible.some(group => !selected.includes(group.id))} className="text-emerald-700 disabled:opacity-40">{term ? 'Selecionar exibidos' : 'Selecionar todos'}</button>
+              <button type="button" onClick={() => setSelected([])} disabled={!selected.length} className="disabled:opacity-40">Limpar</button>
+            </span>
+          </div>
+        </div>}
+        <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">{visible.map(group => <label key={group.id} className="flex items-start gap-2 py-1.5 text-sm"><input type="checkbox" className="mt-1" checked={selected.includes(group.id)} onChange={() => toggle(group.id)} /><GroupLabel group={group} /></label>)}</div>
+        {!!groups.length && !visible.length && <p className="text-sm text-slate-500">Nenhum grupo com “{search.trim()}”.</p>}
+        {blocked > 0 && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{blocked === 1 ? '1 grupo selecionado só aceita mensagens de admins e você não é admin: ele não vai receber.' : `${blocked} grupos selecionados só aceitam mensagens de admins e você não é admin: eles não vão receber.`}</p>}
+        {!!selected.length && <div className="border-t pt-3">
+          <p className="mb-2 text-xs font-medium text-slate-500">Ordem de envio</p>
+          <ol className="space-y-1.5">{selected.map((id, i) => <li key={id} className="flex items-center gap-2 text-sm">
+            <span className="w-6 text-right text-slate-400">{i + 1}.</span>
+            <span className="flex-1">{byId(id) ? <GroupLabel group={byId(id)!} /> : 'Grupo indisponível'}</span>
+            <button type="button" aria-label={`Subir grupo ${i + 1}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded border px-2 disabled:opacity-30">↑</button>
+            <button type="button" aria-label={`Descer grupo ${i + 1}`} disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="rounded border px-2 disabled:opacity-30">↓</button>
+            <button type="button" aria-label={`Remover grupo ${i + 1}`} onClick={() => toggle(id)} className="rounded border px-2 text-red-700">×</button>
+          </li>)}</ol>
+        </div>}
+      </section>
+
+      <section className={panel}>
+        {initial.messages.map((message, i) => <label key={i} className={label}>Mensagem{initial.messages.length > 1 ? ` ${i + 1}` : ''}<textarea defaultValue={message} required maxLength={10000} name="message" className={`${field} min-h-28`} /></label>)}
+      </section>
+      <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
+
+      <div className="flex flex-wrap items-center gap-4">
+        <button disabled={saving || !selected.length} className={primaryButton}>{saving ? 'Salvando…' : 'Salvar campanha'}</button>
+        {!!selected.length && <span className="text-sm text-slate-500">{selected.length} grupos · ~{Math.max(0, selected.length - 1) * interval} min por rodada</span>}
+        {campaignId && <Link className="ml-auto text-sm text-slate-500" to={`/campanhas/${campaignId}`}>Cancelar</Link>}
+      </div>
     </>}
-    {campaignId && <Link className="ml-4 text-slate-600" to={`/campanhas/${campaignId}`}>Voltar sem salvar</Link>}
   </form></main>;
 }

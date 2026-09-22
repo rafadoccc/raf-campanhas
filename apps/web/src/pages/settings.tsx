@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../lib/api';
 import { startVisiblePolling, connectionPollDelay } from '../lib/visible-polling';
+import { card, PageHeader, page, primaryButton } from '../components/ui';
 
 type Connection = { state: string; qr?: string; accountJid?: string; error?: string };
 const labels: Record<string, string> = { disconnected: 'Desconectado', connecting: 'Conectando…', qr: 'Aguardando leitura do QR Code', connected: 'Conectado', reconnecting: 'Reconectando…', error: 'Conexão interrompida' };
@@ -31,31 +32,31 @@ export default function Settings() {
     setBusy(true); setNotice('');
     try {
       const data = await api<{ count?: number }>(`/whatsapp/${name}`, { method: 'POST', json: {} });
-      if (name === 'sync') setNotice(`${data.count} grupos sincronizados. Selecione os desejados ao criar uma campanha.`);
+      if (name === 'sync') setNotice(`${data.count} grupos sincronizados.`);
       await refresh();
     } catch (e) { setNotice(errorMessage(e, 'Falha na operação.')); }
     finally { setBusy(false); }
   }
 
   const pairing = ['connecting', 'qr', 'reconnecting'].includes(connection.state);
-  return <main className="mx-auto max-w-3xl space-y-6 p-8">
-    <header><p className="text-sm font-semibold text-emerald-700">CONEXÃO</p><h1 className="mt-2 text-3xl font-bold">Seu WhatsApp</h1><p className="mt-3 text-slate-600">Conecte seu celular para importar os grupos dos quais você participa.</p></header>
-    <section className="space-y-4 rounded-xl border bg-white p-6">
-      <h2 className="text-xl font-semibold">{labels[connection.state] ?? connection.state}</h2>
-      {connection.accountJid && <p>Número conectado: {connection.accountJid.split('@')[0]}</p>}
+  const connected = connection.state === 'connected';
+  return <main className={`${page} max-w-3xl`}>
+    <PageHeader title="WhatsApp" />
+    <section className={`${card} space-y-4 p-6`}>
+      <p className="flex items-center gap-2 text-lg font-semibold"><span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-emerald-500' : pairing ? 'bg-sky-500' : 'bg-amber-500'}`} />{labels[connection.state] ?? connection.state}</p>
+      {connection.accountJid && <p className="text-sm text-slate-600">Número: {connection.accountJid.split('@')[0]}</p>}
       {connection.qr && <div className="space-y-2">
         <img src={connection.qr} width={300} height={300} alt="QR Code para conectar o WhatsApp" />
-        <p>No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho. Leia este código.</p>
-        <p className="text-sm text-slate-500">O código se renova sozinho a cada 20 segundos; leia sempre o que está na tela.</p>
+        <p className="text-sm">No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho.</p>
       </div>}
       {(connection.error || error) && <p role="alert" className="text-red-700">{connection.error || error}</p>}
       <div className="flex flex-wrap gap-3">
-        <button disabled={busy || pairing || connection.state === 'connected'} onClick={() => action('connect')} className="rounded-lg bg-emerald-600 px-4 py-2 text-white disabled:opacity-40">{connection.state === 'error' ? 'Conectar novamente' : 'Conectar / gerar QR Code'}</button>
-        <button disabled={busy || connection.state !== 'connected'} onClick={() => action('sync')} className="rounded-lg border px-4 py-2 disabled:opacity-40">Sincronizar grupos</button>
-        <button disabled={busy} onClick={() => { if (confirm('Desconectar este aparelho? Campanhas reais não serão enviadas enquanto estiver desconectado.')) void action('disconnect'); }} className="rounded-lg border px-4 py-2 text-red-700">Desconectar</button>
+        {!connected && <button type="button" disabled={busy || pairing} onClick={() => action('connect')} className={primaryButton}>{connection.state === 'error' ? 'Conectar novamente' : 'Conectar'}</button>}
+        {connected && <button type="button" disabled={busy} onClick={() => action('sync')} className={primaryButton}>Sincronizar grupos</button>}
+        <button type="button" disabled={busy} onClick={() => { if (confirm('Desconectar? Campanhas reais param até reconectar.')) void action('disconnect'); }} className="ml-auto rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50">Desconectar</button>
       </div>
-      {notice && <p role="status">{notice}</p>}
+      {notice && <p role="status" className="text-sm text-emerald-800">{notice}</p>}
     </section>
-    <p className="text-sm text-slate-500">Mantenha o sistema ligado. A fila continua sem o navegador; ao reiniciar, conecte novamente para continuar os pendentes, respeitando o intervalo. Envios simulados não chegam ao celular.</p>
+    <p className="mt-4 text-xs text-slate-500">As campanhas rodam com o navegador fechado, desde que o sistema fique ligado.</p>
   </main>;
 }

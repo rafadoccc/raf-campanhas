@@ -13,7 +13,7 @@ export function MediaPreview({ media }: { media: CampaignMedia }) {
 }
 export function CampaignMediaInput({ value, onChange, disabled }: { value: CampaignMedia | null; onChange(value: CampaignMedia | null): void; disabled: boolean }) {
   const input = useRef<HTMLInputElement>(null); const [error, setError] = useState('');
-  return <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="font-bold">Mídia opcional</h2><p className="text-sm text-slate-500">Uma imagem JPEG/PNG (até 16 MB) ou vídeo MP4 H.264 com áudio AAC opcional (até 64 MB). Limites de compatibilidade desta aplicação; o arquivo será validado ao salvar. O texto será a legenda de uma única mensagem.</p>
+  return <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-6"><h2 className="font-semibold">Mídia <span className="font-normal text-slate-400">(opcional)</span></h2><p className="text-xs text-slate-500">Imagem JPEG/PNG até 16 MB ou vídeo MP4 até 64 MB. A mensagem vira a legenda.</p>
     <input ref={input} type="file" accept="image/jpeg,image/png,video/mp4" className="hidden" disabled={disabled} onChange={event => {
       const file = event.target.files?.[0]; event.target.value = ''; setError(''); if (!file) return;
       if (!['image/jpeg', 'image/png', 'video/mp4'].includes(file.type)) { setError('Selecione JPEG, PNG ou MP4.'); return; }
