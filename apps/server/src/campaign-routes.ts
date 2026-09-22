@@ -16,10 +16,11 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     const next = await prisma.delivery.findFirst({ where: { campaignId: id, ...dueOrRunning(now) }, orderBy: { sequence: 'asc' } })
       ?? await prisma.delivery.findFirst({ where: { campaignId: id, status: 'PENDING' }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }] });
     const nextAt = next && campaign.status === 'ACTIVE' ? new Date(Math.max(next.scheduledAt.getTime(), campaign.nextAvailableAt?.getTime() ?? 0)) : null;
+    const delivered = await prisma.delivery.count({ where: { campaignId: id, status: 'SENT', deliveredAt: { not: null } } });
     const reads = await campaignReads(prisma, id);
-    const readsByGroup = campaign.groups.map(({ group }) => ({ groupId: group.id, name: group.name, count: reads.find(r => r.groupId === group.id)?.count ?? 0 }));
+    const readsByGroup = campaign.groups.map(({ group }) => ({ groupId: group.id, name: group.name, participants: group.participants, count: reads.find(r => r.groupId === group.id)?.count ?? 0 }));
     const serverNow = await currentTime();
-    return { ...campaign, serverNow, readsTotal: reads.reduce((sum, r) => sum + r.count, 0), readsByGroup, progress: Object.fromEntries(counts.map(r => [r.status, r._count._all])), nextAt };
+    return { ...campaign, serverNow, delivered, readsTotal: reads.reduce((sum, r) => sum + r.count, 0), readsByGroup, progress: Object.fromEntries(counts.map(r => [r.status, r._count._all])), nextAt };
   });
   app.delete('/api/campaigns/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
