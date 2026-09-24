@@ -10,6 +10,7 @@ import { loadConfig, type AppConfig } from './config';
 import { registerAuth } from './auth';
 import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
 import { WhatsAppManager } from './whatsapp-manager';
+import { createSendingRouter } from './sending-router';
 import { usesLegacySession } from './legacy-session';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
@@ -26,6 +27,8 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
   // Conexão do WhatsApp SEMPRE pela sessão de quem pediu (ADR-021). Nada do cliente escolhe
   // conexão. A ponte legada só vale para o dono comprovado da sessão global (sai na 4E).
   const legacyBridge = { legacyProvider: provider, ownSessionDir: (userId: string) => manager.sessionDirFor(userId) };
+  // Ativar campanha real usa a conexão DO DONO da campanha (ADR-022), nunca "a conexão atual".
+  const sending = createSendingRouter<WhatsAppConnection>({ manager, legacyProvider: provider });
   const connectionOf = async (request: FastifyRequest) => {
     const owner = request.user!;
     if (await usesLegacySession(owner, legacyBridge)) return { connection: provider as WhatsAppConnection, legacy: true, owner };
@@ -209,8 +212,9 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
         if (!['simulator', 'baileys'].includes(campaignProvider)) throw new Error('Provedor inválido.');
         if (campaignProvider === 'baileys') {
           if (body.consent !== true) throw new Error('Confirme a autorização dos grupos para envio real.');
-          const connection = provider.status();
-          if (connection.state !== 'connected' || !connection.accountJid) throw new Error('Conecte o WhatsApp primeiro.');
+          // O número precisa ser do MESMO usuário dono da campanha.
+          const connection = (await sending.forOwner(campaign.userId))?.status();
+          if (connection?.state !== 'connected' || !connection.accountJid) throw new Error('Conecte o WhatsApp primeiro.');
           if (accountJid && accountJid !== connection.accountJid) throw new Error('Conecte o mesmo número usado na ativação.');
           accountJid = connection.accountJid;
           if (campaign.groups.some(g => !g.group.active || !g.group.externalId?.endsWith('@g.us'))) throw new Error('Selecione somente grupos sincronizados e ativos do WhatsApp.');

@@ -13,7 +13,7 @@ import { whatsappSessionDir } from './session-paths';
 // de cada instância. O banco guarda só o ciclo de vida (nunca QR nem credenciais).
 
 /** O que o gerenciador usa de um provider. Permite injetar um duble nos testes. */
-export type ManagedProvider = Pick<WhatsAppProvider, 'ownerId' | 'sessionDir' | 'status' | 'connect' | 'disconnect' | 'stop' | 'hasPairedSession' | 'sync'>;
+export type ManagedProvider = Pick<WhatsAppProvider, 'ownerId' | 'sessionDir' | 'status' | 'connect' | 'disconnect' | 'stop' | 'hasPairedSession' | 'sync' | 'send' | 'flushReads' | 'flushDeliveryEvents'>;
 
 export type StartOutcome = { userId: string; outcome: 'conectando' | 'sem-sessao' | 'falhou'; error?: string };
 

@@ -1,16 +1,25 @@
 import { createHash } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 
-export type ReadReceipt = { messageId: string; groupJid: string; accountJid: string; participant: string; readAt: Date };
+// ownerId = dono da conexão que recebeu o recibo (ADR-022). Um recibo de A nunca pode casar
+// com um envio de B. null só existe na sessão global legada, enquanto ela não tem dono (4E).
+export type ReadReceipt = { messageId: string; groupJid: string; accountJid: string; participant: string; readAt: Date; ownerId?: string | null };
 export async function persistRead(db: PrismaClient, receipt: ReadReceipt) {
   if (!receipt.messageId || !receipt.accountJid || !receipt.groupJid.endsWith('@g.us') || !receipt.participant || !Number.isFinite(receipt.readAt.getTime()) || receipt.readAt.getTime() <= 0) return;
-  const id = createHash('sha256').update(JSON.stringify([receipt.accountJid, receipt.groupJid, receipt.messageId, receipt.participant])).digest('hex');
-  await db.pendingRead.createMany({ data: [{ id, ...receipt }], skipDuplicates: true });
+  const id = createHash('sha256').update(JSON.stringify([receipt.ownerId ?? '', receipt.accountJid, receipt.groupJid, receipt.messageId, receipt.participant])).digest('hex');
+  await db.pendingRead.createMany({ data: [{ id, ...receipt, ownerId: receipt.ownerId ?? null }], skipDuplicates: true });
 }
 
-export async function flushPendingReads(db: PrismaClient) {
+/**
+ * Aplica os recibos pendentes de UMA conexão. `ownerId` null = sessão global legada, que também
+ * cuida das linhas antigas sem dono (gravadas antes da Fase 4D).
+ */
+export async function flushPendingReads(db: PrismaClient, owner: { ownerId: string | null; includeUnowned?: boolean } = { ownerId: null, includeUnowned: true }) {
   const now = new Date();
-  const pending = await db.pendingRead.findMany({ where: { nextAttemptAt: { lte: now } }, orderBy: [{ nextAttemptAt: 'asc' }, { id: 'asc' }], take: 200 });
+  const scope = owner.ownerId
+    ? (owner.includeUnowned ? { OR: [{ ownerId: owner.ownerId }, { ownerId: null }] } : { ownerId: owner.ownerId })
+    : { ownerId: null };
+  const pending = await db.pendingRead.findMany({ where: { nextAttemptAt: { lte: now }, ...scope }, orderBy: [{ nextAttemptAt: 'asc' }, { id: 'asc' }], take: 200 });
   for (const receipt of pending) {
     // Replay after interruption is safe because DeliveryRead has a unique key.
     if (await recordRead(db, receipt)) await db.pendingRead.deleteMany({ where: { id: receipt.id } });
@@ -21,7 +30,9 @@ export async function recordRead(db: PrismaClient, receipt: ReadReceipt) {
   if (!receipt.groupJid.endsWith('@g.us') || !receipt.participant || !Number.isFinite(receipt.readAt.getTime()) || receipt.readAt.getTime() <= 0) return false;
   const matches = await db.delivery.findMany({ where: {
     provider: 'baileys', status: 'SENT', providerId: receipt.messageId,
-    campaign: { accountJid: receipt.accountJid }, group: { externalId: receipt.groupJid }
+    // Além do número, do grupo e do id da mensagem, o DONO da conexão (ADR-022).
+    campaign: { accountJid: receipt.accountJid, ...(receipt.ownerId ? { userId: receipt.ownerId } : {}) },
+    group: { externalId: receipt.groupJid, ...(receipt.ownerId ? { userId: receipt.ownerId } : {}) }
   }, take: 2, select: { id: true } });
   // Refuse ambiguous associations; never attribute a receipt to an arbitrary campaign.
   if (matches.length !== 1) return false;

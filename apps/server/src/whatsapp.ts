@@ -65,14 +65,18 @@ export class WhatsAppProvider {
    * como sempre foi. Com `{ ownerId, sessionDir }`: sessão daquele usuário, na pasta que o
    * WhatsAppManager calculou (session-paths.ts). Um provider nunca descobre o dono sozinho.
    */
-  constructor(options: string | { ownerId: string; sessionDir: string } = defaultSessionsDir()) {
+  /** Sessão global legada (pasta antiga), mesmo quando já tem dono resolvido pela ponte. */
+  readonly legacySession: boolean;
+  constructor(options: string | { ownerId: string; sessionDir: string; legacySession?: boolean } = defaultSessionsDir()) {
     if (typeof options === 'string') {
       this.ownerId = null;
       this.authDir = path.join(options, 'whatsapp');
+      this.legacySession = true;
     } else {
       if (!options.ownerId || !options.sessionDir) throw new Error('Conexão por usuário exige ownerId e sessionDir.');
       this.ownerId = options.ownerId;
       this.authDir = options.sessionDir;
+      this.legacySession = options.legacySession ?? false;
     }
   }
   /** Pasta de sessão desta conexão (só leitura; cada provider tem a sua). */
@@ -135,9 +139,9 @@ export class WhatsAppProvider {
           const deliveredAt = Number(receipt.receiptTimestamp) || readAt;
           // Recibo de entrega (ou de leitura, que implica entrega) de qualquer participante:
           // a mensagem chegou ao grupo.
-          if (Number.isFinite(deliveredAt) && deliveredAt > 0) this.queueServerEvent({ kind: 'delivered', messageId: key.id, groupJid: key.remoteJid, accountJid, at: new Date(deliveredAt * 1000) });
+          if (Number.isFinite(deliveredAt) && deliveredAt > 0) this.queueServerEvent({ kind: 'delivered', messageId: key.id, groupJid: key.remoteJid, accountJid, at: new Date(deliveredAt * 1000), ownerId: this.ownerId });
           if (!Number.isFinite(readAt) || readAt <= 0) continue;
-          await persistRead(prisma, { messageId: key.id, groupJid: key.remoteJid, accountJid, participant: jidNormalizedUser(receipt.userJid), readAt: new Date(readAt * 1000) });
+          await persistRead(prisma, { messageId: key.id, groupJid: key.remoteJid, accountJid, participant: jidNormalizedUser(receipt.userJid), readAt: new Date(readAt * 1000), ownerId: this.ownerId });
         }
         })().catch(() => { console.error('[WhatsApp] Falha ao persistir recibo no banco; leitura pode estar incompleta.'); });
         this.receiptWrites.add(write);
@@ -151,7 +155,7 @@ export class WhatsAppProvider {
           if (!key.fromMe || !key.id || !key.remoteJid?.endsWith('@g.us') || update.status !== proto.WebMessageInfo.Status.ERROR) continue;
           const code = String(update.messageStubParameters?.[0] ?? 'desconhecido');
           console.warn('[WhatsApp] Mensagem recusada pelo servidor depois do envio:', key.id, 'código', code);
-          this.queueServerEvent({ kind: 'rejected', messageId: key.id, groupJid: key.remoteJid, accountJid: jidNormalizedUser(sock.user.id), at: new Date(), code });
+          this.queueServerEvent({ kind: 'rejected', messageId: key.id, groupJid: key.remoteJid, accountJid: jidNormalizedUser(sock.user.id), at: new Date(), code, ownerId: this.ownerId });
         }
       });
       sock.ev.on('creds.update', persistCreds);
@@ -216,7 +220,7 @@ export class WhatsAppProvider {
     return this.socket;
   }
   async flushReads() {
-    await flushPendingReads(prisma);
+    await flushPendingReads(prisma, { ownerId: this.ownerId, includeUnowned: this.legacySession });
   }
 
   // Eventos do servidor (entrega/recusa) podem chegar antes de a entrega ser gravada: ficam
@@ -263,24 +267,26 @@ export class WhatsAppProvider {
     }, { timeout: 30000 });
     return { count: groups.length };
   }
-  async send(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null) {
+  async send(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string) {
     // Tudo até o sendMessage: uma falha aqui garante que nada saiu (reenvio permitido, ADR-014).
-    const { sock, content, group } = await this.prepareSend(groupJid, text, accountJid, media).catch(error => { throw notSent(error); });
+    const { sock, content, group } = await this.prepareSend(groupJid, text, accountJid, media, groupId).catch(error => { throw notSent(error); });
     // Daqui em diante o resultado pode ser incerto: nunca é reenviado automaticamente.
     const result = await sock.sendMessage(groupJid, content);
     if (!result?.key.id) throw new Error('Resultado do envio desconhecido. Confira no celular antes de reenviar.');
     // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
     return { messageId: result.key.id, context: group.context };
   }
-  private async prepareSend(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null) {
+  private async prepareSend(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string) {
     const sock = this.connected();
     if (accountJid !== this.data.accountJid) throw new Error('Número conectado difere do número da campanha.');
     if (!groupJid.endsWith('@g.us')) throw new Error('Destino não é um grupo.');
     // Registra a situação do grupo (membro, admin, só admins enviam) para explicar uma
     // eventual recusa do servidor.
     const group = describeGroupForSend(await sock.groupMetadata(groupJid), { id: sock.user?.id, lid: sock.user?.lid });
-    // Mantém selo (só admins / você é admin) e membros atualizados; falha aqui não impede o envio.
-    await prisma.group.updateMany({ where: { externalId: groupJid }, data: { adminOnly: group.onlyAdmins, isAdmin: group.isAdmin, participants: group.participants } }).catch(() => undefined);
+    // Mantém selo (só admins / você é admin) e membros atualizados. Atinge SOMENTE o grupo
+    // desta entrega (ADR-022): dois usuários podem ter o mesmo grupo, com situações diferentes.
+    const alvo = groupId ? { id: groupId } : { externalId: groupJid, ...(this.ownerId ? { userId: this.ownerId } : {}) };
+    await prisma.group.updateMany({ where: alvo, data: { adminOnly: group.onlyAdmins, isAdmin: group.isAdmin, participants: group.participants } }).catch(() => undefined);
     // Grupo só para administradores e a conta comprovadamente não é admin: o WhatsApp
     // aceita o pedido mas a mensagem nunca aparece (teste real, 2026-09-21).
     if (group.adminOnlyWithoutPermission) {

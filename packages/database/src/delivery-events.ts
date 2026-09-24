@@ -8,9 +8,12 @@ import { LOCKING_TRANSACTION, lockCampaign, retryAt, MAX_SEND_ATTEMPTS } from '.
 // chegam recibos de entrega dos participantes. Estes eventos transformam "pedido feito" em
 // "entregue" ou "recusado". Uma recusa comprova que nada chegou ao grupo: o envio volta à
 // fila para nova tentativa, até o limite (ADR-014).
+// ownerId = dono da conexão que recebeu o evento (ADR-022): um evento de A nunca altera um
+// envio de B. null só na sessão global legada sem dono definido (some na 4E).
+type EventBase = { messageId: string; groupJid: string; accountJid: string; at: Date; ownerId?: string | null };
 export type ServerEvent =
-  | { kind: 'delivered'; messageId: string; groupJid: string; accountJid: string; at: Date }
-  | { kind: 'rejected'; messageId: string; groupJid: string; accountJid: string; at: Date; code: string };
+  | ({ kind: 'delivered' } & EventBase)
+  | ({ kind: 'rejected'; code: string } & EventBase);
 
 export const REJECTED_MESSAGE = (code: string) =>
   `O WhatsApp recusou a mensagem (código ${code}); ela não aparece no grupo.`;
@@ -23,7 +26,11 @@ export const REJECTED_MESSAGE = (code: string) =>
 export async function applyServerEvent(db: PrismaClient, event: ServerEvent): Promise<boolean> {
   if (!event.messageId || !event.groupJid.endsWith('@g.us') || !event.accountJid) return true;
   const matches = await db.delivery.findMany({
-    where: { provider: 'baileys', providerId: event.messageId, campaign: { accountJid: event.accountJid }, group: { externalId: event.groupJid } },
+    where: {
+      provider: 'baileys', providerId: event.messageId,
+      campaign: { accountJid: event.accountJid, ...(event.ownerId ? { userId: event.ownerId } : {}) },
+      group: { externalId: event.groupJid, ...(event.ownerId ? { userId: event.ownerId } : {}) },
+    },
     take: 2,
     select: { id: true, campaignId: true },
   });

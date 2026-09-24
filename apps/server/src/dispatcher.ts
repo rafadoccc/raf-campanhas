@@ -13,6 +13,7 @@ import {
   holdInterruptedAccounts,
 } from '@campaign/database';
 import type { WhatsAppProvider } from './whatsapp';
+import type { SendingRouter } from './sending-router';
 import { isNotSent, notSent } from './send-context';
 
 // O que o despachante usa do conector. Permite testar o fluxo inteiro com um conector falso.
@@ -39,7 +40,12 @@ export type Dispatcher = {
   stop(): Promise<void>;
 };
 
-export async function startDispatcher(provider: SendingProvider, options: { scanIntervalMs?: number } = {}): Promise<Dispatcher> {
+/**
+ * O despachante não tem mais "um WhatsApp": para cada envio ele pergunta ao roteador qual é a
+ * conexão DO DONO da campanha (ADR-022). Sem conexão do dono, o envio espera — nunca sai por
+ * outro número e nunca é marcado como enviado.
+ */
+export async function startDispatcher(router: SendingRouter, options: { scanIntervalMs?: number } = {}): Promise<Dispatcher> {
   const owner = randomUUID();
   let stopping = false;
   let working = false;
@@ -50,10 +56,11 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
 
   async function send(id: string) {
     if (stopping) return;
-    if (provider.status().state !== 'connected') {
-      const pending = await prisma.delivery.findUnique({ where: { id } });
-      if (pending?.provider === 'baileys') return;
-    }
+    // Quem envia é sempre a conexão do dono da campanha deste envio.
+    const pending = await prisma.delivery.findUnique({ where: { id }, select: { provider: true, campaign: { select: { userId: true } } } });
+    if (!pending) return;
+    const provider = pending.provider === 'baileys' ? await router.forOwner(pending.campaign.userId) : null;
+    if (pending.provider === 'baileys' && provider?.status().state !== 'connected') return; // espera o dono conectar
     const delivery = await claimDelivery(prisma, id);
     if (!delivery) return;
     lastSendAt = Date.now();
@@ -64,6 +71,8 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
       if (delivery.provider === 'simulator') {
         providerId = `sim-${id}`;
       } else if (delivery.provider === 'baileys') {
+        // Guarda extra: sem a conexão do dono, falha ANTES de qualquer envio (nada sai).
+        if (!provider) throw notSent(new Error('O WhatsApp do dono desta campanha não está conectado.'));
         const media = delivery.campaign.mediaId
           ? await prisma.campaignMedia.findUniqueOrThrow({ where: { id: delivery.campaign.mediaId } })
           : null;
@@ -72,6 +81,7 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
           delivery.messageBody,
           delivery.campaign.accountJid,
           media,
+          delivery.groupId, // selo/metadata só deste grupo (ADR-022)
         );
         providerId = sent.messageId;
         context = sent.context;
@@ -97,12 +107,15 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
     working = true;
     try {
       await completeFinished(prisma);
-      await provider.flushReads().catch(() => {
-        console.warn('[WhatsApp] Não foi possível registrar leituras; nova tentativa no próximo ciclo.');
-      });
-      await provider.flushDeliveryEvents().catch(() => {
-        console.warn('[WhatsApp] Não foi possível registrar entregas/recusas; nova tentativa no próximo ciclo.');
-      });
+      // Recibos e eventos de CADA conexão, aplicados só aos dados do dono dela.
+      for (const { ownerId, provider: connection } of await router.entries()) {
+        await connection.flushReads().catch(() => {
+          console.warn('[WhatsApp] Não foi possível registrar leituras de', ownerId, '; nova tentativa no próximo ciclo.');
+        });
+        await connection.flushDeliveryEvents().catch(() => {
+          console.warn('[WhatsApp] Não foi possível registrar entregas/recusas de', ownerId, '; nova tentativa no próximo ciclo.');
+        });
+      }
       const now = await currentTime();
       const campaigns = await prisma.campaign.findMany({
         where: {
@@ -121,11 +134,12 @@ export async function startDispatcher(provider: SendingProvider, options: { scan
         },
       });
       const due = campaigns
-        .flatMap(campaign => campaign.deliveries)
-        .filter(delivery => delivery.status === 'PENDING' && delivery.scheduledAt <= now);
-      for (const delivery of due) {
+        .flatMap(campaign => campaign.deliveries.map(delivery => ({ delivery, ownerId: campaign.userId })))
+        .filter(({ delivery }) => delivery.status === 'PENDING' && delivery.scheduledAt <= now);
+      for (const { delivery, ownerId } of due) {
         if (stopping) break;
-        if (delivery.provider === 'baileys' && provider.status().state !== 'connected') continue;
+        // Sem conexão do dono, este envio espera; os das outras campanhas seguem.
+        if (delivery.provider === 'baileys' && (await router.forOwner(ownerId))?.status().state !== 'connected') continue;
         const wait = SEND_SPACING_MS - (Date.now() - lastSendAt);
         if (wait > 0) await delay(wait);
         activeSend = send(delivery.id);

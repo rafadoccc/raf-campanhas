@@ -2,21 +2,21 @@ import { existsSync } from 'node:fs';
 import { prisma } from '@campaign/database';
 import type { SessionUser } from './auth';
 
-// Ponte TEMPORÁRIA da sessão global legada (ADR-021, Fase 4C).
+// Ponte TEMPORÁRIA da sessão global legada (ADR-021/022, Fases 4C e 4D).
 //
 // A sessão que roda em produção hoje vive em SESSIONS_DIR/whatsapp e ainda não pertence a
-// ninguém no banco: a migração é a 4E. Até lá, as rotas do WhatsApp precisam continuar
-// mostrando essa conexão para quem realmente é o dono dela — e para mais ninguém.
+// ninguém no banco: a migração é a 4E. Até lá, o dono comprovado dela continua usando-a — nas
+// rotas do WhatsApp e no envio das campanhas DELE. Mais ninguém a alcança.
 //
-// A ponte só liga quando TODAS estas condições valem, checadas a cada pedido:
-//   1. quem pediu é SUPER_ADMIN (USER comum nunca, em hipótese alguma);
-//   2. a pasta legada tem uma sessão pareada de verdade;
-//   3. o dono é inequívoco: existe exatamente UM SUPER_ADMIN ativo (ou LEGACY_SESSION_OWNER
-//      aponta explicitamente para um SUPER_ADMIN ativo);
-//   4. esse usuário ainda NÃO tem pasta própria de sessão.
+// ESTA É A ÚNICA REGRA DE COMPATIBILIDADE DO PROJETO. Quem precisar decidir "esta sessão é de
+// alguém?" chama `legacySessionOwnerId`; ninguém implementa um atalho próprio.
 //
-// Na 4E, a sessão passa para users/<id>/whatsapp: a condição 4 deixa de valer e a ponte se
-// desliga sozinha. Depois disso este arquivo pode ser apagado inteiro.
+// O dono só é reconhecido quando TODAS as condições valem, conferidas a cada consulta:
+//   1. a pasta legada tem uma sessão pareada de verdade;
+//   2. o dono é inequívoco: existe exatamente UM SUPER_ADMIN ativo, ou LEGACY_SESSION_OWNER
+//      aponta para um SUPER_ADMIN ativo;
+//   3. esse usuário ainda NÃO tem pasta própria de sessão.
+// Na 4E a condição 3 deixa de valer, a ponte se desliga sozinha e este arquivo pode sumir.
 
 export type LegacyBridgeDeps = {
   /** Provider global legado (o mesmo que o sistema usa hoje). */
@@ -27,23 +27,31 @@ export type LegacyBridgeDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
-/** Este usuário deve operar a sessão global legada nas rotas do WhatsApp? */
-export async function usesLegacySession(user: SessionUser | null, deps: LegacyBridgeDeps): Promise<boolean> {
-  if (user?.role !== 'SUPER_ADMIN') return false;
+/** Id do dono comprovado da sessão global legada, ou null quando não há dono inequívoco. */
+export async function legacySessionOwnerId(deps: LegacyBridgeDeps): Promise<string | null> {
   const db = deps.db ?? prisma;
   const env = deps.env ?? process.env;
-
-  // Já tem pasta própria (migrado na 4E): a ponte não vale mais.
-  let own = '';
-  try { own = deps.ownSessionDir(user.id); } catch { return false; }
-  if (existsSync(own)) return false;
-
-  if (!await deps.legacyProvider.hasPairedSession()) return false;
+  if (!await deps.legacyProvider.hasPairedSession()) return null;
 
   const declared = env.LEGACY_SESSION_OWNER?.trim();
-  if (declared) return declared === user.id;
+  const candidate = declared
+    ? await db.user.findFirst({ where: { id: declared, role: 'SUPER_ADMIN', disabledAt: null }, select: { id: true } })
+    : await (async () => {
+      // Sem declaração explícita, só quando não há dúvida: um único SUPER_ADMIN ativo.
+      const admins = await db.user.findMany({ where: { role: 'SUPER_ADMIN', disabledAt: null }, select: { id: true }, take: 2 });
+      return admins.length === 1 ? admins[0] : null;
+    })();
+  if (!candidate) return null;
 
-  // Sem declaração explícita, só quando não há dúvida: um único SUPER_ADMIN ativo.
-  const admins = await db.user.findMany({ where: { role: 'SUPER_ADMIN', disabledAt: null }, select: { id: true }, take: 2 });
-  return admins.length === 1 && admins[0].id === user.id;
+  // Já tem pasta própria (migrado na 4E): a ponte não vale mais.
+  try {
+    if (existsSync(deps.ownSessionDir(candidate.id))) return null;
+  } catch { return null; }
+  return candidate.id;
+}
+
+/** Este usuário deve operar a sessão global legada? (rotas do WhatsApp) */
+export async function usesLegacySession(user: SessionUser | null, deps: LegacyBridgeDeps): Promise<boolean> {
+  if (user?.role !== 'SUPER_ADMIN') return false;
+  return await legacySessionOwnerId(deps) === user.id;
 }

@@ -4,15 +4,27 @@ import { bootstrapAdmin } from './auth';
 import { loadConfig } from './config';
 import { startDispatcher } from './dispatcher';
 import { WhatsAppProvider } from './whatsapp';
-import { WhatsAppManager } from './whatsapp-manager';
+import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
+import { createSendingRouter } from './sending-router';
+import { legacySessionOwnerId } from './legacy-session';
+import { legacyWhatsappSessionDir } from './session-paths';
 
 async function main() {
   const config = loadConfig(process.env);
   await bootstrapAdmin(process.env);
-  const provider = new WhatsAppProvider(); // sessão global legada: envios reais continuam aqui (4D/4E)
-  const manager = new WhatsAppManager();   // conexões por usuário (rotas do WhatsApp)
+  const manager = new WhatsAppManager(); // conexões por usuário
+  // Sessão global legada: a pasta NÃO se move (isso é a 4E). Quando a ponte reconhece um dono
+  // inequívoco, o provider legado passa a carregar esse dono — é o que isola os eventos dele.
+  const legacyOwnerId = await legacySessionOwnerId({
+    legacyProvider: new WhatsAppProvider(),
+    ownSessionDir: (userId: string) => manager.sessionDirFor(userId),
+  });
+  const provider = legacyOwnerId
+    ? new WhatsAppProvider({ ownerId: legacyOwnerId, sessionDir: legacyWhatsappSessionDir(), legacySession: true })
+    : new WhatsAppProvider();
+  if (legacyOwnerId) console.info('[WhatsApp] Sessão global legada reconhecida como do usuário', legacyOwnerId, '(migração: fase 4E).');
   const app = buildApp(provider, config, manager);
-  const dispatcher = await startDispatcher(provider);
+  const dispatcher = await startDispatcher(createSendingRouter<ManagedProvider>({ manager, legacyProvider: provider }));
   let closing = false;
 
   async function shutdown() {

@@ -35,6 +35,9 @@ function fakeProvider(ownerId: string, sessionDir: string, behaviour: { paired?:
     disconnect: async () => { calls.push('disconnect'); state.state = 'disconnected'; return { ...state }; },
     stop: async () => { calls.push('stop'); },
     sync: async () => { calls.push('sync'); return { count: 0 }; },
+    send: async () => ({ messageId: 'duble', context: '' }),
+    flushReads: async () => undefined,
+    flushDeliveryEvents: async () => undefined,
   };
   return provider;
 }

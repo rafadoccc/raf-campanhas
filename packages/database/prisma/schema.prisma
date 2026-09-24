@@ -180,8 +180,12 @@ model PendingRead {
   participant   String
   readAt        DateTime
   nextAttemptAt DateTime @default(now())
+  // Dono da conexão que recebeu o recibo (ADR-022). Um recibo só casa com envios desse dono.
+  // null = recibo gravado pela sessão global legada, antes do dono ser conhecido (some na 4E).
+  ownerId       String?
 
   @@index([nextAttemptAt])
+  @@index([ownerId])
 }
 
 model DeliveryRead {
