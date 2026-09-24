@@ -564,3 +564,27 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
   um); e o usuário ainda SEM pasta própria. USER comum nunca a alcança. Quando a 4E mover a
   sessão para `users/<id>/whatsapp`, a última condição deixa de valer e a ponte se desliga
   sozinha — aí o arquivo inteiro pode ser apagado.
+
+
+## ADR-022 · Envio, eventos e recibos com dono inequívoco (Fase 4D)
+
+**Data:** 2026-09-24 · **Status:** aceita (decisão do dono) · **Autor:** claude
+
+- **Roteador de envio** (`sending-router.ts`): `Delivery → Campaign.userId → conexão daquele
+  usuário`. `startDispatcher(router)` não recebe mais um provider global. Sem conexão do dono, o
+  envio ESPERA: nunca sai por outro número e nunca é marcado como enviado. Não existe fallback.
+- **Ponte legada:** única exceção, e só para o dono comprovado, resolvido por
+  `legacySessionOwnerId` (regra única, em `legacy-session.ts`). Ambiguidade = sem envio.
+  `main.ts` resolve o dono na partida e constrói o provider legado com esse `ownerId`
+  (`legacySession: true`), **sem mover a pasta** — a migração continua sendo a 4E.
+- **Ativação de campanha real** usa a conexão do dono da campanha, não "a conexão atual".
+- **Eventos e recibos** carregam `ownerId` da conexão que os recebeu. `applyServerEvent` e
+  `recordRead` exigem, além de número + grupo + id da mensagem, que a campanha e o grupo sejam
+  **do mesmo dono**. Cada conexão aplica só os seus (`flushReads`/`flushDeliveryEvents` por
+  entrada do roteador); `serverEvents`/`deliveredSeen` já eram por instância.
+- **PendingRead** ganha `ownerId` opcional (migration 20260923040000, só coluna + índice, sem
+  backfill: atribuir dono a recibo antigo seria adivinhação). null = sessão legada; ela é a
+  única que também processa as linhas antigas sem dono.
+- **Selo/metadata do grupo:** `send` recebe o `groupId` da entrega e atualiza só aquela linha.
+- **Pacing intacto** (ADR-015): um envio por vez no sistema, relógio por número persistido.
+  Paralelismo entre números continua sendo Fase 5.

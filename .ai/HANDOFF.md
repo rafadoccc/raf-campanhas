@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-24T02:00Z · claude
+
+**Fiz:** Fase 4D (ADR-022): despachante escolhe a conexão pelo dono da campanha (`sending-router.ts`), sem fallback; ativação real idem; eventos/recibos com `ownerId` (PendingRead ganhou coluna); selo de grupo por `groupId` da entrega; ponte legada centralizada e aplicada também ao envio, só para o dono comprovado.
+**Arquivos:** apps/server/src/{sending-router.ts (novo),dispatcher,app,main,whatsapp,legacy-session}.ts, packages/database/src/{reads,delivery-events}.ts, schema.prisma, migrations/20260923040000_pending_read_owner, testes
+**Tarefas:** T-102 (concluída)
+**Estado:** compila · lint ok · npm test 56+2 ok · integração 87/87 (2 execuções) · sessão real intocada (38.159 arquivos, creds 9.389 bytes)
+**Armadilhas:** se aparecer um SEGUNDO SUPER_ADMIN ativo antes da 4E, a ponte desliga e as campanhas do dono param de sair (por segurança) — use LEGACY_SESSION_OWNER ou faça a 4E. `startDispatcher` agora recebe um roteador: em teste use `staticRouter([{ownerId, provider}])`. Dubles do manager precisam de send/flushReads/flushDeliveryEvents. `assert.deepEqual(x, [])` estreita o tipo de x: compare cópias.
+**Próximo passo sugerido:** aguardar aprovação do dono para a 4E (migrar a sessão legada por rename, com o sistema parado e sem campanha ativa).
+
 ## 2026-09-23T03:00Z · claude
 
 **Fiz:** Fase 4C (ADR-021): rotas do WhatsApp escopadas por `request.user.id` via WhatsAppManager; ponte temporária da sessão legada só para o dono comprovado (4 condições, auto-desliga na 4E); main.ts cria o manager, faz startAll/stopAll. Despachante, provider e envios reais intactos.
