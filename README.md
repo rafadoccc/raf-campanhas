@@ -5,7 +5,9 @@ painel (React + Vite) e a API (Fastify) na mesma porta, roda a fila de envios e 
 conexão com o WhatsApp (Baileys). Os dados ficam no **MySQL 8**, que também é a fila: não há
 Docker nem Redis.
 
-Para publicar na Hostinger, veja **[docs/deploy-hostinger.md](docs/deploy-hostinger.md)**.
+Para publicar no Railway (alvo de deploy atual), veja
+**[docs/deploy-railway.md](docs/deploy-railway.md)**; para a Hostinger (deploy anterior),
+**[docs/deploy-hostinger.md](docs/deploy-hostinger.md)**.
 
 ## Iniciar no Windows
 
@@ -33,23 +35,37 @@ Todo o painel e toda a API exigem login. Não há cadastro público. Papéis: `S
 é `SUPER_ADMIN`. Depois, `npm run user:create` cria `USER`; um novo `SUPER_ADMIN` exige
 `npm run user:create -- --super-admin` e confirmação digitada. O mesmo comando redefine a
 senha de uma conta existente (sem mudar o papel). A senha é trocada em **Minha conta**.
-O login vale 7 dias e se renova com o uso.
+O login se renova com o uso, até um teto absoluto de 30 dias desde a entrada.
+
+### Multiusuário e administração
+
+Cada conta é independente: campanhas, grupos, mídia e histórico de um usuário nunca aparecem
+para outro. Todas as telas são as mesmas para todo mundo; a única diferença de quem é
+`SUPER_ADMIN` é a tela extra **Administração**, com métricas do sistema inteiro (contas,
+envios/falhas de hoje, fila, últimos 7 dias, erros mais comuns, WhatsApp conectados,
+despachante) e a gestão de contas — nunca o conteúdo de campanhas ou mensagens de ninguém.
 
 ## Conectar WhatsApp
 
-1. Em **Conexão WhatsApp**, clique em **Conectar / gerar QR Code**.
+Cada usuário conecta o **próprio** número; não há conexão compartilhada entre contas.
+
+1. Em **WhatsApp**, clique em **Conectar / gerar QR Code**.
 2. No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho.
 3. Leia o QR na tela (ele se renova sozinho a cada 20 segundos).
 4. Clique em **Sincronizar grupos**.
-5. Crie uma campanha, busque e selecione os grupos em ordem, e escolha o intervalo (1 a 60 min).
+5. Crie uma campanha, busque e selecione os grupos em ordem, e escolha o intervalo (mínimo de
+   3 minutos entre grupos — piso fixo, protege o número contra bloqueio). Marque **"Marcar
+   todos os membros (@todos)"** se quiser que cada participante receba notificação de menção
+   sem mudar o texto da mensagem.
 6. Escolha fila única (início ao ativar) ou horários diários.
 7. Confira o resumo. Use **Simulação** para testar, ou **WhatsApp real** confirmando a
    autorização dos destinatários.
 
 Depois de pareado, o sistema **reconecta sozinho** ao iniciar (sem QR). Conectar ou
 sincronizar não ativa campanhas. A sessão fica fora da pasta do projeto
-(`%LOCALAPPDATA%\raf-campanhas\sessions`) e nunca entra no Git; "Desconectar" apaga essa
-cópia local. O número fica vinculado à campanha na ativação; retomar com outro é bloqueado.
+(`%LOCALAPPDATA%\raf-campanhas\sessions`, uma subpasta por usuário) e nunca entra no Git;
+"Desconectar" apaga essa cópia local. O número fica vinculado à campanha na ativação; retomar
+com outro é bloqueado.
 
 ## Fila persistente e estados
 
@@ -71,8 +87,10 @@ cópia local. O número fica vinculado à campanha na ativação; retomar com ou
   lógica (`deletedAt`): sai da lista, mas histórico e métricas não são apagados.
 - O padrão de 3 minutos também é aplicado às campanhas antigas; entregas existentes não
   são recriadas. A nova migração numera a ordem antiga por horário/criação/ID.
-- Falhas depois de iniciar o envio não são repetidas automaticamente: o resultado pode ser incerto.
-  Confira no celular antes de qualquer reenvio.
+- Falhas depois de iniciar o envio não são repetidas automaticamente: o resultado pode ser
+  incerto. Uma falha **certa** (nada saiu) pode ser tentada de novo, por envio ou em lote pela
+  campanha; uma falha de resultado **incerto** exige confirmação explícita antes de tentar de
+  novo (risco de duplicar).
 - SENT significa que o provedor retornou um identificador, não confirmação de entrega/leitura.
 - O histórico identifica os envios simulados.
 
@@ -98,9 +116,10 @@ ordem e intervalo sob lock da campanha, então uma varredura atrasada não conto
 pausa/encerramento. Um lease em WorkerLease garante um processador por vez. PROCESSING encontrado
 ao reiniciar vira FAILED com aviso de resultado incerto e nunca é repetido automaticamente.
 Não existe promessa de exactly-once através do WhatsApp: uma queda entre o envio e a
-resposta pode deixar o resultado desconhecido. Por segurança, esta versão NÃO oferece
-Tentar novamente para falhas; não é possível provar que uma mensagem não foi entregue.
-É uma escolha conservadora para evitar duplicatas, podendo deixar mensagens sem envio.
+resposta pode deixar o resultado desconhecido. Por isso "Tentar de novo" trata as duas
+situações de formas diferentes: falha **certa** (nada chegou a sair) tenta de novo sem
+perguntar; falha de resultado **incerto** exige confirmar explicitamente, avisando do risco de
+duplicar a mensagem se ela já tiver chegado (ADR-030).
 
 ## Estrutura
 
@@ -108,6 +127,7 @@ Tentar novamente para falhas; não é possível provar que uma mensagem não foi
 - `apps/server`: Fastify com a API em `/api`, login, segurança, entrega do painel, fila de
   envios e conector Baileys.
 - `apps/web`: painel React (Vite + React Router + Tailwind), compilado para `apps/web/dist`.
+  Design system documentado em [docs/design-system.md](docs/design-system.md).
 - `packages/database`: schema Prisma (MySQL), migrations e a lógica transacional da fila.
 - `scripts/`: inicializador, diagnóstico do banco, criação de usuário e testes.
 - `.ai/`: protocolo entre os agentes de IA (ver `AGENTS.md`).

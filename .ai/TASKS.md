@@ -131,8 +131,8 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-109  Marcar todos (@todos) nas mensagens                       owner: —        since: —
 [x] T-110  Tentar de novo envios com falha (seguro e manual)          owner: —        since: —
 [x] T-111  Painel do administrador completo (métricas do sistema)     owner: —        since: —
-[x] T-112  Select e Checkbox próprios; visual sem bordas decorativas owner: —        since: —
-[~] T-113  Docs, STATE e junção dev → main                            owner: claude   since: 2026-09-24T18:00Z
+[x] T-112  Select e Checkbox próprios; visual sem bordas decorativas  owner: —        since: —
+[~] T-113  Docs, STATE e junção dev → main                            owner: claude   since: 2026-09-24T05:25Z
 ```
 
 ## Fase 5 — Deploy em VPS

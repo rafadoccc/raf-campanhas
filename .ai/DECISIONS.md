@@ -684,3 +684,76 @@ correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atua
   fixas (alinhada mesmo sem botões na própria conta), cria conta, ativa/desativa, troca papel,
   redefine senha — nunca mostra QR, senha nem conteúdo de campanha.
 - `railway.json`: `healthcheckPath /api/health`, restart automático, uma instância.
+
+
+## ADR-028 · Piso de 3 minutos entre grupos, garantido no banco (branch dev)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- Delays entre mensagens nunca podem ficar abaixo de 3 minutos (risco de bloqueio do número pelo
+  WhatsApp). A API já recusava `intervalSeconds < 180`; isso não bastava — campanhas gravadas
+  ANTES dessa validação, ou qualquer escrita direta no banco, escapavam do piso.
+- `MIN_INTERVAL_SECONDS = 180` e `effectiveInterval(intervalSeconds)` em
+  `packages/database/src/queue.ts`: usados em `claimDelivery`, `finishDelivery` e
+  `holdInterruptedAccounts` — o piso vale mesmo que `Campaign.intervalSeconds` esteja menor.
+  `intervalFloorSeconds()` só aceita `SEND_INTERVAL_FLOOR_SECONDS` (piso mais baixo, em segundos)
+  quando `CAMPAIGN_TEST_DATABASE` está definido — nunca em produção.
+- Migration `20260924180000_min_interval` levanta para 180 s qualquer `Campaign.intervalSeconds`
+  gravado abaixo disso; nada mais muda.
+- Formulário: `min={3}` no campo com aviso explícito; mensagem de erro da API atualizada.
+
+
+## ADR-029 · Marcar todos os membros do grupo (@todos oculto)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- Campo `Campaign.mentionAll` (boolean, padrão `false`). Quando ligado, todo envio dessa campanha
+  leva o array `mentions` do Baileys com o id de cada participante do grupo, EXCETO a própria
+  conta (`mentionTargets` em `send-context.ts`, por número ou LID). O texto da mensagem não muda
+  — é a marcação "oculta" do WhatsApp: cada participante recebe notificação de menção sem o `@`
+  aparecer escrito. Vale para texto, imagem e vídeo.
+- `mentionAll` viaja com a campanha: some da campanha usada de novo (`duplicate`), é validado
+  como booleano estrito na API e passado do despachante ao conector a cada envio
+  (`{ mentionAll: delivery.campaign.mentionAll }`), nunca lido de outro lugar.
+- Interface: checkbox própria no formulário ("Marcar todos os membros (@todos)", com o aviso de
+  que o texto não muda) e selo discreto na lista e no detalhe da campanha quando ligado.
+
+
+## ADR-030 · Tentar de novo um envio com falha
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- Duas rotas novas em `campaign-routes.ts`: `POST /deliveries/:id/retry` (um envio) e
+  `POST /campaigns/:id/retry-failed` (todas as falhas seguras de uma campanha de uma vez).
+  Reabrem o `FAILED` para `PENDING` com `scheduledAt = agora`; o piso de 3 min e o relógio do
+  número em `claimDelivery` decidem quando ele realmente sai — "agora" nunca fura o ritmo.
+  Campanha `COMPLETED` volta a `ACTIVE` para o despachante voltar a olhar para ela; `CANCELLED`
+  nunca reabre por aqui (o caminho ali é "usar de novo").
+- **Falha "certa"** (nada saiu — ADR-014) tenta de novo direto. **Falha "incerta"** (pode ter
+  chegado) exige `{ confirmUncertain: true }` explícito, senão a rota responde 409: evita duplicar
+  um envio que talvez já tenha chegado ao grupo. `isUncertainFailure` (`send-context.ts`) é a
+  ÚNICA fonte dessa classificação — a palavra "incerto" na mensagem de erro, sem uma segunda
+  marca (coluna) para não correr o risco de as duas ficarem fora de sincronia.
+- O lote por campanha nunca inclui falhas incertas: cada uma exige confirmação própria.
+- Interface: botão "Tentar de novo" por envio com falha e "Tentar de novo as falhas" em lote no
+  detalhe da campanha; falha incerta pede confirmação com aviso do risco de duplicar.
+
+
+## ADR-031 · Painel do administrador com métricas do sistema inteiro
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- `GET /api/admin/overview` (`admin-overview.ts`): contas (total/ativas/admins), campanhas por
+  situação, envios/entregas/falhas de hoje, fila agora, últimos 7 dias (enviados e falhas por
+  dia), os 5 códigos de erro mais comuns dos últimos 7 dias, WhatsApp conectados AGORA (memória
+  do processo via `manager.owners()`/`peek()`, não só o último estado gravado no banco — que pode
+  estar defasado), posse do despachante (`WorkerLease`) e uptime/memória do processo Node. Só
+  números agregados: nenhuma rota de admin retorna nome de grupo, campanha ou mensagem.
+  `prisma.$transaction(async tx => { await Promise.all([...]) })`, nunca a forma em array — com
+  13 consultas o TypeScript perde a inferência de tipo por tupla nessa versão do Prisma.
+- Duas ações por conta, separadas de "desativar" (que também pausa campanhas e derruba sessões):
+  `POST /admin/users/:id/logout` (só encerra as sessões web) e
+  `POST /admin/users/:id/whatsapp/stop` (só derruba a conexão, preservando a autenticação — a
+  pessoa reconecta sem escanear o QR de novo).
+- Tela redesenhada: cartões de métrica, gráfico dos últimos 7 dias, status do despachante e do
+  processo, badges de erro, busca por nome/e-mail e filtro por situação/papel na lista de contas.

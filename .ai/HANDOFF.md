@@ -5,6 +5,50 @@
 
 ---
 
+## 2026-09-24T18:40Z · claude
+
+**Fiz:** piso de 3 minutos entre grupos garantido no banco (ADR-028, não só na API — protege
+campanhas antigas); marcar todos os membros do grupo com @todos oculto (ADR-029); tentar de
+novo um envio com falha, direto se a falha é certa e com confirmação se é incerta, por envio
+ou em lote pela campanha (ADR-030); painel do administrador com métricas do sistema inteiro —
+contas, campanhas, envios/falhas de hoje, fila, últimos 7 dias, erros mais comuns, WhatsApp
+conectados AGORA, posse do despachante, uptime/memória (ADR-031), mais força-logout e
+desconectar-WhatsApp por conta, separados de "desativar"; `Select` e `Checkbox` próprios no
+design system (sem visual nativo do SO), removidas as bordas decorativas do cartão de
+campanha e do detalhe e a logo "CC" do topo/login; docs/design-system.md e
+docs/deploy-railway.md (novos); README e STATE.md atualizados (várias afirmações estavam
+desatualizadas: sessão de 7 dias → 30 dias, "nunca oferece tentar de novo" → agora oferece,
+intervalo mínimo).
+**Arquivos:** packages/database/src/{queue,client}.ts, packages/database/prisma/{schema.prisma,migrations/20260924180000_min_interval,migrations/20260924181000_mention_all}, apps/server/src/{app,campaign-routes,dispatcher,queue-forecast,schedule,send-context,whatsapp,whatsapp.test,integration.test,admin-routes,admin-overview(novo)}.ts, apps/web/src/{design/*,components/*,pages/*,lib/campaign-ops.ts}, docs/{design-system.md,deploy-railway.md} (novos), README.md, .ai/{STATE.md,DECISIONS.md,TASKS.md}
+**Tarefas:** T-108, T-109, T-110, T-111, T-112 (concluídas); T-113 em andamento (este handoff faz parte dela)
+**Estado:** compila · lint ok (server/web/database) · `npm test` 62/62 · `npm run test:integration` 109/109 (múltiplas execuções) · validado no navegador em dev (porta 3001): dropdown do Select navegável por teclado, checkbox sem visual nativo, checkbox @todos marcando o grupo certo, retry seguro (PENDING direto) e retry incerto (diálogo de confirmação com aviso de duplicar), painel de admin com métricas reais e ações de sessão/WhatsApp por conta
+**Armadilhas:** `prisma.$transaction([...])` em array com muitas consultas (13+) perde a
+inferência de tipo do TypeScript nesta versão do Prisma — sempre use a forma
+`$transaction(async tx => { await Promise.all([...]) })` para lotes grandes (visto em
+admin-overview.ts). A classificação de falha "incerta" (`isUncertainFailure`) usa só a palavra
+"incerto" na mensagem de erro como marca — de propósito, para não ter uma segunda fonte de
+verdade (coluna) que possa sair de sincronia; se um dia a mensagem de erro for traduzida ou
+reformulada, essa função precisa mudar junto.
+**Próximo passo sugerido:** mesclar dev → main (commits já testados e no dev remoto),
+redeploy no Railway, e depois seguir para observabilidade (T-005/T-006, fase 6 do STATE.md) —
+nada urgente pendente no momento.
+
+**SSO do Google para login — resumo pedido pelo dono:**
+Tecnicamente viável (fluxo OAuth 2.0 Authorization Code contra o Google; nenhuma mudança no
+modelo de sessão, que continua como está — só um segundo jeito de abrir a mesma sessão).
+Dificuldades reais: (1) exige um projeto no Google Cloud Console e credenciais OAuth — isso só
+o dono consegue criar, nenhum agente tem acesso; (2) o sistema não tem cadastro público de
+propósito — decisão de produto necessária: login por Google só autentica uma conta JÁ criada
+pelo admin (mesmo e-mail), nunca cria conta nova sozinho (recomendado, mantém o modelo atual);
+(3) a URL de retorno cadastrada no Google precisa bater exatamente com o domínio de cada
+ambiente (Railway prod, e local/dev se for testar por lá); (4) tela de consentimento do Google
+mostra aviso de "app não verificado" para contas de teste enquanto o app não estiver
+"publicado" (não é bloqueio, é um clique a mais; escopos email/perfil não exigem verificação
+formal do Google). Esforço estimado: uma sessão focada — duas rotas novas
+(`/api/auth/google/start` e `/callback`), um botão na tela de login, e a decisão acima. Nada
+foi implementado; aguardando decisão do dono sobre criar as credenciais e sobre o
+comportamento de vínculo de conta.
+
 ## 2026-09-24T08:00Z · claude
 
 **Fiz:** design system completo do painel (branch dev, ADR-026): primitivos, ícones lucide, ConfirmProvider (sem confirm() do navegador), rolagem infinita por cursor, layout sem rolagem do documento. Reescreveu todas as telas (início, campanhas, detalhe, whatsapp, conta, login, histórico, formulário) e criou /admin. lib/campaign-ops.ts unifica editar/reagendar/usar de novo/excluir entre lista e detalhe. Cantos 5–6px em todo o sistema.
