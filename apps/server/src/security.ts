@@ -35,7 +35,8 @@ export function registerSecurity(app: FastifyInstance, config: AppConfig) {
     reply.header('Cross-Origin-Resource-Policy', 'same-origin');
     reply.header('Content-Security-Policy', CSP);
     if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=31536000');
-    if (request.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
+    // API sem cache, exceto quando a rota define o próprio (mídia imutável: cache privado).
+    if (request.url.startsWith('/api/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
     return payload;
   });
 

@@ -11,6 +11,7 @@ import { registerAuth } from './auth';
 import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
 import { WhatsAppManager } from './whatsapp-manager';
 import { createSendingRouter } from './sending-router';
+import { registerAdminRoutes } from './admin-routes';
 import { usesLegacySession } from './legacy-session';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
@@ -84,24 +85,37 @@ app.post('/api/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
+// Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
+registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
+// Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de
+// mensagens, lista de grupos ou mídia inteira.
 app.get('/api/campaigns', async request => {
   await completeFinished(prisma);
-  const campaigns = await prisma.campaign.findMany({
+  const query = request.query as { cursor?: string; limit?: string };
+  const take = Math.min(50, Math.max(1, parseInt(query.limit ?? '24') || 24));
+  const page = await prisma.campaign.findMany({
     where: { deletedAt: null, userId: request.user!.id },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      groups: { orderBy: { position: 'asc' }, include: { group: { select: { id: true, name: true } } } },
-      messages: { orderBy: { position: 'asc' } },
-      schedules: { orderBy: { time: 'asc' } },
-      _count: { select: { deliveries: true } }
-    }
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: take + 1,
+    ...(typeof query.cursor === 'string' && query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+    select: {
+      id: true, name: true, startsAt: true, endsAt: true, status: true, provider: true, intervalSeconds: true, mode: true, createdAt: true,
+      schedules: { orderBy: { time: 'asc' }, select: { time: true } },
+      media: { select: { id: true, kind: true, color: true } },
+      _count: { select: { groups: true } },
+    },
   });
+  const items = page.slice(0, take);
   // Contagem por status, para o bloco da campanha mostrar o progresso sem abrir o detalhe.
-  const counts = await prisma.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: campaigns.map(c => c.id) } }, _count: { _all: true } });
-  return campaigns.map(campaign => ({
-    ...campaign,
-    progress: Object.fromEntries(counts.filter(row => row.campaignId === campaign.id).map(row => [row.status, row._count._all])),
-  }));
+  const counts = await prisma.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: items.map(c => c.id) } }, _count: { _all: true } });
+  return {
+    items: items.map(({ _count, ...campaign }) => ({
+      ...campaign,
+      groupCount: _count.groups,
+      progress: Object.fromEntries(counts.filter(row => row.campaignId === campaign.id).map(row => [row.status, row._count._all])),
+    })),
+    nextCursor: page.length > take ? items[items.length - 1].id : null,
+  };
 });
 
 app.get('/api/deliveries', async (request) => {

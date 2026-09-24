@@ -9,6 +9,7 @@ import { createSendingRouter } from './sending-router';
 import { legacySessionOwnerId } from './legacy-session';
 import { legacyWhatsappSessionDir } from './session-paths';
 import { migrateLegacySession } from './session-migration';
+import { backfillMediaPreviews } from './media';
 
 async function main() {
   const config = loadConfig(process.env);
@@ -54,6 +55,8 @@ async function main() {
   // Reconecta as conexões por usuário já pareadas (nenhuma existe até alguém parear pelo painel).
   const reconnected = await manager.startAll();
   for (const item of reconnected.filter(r => r.outcome === 'falhou')) console.warn('[WhatsApp] Reconexão falhou para', item.userId, item.error);
+  // Imagens antigas ganham cor e miniatura em segundo plano (ADR-026); não atrasa a partida.
+  void backfillMediaPreviews().catch(() => undefined);
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);
 }

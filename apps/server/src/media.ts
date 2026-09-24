@@ -8,7 +8,35 @@ import { publicMessage } from './security';
 export const IMAGE_LIMIT = 16_000_000;
 export const VIDEO_LIMIT = 64_000_000;
 const ffprobe = require('ffprobe-static') as { path: string };
-export const mediaMetadata = { id: true, name: true, mimeType: true, kind: true, size: true } as const;
+export const mediaMetadata = { id: true, name: true, mimeType: true, kind: true, size: true, color: true } as const;
+
+// Cor predominante e miniatura (ADR-026). A lista de campanhas usa só isto: nunca a mídia
+// inteira, que pode ter 16 MB.
+export async function imagePreview(data: Buffer) {
+  const image = sharp(data, { limitInputPixels: 32_000_000 });
+  const { dominant } = await image.stats();
+  const hex = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  const color = `#${hex(dominant.r)}${hex(dominant.g)}${hex(dominant.b)}`;
+  const thumbnail = await sharp(data, { limitInputPixels: 32_000_000 }).rotate().resize(320, 320, { fit: 'cover' }).webp({ quality: 72 }).toBuffer();
+  return { color, thumbnail };
+}
+
+/** Imagens antigas sem cor/miniatura ganham as duas, uma de cada vez (roda na partida). */
+export async function backfillMediaPreviews(limit = 200) {
+  const pending = await prisma.campaignMedia.findMany({ where: { kind: 'image', OR: [{ color: null }, { thumbnail: null }] }, select: { id: true }, take: limit });
+  for (const { id } of pending) {
+    const media = await prisma.campaignMedia.findUnique({ where: { id }, select: { data: true } });
+    if (!media) continue;
+    try { await prisma.campaignMedia.update({ where: { id }, data: await imagePreview(Buffer.from(media.data)) }); }
+    catch { /* imagem que não decodifica: segue sem prévia */ }
+  }
+  return pending.length;
+}
+
+// Mídia nunca muda depois de salva (o id identifica o conteúdo): pode ficar em cache no navegador.
+const PRIVATE_CACHE = 'private, max-age=86400, immutable';
+// Pedido aberto (bytes=N-) de vídeo recebe no máximo este pedaço; o navegador pede o resto.
+const MAX_CHUNK = 2 * 1024 * 1024;
 
 async function inspectVideo(data: Buffer): Promise<{ streams: { codec_type: string; codec_name: string }[] }> {
   return new Promise((resolve, reject) => {
@@ -68,22 +96,48 @@ export function registerMediaRoutes(app: FastifyInstance) {
       const kind = await validateMedia(data, mimeType);
       const rawName = (request.query as { name?: string }).name;
       const name = (typeof rawName === 'string' ? rawName.split(/[\\/]/).pop()! : 'mídia').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 180) || 'mídia';
-      return reply.code(201).send(await prisma.campaignMedia.create({ data: { userId: request.user!.id, name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer> }, select: mediaMetadata }));
+      const preview = kind === 'image' ? await imagePreview(data) : {};
+      return reply.code(201).send(await prisma.campaignMedia.create({ data: { userId: request.user!.id, name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer>, ...preview }, select: mediaMetadata }));
     } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Arquivo inválido.') }); }
   });
   app.get('/api/media/:id', async (request, reply) => {
+    const id = (request.params as { id: string }).id;
     // Só a mídia do próprio usuário; de outro usuário responde igual a inexistente (ADR-018).
-    const media = await prisma.campaignMedia.findFirst({ where: { id: (request.params as { id: string }).id, userId: request.user!.id } });
+    // Primeiro só os metadados: o conteúdo é lido depois, e só o trecho pedido.
+    const media = await prisma.campaignMedia.findFirst({ where: { id, userId: request.user!.id }, select: { mimeType: true, size: true } });
     if (!media) return reply.code(404).send({ error: 'Mídia não encontrada.' });
-    reply.header('Content-Type', media.mimeType).header('X-Content-Type-Options', 'nosniff').header('Accept-Ranges', 'bytes');
-    const buffer = Buffer.from(media.data); const range = request.headers.range;
+    reply.header('Content-Type', media.mimeType).header('X-Content-Type-Options', 'nosniff').header('Accept-Ranges', 'bytes').header('Cache-Control', PRIVATE_CACHE);
+    const total = media.size;
+    const range = request.headers.range;
     if (range) {
       const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-      const start = match?.[1] ? Number(match[1]) : match?.[2] ? Math.max(0, buffer.length - Number(match[2])) : NaN;
-      const end = match?.[1] && match[2] ? Math.min(Number(match[2]), buffer.length - 1) : buffer.length - 1;
-      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= buffer.length) return reply.code(416).header('Content-Range', `bytes */${buffer.length}`).send();
-      return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${buffer.length}`).send(buffer.subarray(start, end + 1));
+      const start = match?.[1] ? Number(match[1]) : match?.[2] ? Math.max(0, total - Number(match[2])) : NaN;
+      const requestedEnd = match?.[1] && match[2] ? Math.min(Number(match[2]), total - 1) : total - 1;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start < 0 || start > requestedEnd || start >= total) return reply.code(416).header('Content-Range', `bytes */${total}`).send();
+      // Pedido aberto (bytes=N-) vem em pedaços; um pedido com fim explícito é respeitado.
+      const end = match?.[2] ? requestedEnd : Math.min(requestedEnd, start + MAX_CHUNK - 1);
+      // SUBSTRING no banco: nunca carrega o vídeo inteiro para servir um pedaço (T-048).
+      const [row] = await prisma.$queryRaw<{ chunk: Uint8Array }[]>`SELECT SUBSTRING(data, ${start + 1}, ${end - start + 1}) AS chunk FROM \`CampaignMedia\` WHERE id = ${id} AND userId = ${request.user!.id}`;
+      if (!row) return reply.code(404).send({ error: 'Mídia não encontrada.' });
+      return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${total}`).send(Buffer.from(row.chunk));
     }
-    return reply.send(buffer);
+    const full = await prisma.campaignMedia.findFirst({ where: { id, userId: request.user!.id }, select: { data: true } });
+    return full ? reply.send(Buffer.from(full.data)) : reply.code(404).send({ error: 'Mídia não encontrada.' });
+  });
+
+  // Miniatura para a lista de campanhas (poucos KB). Imagem antiga sem miniatura ganha uma agora.
+  app.get('/api/media/:id/thumb', async (request, reply) => {
+    const where = { id: (request.params as { id: string }).id, userId: request.user!.id };
+    const media = await prisma.campaignMedia.findFirst({ where, select: { id: true, kind: true, thumbnail: true } });
+    if (!media || media.kind !== 'image') return reply.code(404).send({ error: 'Mídia não encontrada.' });
+    let thumbnail = media.thumbnail ? Buffer.from(media.thumbnail) : null;
+    if (!thumbnail) {
+      const full = await prisma.campaignMedia.findFirst({ where, select: { data: true } });
+      if (!full) return reply.code(404).send({ error: 'Mídia não encontrada.' });
+      const preview = await imagePreview(Buffer.from(full.data));
+      await prisma.campaignMedia.update({ where: { id: media.id }, data: preview });
+      thumbnail = preview.thumbnail;
+    }
+    return reply.header('Content-Type', 'image/webp').header('Cache-Control', PRIVATE_CACHE).send(thumbnail);
   });
 }

@@ -81,6 +81,8 @@ model Campaign {
 
   @@unique([userId, id])
   @@index([userId, mediaId])
+  // Lista de campanhas paginada por dono, mais recentes primeiro.
+  @@index([userId, createdAt])
   // Índice criado pelo MySQL junto com a antiga chave da mídia; mantido (útil e sem risco).
   @@index([mediaId], map: "Campaign_mediaId_fkey")
 }
@@ -166,6 +168,10 @@ model CampaignMedia {
   kind      String
   size      Int
   data      Bytes
+  // Cor predominante (#rrggbb) e miniatura WebP pequena, geradas a partir da imagem no upload
+  // (ADR-026). Deixam a lista de campanhas leve: o cartão nunca baixa a mídia inteira.
+  color     String?    @db.VarChar(7)
+  thumbnail Bytes?     @db.MediumBlob
   createdAt DateTime   @default(now())
   campaigns Campaign[]
 

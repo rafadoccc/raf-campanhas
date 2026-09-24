@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
-import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT } from './media';
+import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -214,7 +214,7 @@ test('stop cancels pending; soft delete preserves historical records and is idem
   assert.equal((await request('DELETE', `/campaigns/${id}`)).statusCode, 200);
   assert.equal((await deliveries(id)).length, 3);
   assert.equal((await request('GET', `/campaigns/${id}`)).statusCode, 404);
-  assert.ok(!(await request('GET', '/campaigns')).json().some((c: {id: string}) => c.id === id));
+  assert.ok(!(await request('GET', '/campaigns')).json().items.some((c: {id: string}) => c.id === id));
 });
 test('uncertain failure never retries; next group continues after the interval', async () => {
   const { id } = await create(2); await activate(id); const rows = await deliveries(id); const at = new Date(rows[0].scheduledAt.getTime() + 1);
@@ -344,7 +344,7 @@ test('closed campaign retains old group reads while dashboard success uses today
   assert.equal(dashboard.sentToday, 1); assert.equal(dashboard.failedToday, 1); assert.equal(dashboard.successRate, 50);
   assert.ok(dashboard.recentActivity.some((e: { id: string; status: string }) => e.id === rows[0].id && e.status === 'SENT'));
   assert.ok(dashboard.recentActivity.some((e: { id: string; status: string }) => e.id === rows[1].id && e.status === 'FAILED'));
-  assert.ok(dashboard.recentActivity.length <= 8);
+  assert.ok(dashboard.recentActivity.length <= 20, 'atividade recente: até 20 itens (rolagem própria na tela)');
 });
 
 test('server time remains authoritative with a wrong client time and timezone', async () => {
@@ -1290,8 +1290,8 @@ const withoutClock = (dashboard: Record<string, unknown>) => { const { serverNow
 
 test('isolation: each user lists only their own campaigns, groups and deliveries', async () => {
   const { a, b, A, B } = await isoWorld();
-  assert.deepEqual(ids((await a.call('GET', '/campaigns')).json()), [A.campaignId], '1. A lista só as campanhas de A');
-  assert.deepEqual(ids((await b.call('GET', '/campaigns')).json()), [B.campaignId], '2. B lista só as campanhas de B');
+  assert.deepEqual(ids((await a.call('GET', '/campaigns')).json().items), [A.campaignId], '1. A lista só as campanhas de A');
+  assert.deepEqual(ids((await b.call('GET', '/campaigns')).json().items), [B.campaignId], '2. B lista só as campanhas de B');
   assert.deepEqual(ids((await a.call('GET', '/groups')).json()), [A.groupId]);
   assert.deepEqual(ids((await b.call('GET', '/groups')).json()), [B.groupId]);
   const historyB = (await b.call('GET', '/deliveries')).json() as { campaignId: string }[];
@@ -1376,7 +1376,7 @@ test('isolation: SUPER_ADMIN sees only their own data on the normal routes', asy
   const { A, B } = await isoWorld();
   const admin = await isoUser('iso-super@teste.local', 'SUPER_ADMIN');
   const own = await ownData(admin, 'S');
-  assert.deepEqual(ids((await admin.call('GET', '/campaigns')).json()), [own.campaignId], '14. só as campanhas dele');
+  assert.deepEqual(ids((await admin.call('GET', '/campaigns')).json().items), [own.campaignId], '14. só as campanhas dele');
   assert.deepEqual(ids((await admin.call('GET', '/groups')).json()), [own.groupId]);
   assert.deepEqual((await admin.call('GET', '/deliveries')).json(), []);
   const dashboard = (await admin.call('GET', '/dashboard')).json();
@@ -1392,7 +1392,7 @@ test('isolation: userId in body, query or headers never widens or changes the sc
   const { a, b, A, B } = await isoWorld();
   const spoof = { 'x-user-id': b.user.id, 'x-owner-id': b.user.id, cookie: '' };
   const asA = (method: Method, url: string, payload?: object) => a.call(method, url, payload, { 'x-user-id': b.user.id, 'x-role': 'SUPER_ADMIN' });
-  assert.deepEqual(ids((await asA('GET', `/campaigns?userId=${b.user.id}`)).json()), [A.campaignId], '15. query/cabeçalho ignorados');
+  assert.deepEqual(ids((await asA('GET', `/campaigns?userId=${b.user.id}`)).json().items), [A.campaignId], '15. query/cabeçalho ignorados');
   assert.deepEqual(ids((await asA('GET', `/groups?userId=${b.user.id}`)).json()), ids(await prisma.group.findMany({ where: { userId: a.user.id } })), 'só os grupos de A');
   assert.deepEqual((await asA('GET', `/deliveries?userId=${b.user.id}`)).json(), []);
   assert.deepEqual(withoutClock((await asA('GET', `/dashboard?userId=${b.user.id}`)).json()), withoutClock((await a.call('GET', '/dashboard')).json()));
@@ -2255,6 +2255,211 @@ test('parallel (5): stopping waits for the sends in progress on every number', a
     assert.equal((await fresh(campaignB.rows[0].id)).status, 'SENT');
     world.legacyIntact();
   } finally { world.cleanup(); }
+});
+
+// ─── Mídia com prévia, lista paginada, reuso e métricas (ADR-026) ───────────────
+test('media (026): images get a dominant color and a small thumbnail; only the owner reads them', async () => {
+  const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#cc3300' } }).png().toBuffer();
+  const up = await app.inject({ method: 'POST', url: '/api/media?name=laranja.png', headers: auth({ 'content-type': 'image/png' }), payload: png });
+  assert.equal(up.statusCode, 201, up.body);
+  assert.match(up.json().color, /^#[0-9a-f]{6}$/);
+  const [r, g] = [parseInt(up.json().color.slice(1, 3), 16), parseInt(up.json().color.slice(3, 5), 16)];
+  assert.ok(r > 150 && g < 120, `cor predominante laranja/vermelha: ${up.json().color}`);
+  const thumb = await app.inject({ method: 'GET', url: `/api/media/${up.json().id}/thumb`, headers: auth() });
+  assert.equal(thumb.statusCode, 200);
+  assert.equal(thumb.headers['content-type'], 'image/webp');
+  assert.match(String(thumb.headers['cache-control']), /private/);
+  assert.ok(thumb.rawPayload.length > 0);
+  const intruso = await isoUser('midia-intruso@teste.local');
+  assert.equal((await intruso.call('GET', `/media/${up.json().id}/thumb`)).statusCode, 404, 'miniatura de outro dono: 404');
+  // Imagem antiga, sem prévia: ganha na primeira leitura da miniatura e no preenchimento da partida.
+  const antiga = await prisma.campaignMedia.create({ data: { userId: ownerId, name: 'antiga.png', mimeType: 'image/png', kind: 'image', size: png.length, data: png } });
+  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${antiga.id}/thumb`, headers: auth() })).statusCode, 200);
+  assert.ok((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: antiga.id } })).color);
+  const outra = await prisma.campaignMedia.create({ data: { userId: ownerId, name: 'outra.png', mimeType: 'image/png', kind: 'image', size: png.length, data: png } });
+  await backfillMediaPreviews();
+  const preenchida = await prisma.campaignMedia.findUniqueOrThrow({ where: { id: outra.id } });
+  assert.ok(preenchida.color && preenchida.thumbnail, 'preenchimento em segundo plano');
+});
+
+test('media (026): video ranges are read from the database in pieces, never the whole file', async () => {
+  const data = Buffer.alloc(5 * 1024 * 1024);
+  for (let i = 0; i < data.length; i++) data[i] = (i * 31) % 251;
+  const video = await prisma.campaignMedia.create({ data: { userId: ownerId, name: 'grande.mp4', mimeType: 'video/mp4', kind: 'video', size: data.length, data } });
+  const aberto = await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: 'bytes=0-' }) });
+  assert.equal(aberto.statusCode, 206);
+  assert.equal(aberto.headers['content-range'], `bytes 0-${2 * 1024 * 1024 - 1}/${data.length}`, 'pedido aberto vem em pedaço de 2 MB');
+  assert.ok(aberto.rawPayload.equals(data.subarray(0, 2 * 1024 * 1024)));
+  const meio = await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: 'bytes=3000000-3000099' }) });
+  assert.equal(meio.headers['content-range'], `bytes 3000000-3000099/${data.length}`);
+  assert.ok(meio.rawPayload.equals(data.subarray(3_000_000, 3_000_100)), 'trecho exato');
+  const fim = await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: 'bytes=-10' }) });
+  assert.ok(fim.rawPayload.equals(data.subarray(data.length - 10)), 'sufixo');
+  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: `bytes=${data.length}-` }) })).statusCode, 416);
+});
+
+test('campaign list (026): cursor pages with no duplicates, only card data', async () => {
+  const dono = await isoUser('lista-paginada@teste.local');
+  const group = await dono.call('POST', '/groups', { name: 'Grupo da lista' });
+  for (let i = 0; i < 30; i++) {
+    const r = await dono.call('POST', '/campaigns', draftBody([group.json().id], { name: `Lista ${String(i).padStart(2, '0')}` }));
+    assert.equal(r.statusCode, 201, r.body);
+  }
+  const first = (await dono.call('GET', '/campaigns?limit=24')).json();
+  assert.equal(first.items.length, 24);
+  assert.ok(first.nextCursor);
+  const second = (await dono.call('GET', `/campaigns?limit=24&cursor=${first.nextCursor}`)).json();
+  assert.equal(second.items.length, 6);
+  assert.equal(second.nextCursor, null);
+  const all = [...first.items, ...second.items].map((c: { id: string }) => c.id);
+  assert.equal(new Set(all).size, 30, 'sem repetição entre páginas');
+  const card = first.items[0];
+  assert.equal(card.groupCount, 1);
+  assert.equal(card.messages, undefined, 'o cartão não carrega as mensagens');
+  assert.equal(card.name, 'Lista 29', 'mais recentes primeiro');
+});
+
+test('reuse (026): "use again" copies a campaign into a new draft; reschedule stops the old one atomically', async () => {
+  const dono = await isoUser('reuso@teste.local');
+  const g1 = (await dono.call('POST', '/groups', { name: 'Reuso 1' })).json();
+  const g2 = (await dono.call('POST', '/groups', { name: 'Reuso 2' })).json();
+  const media = (await dono.call('POST', '/media?name=reuso.png', await pngBytes(), { 'content-type': 'image/png' })).json();
+  const original = (await dono.call('POST', '/campaigns', { ...draftBody([g1.id, g2.id], { mediaId: media.id }), name: 'Festa', messages: ['Olá', 'Oi de novo'] })).json();
+  const copy = await dono.call('POST', `/campaigns/${original.id}/duplicate`, {});
+  assert.equal(copy.statusCode, 201, copy.body);
+  assert.equal(copy.json().name, 'Festa (2)');
+  const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: copy.json().id }, include: { groups: { orderBy: { position: 'asc' } }, messages: { orderBy: { position: 'asc' } } } });
+  assert.equal(saved.status, 'DRAFT');
+  assert.deepEqual(saved.groups.map(g => g.groupId), [g1.id, g2.id], 'mesmos grupos, mesma ordem');
+  assert.deepEqual(saved.messages.map(m => m.content), ['Olá', 'Oi de novo']);
+  assert.equal(saved.mediaId, media.id);
+  assert.equal((await dono.call('POST', `/campaigns/${copy.json().id}/duplicate`, {})).json().name, 'Festa (3)', 'numeração segue');
+  // Outro usuário não copia: 404 igual a inexistente.
+  const intruso = await isoUser('reuso-intruso@teste.local');
+  assert.equal((await intruso.call('POST', `/campaigns/${original.id}/duplicate`, {})).statusCode, 404);
+  // Reagendar só vale para ativa/pausada, e encerra a original na mesma transação.
+  assert.equal((await dono.call('POST', `/campaigns/${original.id}/duplicate`, { reschedule: true })).statusCode, 400);
+  const ativa = (await dono.call('POST', '/campaigns', { ...draftBody([g1.id, g2.id]), name: 'Em andamento' })).json();
+  assert.equal((await dono.call('PATCH', `/campaigns/${ativa.id}/status`, { status: 'ACTIVE', provider: 'simulator' })).statusCode, 200);
+  await prisma.delivery.updateMany({ where: { campaignId: ativa.id }, data: { scheduledAt: new Date(Date.now() + 86_400_000) } });
+  const nova = await dono.call('POST', `/campaigns/${ativa.id}/duplicate`, { reschedule: true });
+  assert.equal(nova.statusCode, 201, nova.body);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: ativa.id } })).status, 'CANCELLED');
+  assert.equal(await prisma.delivery.count({ where: { campaignId: ativa.id, status: 'PENDING' } }), 0, 'nenhum envio pendente sobra na original');
+  // Grupo que saiu (inativo) não entra na cópia; sem nenhum ativo, recusa.
+  await prisma.group.update({ where: { id: g2.id }, data: { active: false } });
+  const semG2 = (await dono.call('POST', `/campaigns/${original.id}/duplicate`, {})).json();
+  assert.deepEqual((await prisma.campaignGroup.findMany({ where: { campaignId: semG2.id } })).map(g => g.groupId), [g1.id]);
+  await prisma.group.update({ where: { id: g1.id }, data: { active: false } });
+  assert.equal((await dono.call('POST', `/campaigns/${original.id}/duplicate`, {})).statusCode, 400);
+});
+
+test('dashboard (026): delivered today, delivery rate, reach and the last 7 days', async () => {
+  const dono = await isoUser('metricas@teste.local');
+  const now = new Date();
+  const g1 = await prisma.group.create({ data: { name: 'M1', userId: dono.user.id, externalId: `120311${Date.now()}@g.us`, participants: 100 } });
+  const g2 = await prisma.group.create({ data: { name: 'M2', userId: dono.user.id, externalId: `120312${Date.now()}@g.us`, participants: 50 } });
+  await prisma.campaign.create({ data: {
+    name: 'Métricas', userId: dono.user.id, startsAt: now, endsAt: now, status: 'COMPLETED', provider: 'baileys', accountJid: JID_A, mode: 'IMMEDIATE',
+    groups: { create: [{ groupId: g1.id, position: 0 }, { groupId: g2.id, position: 1 }] },
+    deliveries: { create: [
+      { groupId: g1.id, messageBody: 'oi', provider: 'baileys', sequence: 0, status: 'SENT', sentAt: now, deliveredAt: now, scheduledAt: now },
+      { groupId: g2.id, messageBody: 'oi', provider: 'baileys', sequence: 1, status: 'SENT', sentAt: now, scheduledAt: new Date(now.getTime() + 1) },
+      { groupId: g1.id, messageBody: 'oi', provider: 'baileys', sequence: 2, status: 'SENT', sentAt: new Date(now.getTime() - 3 * 86_400_000), scheduledAt: new Date(now.getTime() + 2) },
+    ] },
+  } });
+  const d = (await dono.call('GET', '/dashboard')).json();
+  assert.equal(d.sentToday, 2);
+  assert.equal(d.deliveredToday, 1);
+  assert.equal(d.deliveryRate, 50);
+  assert.equal(d.groupsReachedToday, 2);
+  assert.equal(d.membersReachedToday, 150);
+  assert.equal(d.last7Days.length, 7);
+  assert.equal(d.last7Days[6].sent, 2, 'hoje');
+  assert.equal(d.last7Days.reduce((s: number, x: { sent: number }) => s + x.sent, 0), 3, 'a semana inteira');
+});
+
+// ─── Painel do SUPER_ADMIN (ADR-027, Fase 6) ─────────────────────────────────────
+test('admin (6): only SUPER_ADMIN reaches /api/admin, and it never exposes private content', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'painel-admin@teste.local', 'SUPER_ADMIN');
+    const user = await sessionFor(world.app, 'painel-user@teste.local');
+    const asUser = await loginAs(world.app, 'painel-user@teste.local');
+    const asAdmin = await loginAs(world.app, 'painel-admin@teste.local');
+    const h = (cookie: string) => ({ host: 'localhost', origin: PANEL, cookie });
+    for (const [method, url] of [['GET', '/api/admin/users'], ['POST', '/api/admin/users'], ['PATCH', `/api/admin/users/${admin.user.id}`], ['POST', `/api/admin/users/${admin.user.id}/password`]] as const) {
+      assert.equal((await world.app.inject({ method, url, payload: {}, headers: h(asUser.cookie) })).statusCode, 403, `USER em ${method} ${url}`);
+      assert.equal((await world.app.inject({ method, url, payload: {}, headers: { host: 'localhost', origin: PANEL } })).statusCode, 401);
+    }
+    const list = await world.app.inject({ method: 'GET', url: '/api/admin/users', headers: h(asAdmin.cookie) });
+    assert.equal(list.statusCode, 200);
+    for (const segredo of ['passwordHash', 'scrypt', 'data:image', 'messageBody', '"content"']) assert.ok(!list.body.includes(segredo), `não expõe ${segredo}`);
+    // O estado pode ser "qr" (aguardando leitura), mas o QR em si nunca vem.
+    assert.ok(list.json().every((u: { whatsapp: object }) => !('qr' in u.whatsapp)), 'nenhum campo qr');
+    const row = list.json().find((u: { id: string }) => u.id === user.user.id);
+    assert.deepEqual(Object.keys(row.counts).sort(), ['activeCampaigns', 'campaigns', 'failed', 'groups', 'sent']);
+    assert.ok('state' in row.whatsapp && 'accountJid' in row.whatsapp);
+  } finally { await world.cleanup(); }
+});
+
+test('admin (6): create, disable, enable, reset password and change role — with the safety locks', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'painel-admin2@teste.local', 'SUPER_ADMIN');
+    const asAdmin = await loginAs(world.app, 'painel-admin2@teste.local');
+    const h = { host: 'localhost', origin: PANEL, cookie: asAdmin.cookie };
+    // Criar: papel padrão USER; e-mail repetido recusado; senha fraca recusada.
+    const created = await world.app.inject({ method: 'POST', url: '/api/admin/users', headers: h, payload: { email: 'Novo.Usuario@Teste.local', name: 'Novo', password: 'senha-de-teste-123' } });
+    assert.equal(created.statusCode, 201, created.body);
+    assert.equal(created.json().role, 'USER');
+    assert.equal(created.json().email, 'novo.usuario@teste.local');
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users', headers: h, payload: { email: 'novo.usuario@teste.local', name: 'X', password: 'senha-de-teste-123' } })).statusCode, 409);
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users', headers: h, payload: { email: 'outro@teste.local', name: 'X', password: 'curta' } })).statusCode, 400);
+    const novoId = created.json().id as string;
+    // O novo usuário entra, tem uma campanha ativa e uma conexão aberta.
+    const novo = await loginAs(world.app, 'novo.usuario@teste.local');
+    assert.equal(novo.status, 200);
+    world.manager.for(novoId);
+    const group = await prisma.group.create({ data: { name: 'Do novo', userId: novoId } });
+    const campaign = await prisma.campaign.create({ data: { name: 'Ativa do novo', userId: novoId, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', groups: { create: [{ groupId: group.id, position: 0 }] } } });
+    // Desativar: sessões caem, campanha pausa, conexão encerra SEM logout.
+    const off = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { disabled: true } });
+    assert.equal(off.statusCode, 200, off.body);
+    assert.ok(off.json().disabledAt);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/auth/me', headers: { host: 'localhost', cookie: novo.cookie } })).statusCode, 401, 'sessão derrubada');
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'PAUSED');
+    assert.deepEqual(world.perUser.get(novoId)!.calls, ['stop'], 'stop, nunca disconnect');
+    assert.equal((await loginAs(world.app, 'novo.usuario@teste.local')).status, 401);
+    // Reativar e trocar a senha: a nova vale, sessões antigas caem.
+    assert.equal((await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { disabled: false } })).json().disabledAt, null);
+    const antes = await loginAs(world.app, 'novo.usuario@teste.local');
+    assert.equal((await world.app.inject({ method: 'POST', url: `/api/admin/users/${novoId}/password`, headers: h, payload: { password: 'outra-senha-forte-1' } })).statusCode, 200);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/auth/me', headers: { host: 'localhost', cookie: antes.cookie } })).statusCode, 401);
+    assert.equal((await loginAs(world.app, 'novo.usuario@teste.local', 'outra-senha-forte-1')).status, 200);
+    // Travas: nada em si mesmo; nunca remover o último administrador ativo.
+    assert.equal((await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${admin.user.id}`, headers: h, payload: { disabled: true } })).statusCode, 400);
+    assert.equal((await world.app.inject({ method: 'POST', url: `/api/admin/users/${admin.user.id}/password`, headers: h, payload: { password: 'senha-de-teste-999' } })).statusCode, 400);
+    const restore = await onlySuperAdmin(admin.user.id);
+    try {
+      const promovido = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { role: 'SUPER_ADMIN' } });
+      assert.equal(promovido.json().role, 'SUPER_ADMIN');
+      assert.equal((await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { role: 'USER' } })).statusCode, 200, 'com dois ativos, pode rebaixar');
+      // Com um único administrador ativo, ele não pode ser removido.
+      await prisma.user.update({ where: { id: novoId }, data: { role: 'SUPER_ADMIN' } });
+      await prisma.user.update({ where: { id: admin.user.id }, data: { disabledAt: new Date() } });
+      const asNovo = await loginAs(world.app, 'novo.usuario@teste.local', 'outra-senha-forte-1');
+      await prisma.user.update({ where: { id: admin.user.id }, data: { disabledAt: null, role: 'USER' } });
+      const ultimo = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${admin.user.id}`, headers: { host: 'localhost', origin: PANEL, cookie: asNovo.cookie }, payload: { role: 'SUPER_ADMIN' } });
+      assert.equal(ultimo.statusCode, 200, 'promover outro é permitido');
+      await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'USER' } });
+      const semSaida = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: { host: 'localhost', origin: PANEL, cookie: asNovo.cookie }, payload: { disabled: true } });
+      assert.equal(semSaida.statusCode, 400, 'o único administrador não se desativa');
+      await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'SUPER_ADMIN' } });
+      await prisma.user.update({ where: { id: novoId }, data: { role: 'USER' } });
+    } finally { await restore(); }
+    assert.equal((await world.app.inject({ method: 'PATCH', url: '/api/admin/users/nao-existe', headers: h, payload: { disabled: true } })).statusCode, 404);
+  } finally { await world.cleanup(); }
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.

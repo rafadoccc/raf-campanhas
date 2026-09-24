@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { DateTime } from 'luxon';
 import { dashboardSummary } from './dashboard';
 import { publicMessage, NotFoundError } from './security';
 import { mediaMetadata } from './media';
@@ -41,4 +42,51 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     }
   });
   app.get('/api/dashboard', async request => dashboardSummary(request.user!.id));
+
+  // "Usar de novo" (ADR-026): nova campanha em RASCUNHO com os mesmos grupos, mensagens, mídia,
+  // intervalo e horários. A original fica intacta, com o histórico e as métricas dela.
+  // Com { reschedule: true } numa campanha ativa ou pausada, encerra os envios pendentes dela na
+  // MESMA transação — é o "trocar o horário" sem risco de as duas rodadas enviarem juntas.
+  app.post('/api/campaigns/:id/duplicate', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const reschedule = (request.body as { reschedule?: unknown } | null)?.reschedule === true;
+    const userId = request.user!.id;
+    try {
+      const copy = await prisma.$transaction(async tx => {
+        await lockCampaign(tx, id);
+        const source = await tx.campaign.findFirst({
+          where: { id, userId, deletedAt: null },
+          include: { groups: { orderBy: { position: 'asc' }, include: { group: { select: { active: true } } } }, messages: { orderBy: { position: 'asc' } }, schedules: true },
+        });
+        if (!source) throw new NotFoundError('Campanha não encontrada.');
+        if (reschedule) {
+          if (!['ACTIVE', 'PAUSED'].includes(source.status)) throw new Error('Só campanhas ativas ou pausadas podem ser reagendadas.');
+          const now = await currentTime();
+          await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
+          await tx.campaign.update({ where: { id }, data: { status: 'CANCELLED', pausedAt: null, updatedAt: now } });
+        }
+        const groups = source.groups.filter(g => g.group.active);
+        if (!groups.length) throw new Error('Nenhum grupo desta campanha está ativo. Sincronize os grupos.');
+        const now = await currentTime();
+        // Datas que já passaram viram "a partir de hoje", mantendo a duração do período.
+        const today = new Date(`${DateTime.fromJSDate(now, { zone: TIME_ZONE }).toISODate()}T00:00:00.000Z`);
+        const span = source.endsAt.getTime() - source.startsAt.getTime();
+        const expired = source.endsAt < today;
+        const base = source.name.replace(/ \(\d+\)$/, '');
+        const siblings = await tx.campaign.count({ where: { userId, name: { startsWith: base } } });
+        return tx.campaign.create({ data: {
+          userId, name: `${base} (${siblings + 1})`.slice(0, 200), status: 'DRAFT', mode: source.mode, intervalSeconds: source.intervalSeconds, mediaId: source.mediaId,
+          startsAt: expired ? today : source.startsAt, endsAt: expired ? new Date(today.getTime() + Math.max(0, span)) : source.endsAt,
+          createdAt: now, updatedAt: now,
+          groups: { create: groups.map((g, position) => ({ groupId: g.groupId, position })) },
+          messages: { create: source.messages.map(m => ({ content: m.content, position: m.position })) },
+          schedules: { create: source.schedules.map(s => ({ time: s.time, timezone: s.timezone })) },
+        }, select: { id: true, name: true } });
+      }, LOCKING_TRANSACTION);
+      return reply.code(201).send(copy);
+    } catch (error) {
+      if (error instanceof NotFoundError) return reply.code(404).send({ error: error.message });
+      return reply.code(400).send({ error: publicMessage(error, 'Não foi possível usar de novo.') });
+    }
+  });
 }

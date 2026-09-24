@@ -7,10 +7,14 @@ export async function dashboardSummary(userId: string) {
   const today = DateTime.fromJSDate(serverNow, { zone: TIME_ZONE }).startOf('day');
   const period = { gte: today.toJSDate(), lt: today.plus({ days: 1 }).toJSDate() };
   const mine = { userId };
+  const sentToday = { campaign: mine, provider: 'baileys', status: 'SENT' as const, sentAt: period };
+  // Últimos 7 dias (hoje incluso), no fuso de Brasília, para o gráfico de barras.
+  const since = today.minus({ days: 6 });
+  const offset = today.toFormat('ZZ');
   // A dashboard is read-only. No completion, scheduling or delivery mutations.
   return prisma.$transaction(async tx => {
-    const [sentToday, failedToday, sent, failed, readsToday, readsPrevious, candidates, counts, recentSent, recentFailed] = await Promise.all([
-      tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'SENT', sentAt: period } }),
+    const [sentTodayCount, failedToday, sent, failed, readsToday, readsPrevious, candidates, counts, recentSent, recentFailed, deliveredToday, reachedToday, byDay] = await Promise.all([
+      tx.delivery.count({ where: sentToday }),
       tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'FAILED', updatedAt: period } }),
       tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'SENT' } }),
       tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'FAILED' } }),
@@ -18,8 +22,17 @@ export async function dashboardSummary(userId: string) {
       tx.deliveryRead.count({ where: { readAt: { gte: today.minus({ days: 1 }).toJSDate(), lt: period.gte }, delivery: { campaign: mine, provider: 'baileys', status: 'SENT' } } }),
       tx.campaign.findMany({ where: { userId, status: 'ACTIVE', deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, name: true, provider: true, nextAvailableAt: true, deliveries: { where: { status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }], take: 1, select: { id: true, campaignId: true, provider: true, status: true, scheduledAt: true, group: { select: { name: true } } } } } }),
       tx.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaign: { userId, status: 'ACTIVE', deletedAt: null } }, _count: { _all: true } }),
-      tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'SENT', sentAt: { not: null } }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 8, select: { id: true, campaignId: true, sentAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } }),
-      tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'FAILED' }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 8, select: { id: true, campaignId: true, updatedAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } })
+      tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'SENT', sentAt: { not: null } }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 20, select: { id: true, campaignId: true, sentAt: true, deliveredAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } }),
+      tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'FAILED' }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 20, select: { id: true, campaignId: true, updatedAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } }),
+      // Entregues hoje: enviados hoje que já têm recibo de entrega de algum membro.
+      tx.delivery.count({ where: { ...sentToday, deliveredAt: { not: null } } }),
+      // Alcance de hoje: grupos distintos e a soma dos membros deles.
+      tx.delivery.findMany({ where: sentToday, distinct: ['groupId'], select: { group: { select: { participants: true } } } }),
+      tx.$queryRaw<{ day: Date; n: bigint }[]>`
+        SELECT DATE(CONVERT_TZ(d.\`sentAt\`, '+00:00', ${offset})) AS day, COUNT(*) AS n
+        FROM \`Delivery\` d JOIN \`Campaign\` c ON c.id = d.\`campaignId\`
+        WHERE c.\`userId\` = ${userId} AND d.provider = 'baileys' AND d.status = 'SENT' AND d.\`sentAt\` >= ${since.toJSDate()}
+        GROUP BY day`,
     ]);
     const runningCampaigns = candidates.map(c => {
       const progress = counts.filter(row => row.campaignId === c.id);
@@ -31,7 +44,19 @@ export async function dashboardSummary(userId: string) {
     const recentActivity = [
       ...recentSent.map(d => ({ ...d, status: 'SENT', at: d.sentAt! })),
       ...recentFailed.map(d => ({ ...d, status: 'FAILED', at: d.updatedAt }))
-    ].sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id)).slice(0, 8);
-    return { serverNow, activeCampaigns: candidates.length, sentToday, failedToday, sent, failed, readsToday, readsPrevious, successRate: sentToday + failedToday ? Math.round(100 * sentToday / (sentToday + failedToday)) : null, nextDelivery, runningCampaigns, recentActivity };
+    ].sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id)).slice(0, 20);
+    const perDay = new Map(byDay.map(row => [DateTime.fromJSDate(row.day, { zone: 'utc' }).toISODate(), Number(row.n)]));
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const day = since.plus({ days: i }).toISODate()!;
+      return { day, sent: perDay.get(day) ?? 0 };
+    });
+    const pendingNow = counts.filter(row => row.status === 'PENDING' || row.status === 'PROCESSING').reduce((sum, row) => sum + row._count._all, 0);
+    return {
+      serverNow, activeCampaigns: candidates.length, sentToday: sentTodayCount, failedToday, sent, failed, readsToday, readsPrevious,
+      successRate: sentTodayCount + failedToday ? Math.round(100 * sentTodayCount / (sentTodayCount + failedToday)) : null,
+      deliveredToday, deliveryRate: sentTodayCount ? Math.round(100 * deliveredToday / sentTodayCount) : null,
+      groupsReachedToday: reachedToday.length, membersReachedToday: reachedToday.reduce((sum, row) => sum + (row.group.participants ?? 0), 0),
+      pendingNow, last7Days, nextDelivery, runningCampaigns, recentActivity,
+    };
   }, { isolationLevel: 'RepeatableRead' });
 }
