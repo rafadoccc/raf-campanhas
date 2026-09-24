@@ -653,3 +653,34 @@ correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atua
   `stopping` antes de iniciar um envio.
 - `TRUSTED_PROXIES` inclui `100.64.0.0/10` (borda do Railway); nenhum cliente da internet chega
   por essa faixa.
+
+
+## ADR-026 · Design system, telas e reuso de campanha (branch dev)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- **Design system** em `apps/web/src/design/`: primitivos (Button, Card, Badge, Field, Stat,
+  Alert, EmptyState, Skeleton, ScrollArea, Page…), ícones lucide-react com nomes semânticos
+  (nunca setas de texto), formatos (hora, data, tamanho, cor de destaque) e dois utilitários de
+  interação: `ConfirmProvider`/`useConfirm` (substitui `confirm()` do navegador) e
+  `useInfiniteList`/`LoadMoreSentinel` (rolagem infinita por cursor). Cantos sempre 5–6 px
+  (`tailwind.config.ts`: `DEFAULT/md 5px, lg/xl/2xl 6px`); `rounded-full` só em pontos de status.
+- **Layout de app:** `main.tsx` fixa o menu e faz o conteúdo ocupar `h-dvh` menos o menu; cada
+  tela decide o que rola (`ScrollArea`, barra invisível) em vez do documento. Telas menos usadas
+  (`React.lazy`) carregam sob demanda.
+- **Início** cabe na tela em 1366×768 sem rolar o documento: métricas em uma faixa, próximo
+  envio + gráfico dos últimos 7 dias lado a lado, "em andamento" e "atividade recente" cada um
+  com a própria rolagem.
+- **Campanhas:** cartões em grade com rolagem infinita (cursor por `createdAt`), filtro por
+  situação e busca por nome (parâmetros `status`/`q` da API); mídia como miniatura pequena; a
+  faixa lateral do cartão usa a cor predominante da imagem (`accent()`, contraste garantido).
+  Grupos do formulário em duas colunas.
+- **Editar/Reagendar/Usar de novo** (`lib/campaign-ops.ts`, único lugar com a regra, usado pela
+  lista e pelo detalhe): rascunho edita; ativa/pausada "Reagendar" chama
+  `duplicate {reschedule:true}` (cancela os envios pendentes da original na mesma transação e
+  abre uma cópia em rascunho); concluída/cancelada "Usar de novo" só copia. Excluir sempre passa
+  por `useConfirm`.
+- **Painel do SUPER_ADMIN** (`pages/admin.tsx` + `admin-routes.ts`): lista em grade de colunas
+  fixas (alinhada mesmo sem botões na própria conta), cria conta, ativa/desativa, troca papel,
+  redefine senha — nunca mostra QR, senha nem conteúdo de campanha.
+- `railway.json`: `healthcheckPath /api/health`, restart automático, uma instância.

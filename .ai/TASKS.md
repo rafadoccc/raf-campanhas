@@ -125,6 +125,8 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-103  Auditoria de segurança de ponta a ponta e correções       owner: —        since: —
 [x] T-104  Fase 4E: migração da sessão legada (rename idempotente)     owner: —        since: —
 [x] T-105  Fase 5: envios em paralelo entre números diferentes      owner: —        since: —
+[x] T-106  Design system, telas, reuso de campanha e cor da imagem     owner: —        since: —
+[x] T-107  Fase 6: painel do SUPER_ADMIN (/api/admin/*)              owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

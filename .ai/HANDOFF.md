@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-24T08:00Z · claude
+
+**Fiz:** design system completo do painel (branch dev, ADR-026): primitivos, ícones lucide, ConfirmProvider (sem confirm() do navegador), rolagem infinita por cursor, layout sem rolagem do documento. Reescreveu todas as telas (início, campanhas, detalhe, whatsapp, conta, login, histórico, formulário) e criou /admin. lib/campaign-ops.ts unifica editar/reagendar/usar de novo/excluir entre lista e detalhe. Cantos 5–6px em todo o sistema.
+**Arquivos:** apps/web/src/design/** (novo), apps/web/src/lib/campaign-ops.ts (novo), apps/web/src/pages/admin.tsx (novo), todas as páginas e componentes de apps/web/src, apps/web/tailwind.config.ts, apps/web/src/styles.css, apps/web/src/main.tsx
+**Estado:** compila · lint ok · npm test 59+2 ok · integração 101/101 (2 execuções) · validado no navegador com dados de exemplo no banco campanhas_dev (porta 3001): início sem rolagem em 1366×768, rolagem infinita testada com 30+ campanhas, exclusão com confirmação, layout mobile 375px sem rolagem lateral
+**Armadilhas:** o servidor dev precisa reiniciar depois de recompilar o painel (fastify-static lê a lista na partida, senão fica em branco). Script de exemplo em .tmp-* nunca roda fora de campanhas_dev (recusa por segurança). Sessão real do dono em SESSIONS_DIR/whatsapp NÃO tocada em nenhum momento desta sessão.
+**Próximo passo sugerido:** revisar visualmente as telas restantes (grupos, admin em telas menores) e decidir se a branch dev vira PR para main.
+
 ## 2026-09-24T02:00Z · claude
 
 **Fiz:** Fase 4D (ADR-022): despachante escolhe a conexão pelo dono da campanha (`sending-router.ts`), sem fallback; ativação real idem; eventos/recibos com `ownerId` (PendingRead ganhou coluna); selo de grupo por `groupId` da entrega; ponte legada centralizada e aplicada também ao envio, só para o dono comprovado.
