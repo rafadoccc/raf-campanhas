@@ -120,6 +120,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-098  Multiusuário Fase 3: isolamento das APIs por usuário      owner: —        since: —
 [x] T-099  Fase 4A: modelo WhatsAppSession e caminhos por usuário     owner: —        since: —
 [x] T-100  Fase 4B: WhatsAppManager e providers por usuário          owner: —        since: —
+[x] T-101  Fase 4C: rotas /api/whatsapp/* por usuário + ponte legada  owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

@@ -543,3 +543,24 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
   vira `lastError`, sem derrubar a partida.
 - Único compartilhamento entre providers: a **versão do protocolo** (dado público), em cache de
   módulo, esquecido no logout. Socket, credenciais, QR, estado, timers e eventos nunca.
+
+
+## ADR-021 · Rotas do WhatsApp por usuário e ponte da sessão legada (Fase 4C)
+
+**Data:** 2026-09-23 · **Status:** aceita (decisão do dono) · **Autor:** claude
+
+- `/api/whatsapp/status|connect|disconnect|sync` operam sobre a conexão de `request.user.id`,
+  obtida em `WhatsAppManager.for(userId)`. Nada do cliente (corpo, query, cabeçalho, papel
+  declarado) escolhe conexão. QR só existe na memória do provider daquele usuário.
+- `connect` grava o ciclo de vida em `WhatsAppSession` (`persistState`); `disconnect` é logout
+  explícito e remove a autenticação só daquele usuário; `sync` usa o provider e o dono de quem
+  pediu. `stop`/`stopAll` (desligar o sistema) continuam preservando a autenticação.
+- `main.ts` cria o `WhatsAppManager`, chama `startAll()` na partida e `stopAll()` no
+  encerramento. O provider GLOBAL legado continua sendo o do despachante e dos envios reais
+  (4D/4E) — nada no caminho de envio mudou.
+- **Ponte temporária (`legacy-session.ts`)**: o dono comprovado da sessão global continua vendo-a
+  nas rotas. Liga só com TODAS estas condições: papel SUPER_ADMIN; pasta legada com sessão
+  pareada; dono inequívoco (um único SUPER_ADMIN ativo, ou `LEGACY_SESSION_OWNER` apontando para
+  um); e o usuário ainda SEM pasta própria. USER comum nunca a alcança. Quando a 4E mover a
+  sessão para `users/<id>/whatsapp`, a última condição deixa de valer e a ponte se desliga
+  sozinha — aí o arquivo inteiro pode ser apagado.

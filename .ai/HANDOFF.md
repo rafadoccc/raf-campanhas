@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-23T03:00Z · claude
+
+**Fiz:** Fase 4C (ADR-021): rotas do WhatsApp escopadas por `request.user.id` via WhatsAppManager; ponte temporária da sessão legada só para o dono comprovado (4 condições, auto-desliga na 4E); main.ts cria o manager, faz startAll/stopAll. Despachante, provider e envios reais intactos.
+**Arquivos:** apps/server/src/legacy-session.ts (novo), apps/server/src/app.ts, apps/server/src/main.ts, apps/server/src/whatsapp-manager.ts (sessionDirFor + sync no tipo), apps/server/src/integration.test.ts
+**Tarefas:** T-101 (concluída)
+**Estado:** compila · lint ok · npm test 56+2 ok · integração 79/79 (2 execuções) · dispatcher.ts, whatsapp.ts, packages/database e apps/web sem alteração (git diff vazio)
+**Armadilhas:** enquanto a ponte estiver ativa, o SUPER_ADMIN vê a conexão global nas rotas, mas campanhas de QUALQUER usuário ainda saem por ela (4D). Testes usam manager com `sessionsBase` temporário: ao criar app de teste novo, injete o manager, senão o padrão aponta para o SESSIONS_DIR real. A sessão real do dono continua em SESSIONS_DIR/whatsapp, intocada.
+**Próximo passo sugerido:** aguardar aprovação do dono para a 4D (despachante, eventos e recibos por dono) — recomendo 4D antes da 4E.
+
 ## 2026-09-23T01:00Z · claude
 
 **Fiz:** Fase 4B (ADR-020): `WhatsAppManager` (for/peek/ensureSession/stop/stopAll/disconnect/persistState/startAll) e `WhatsAppProvider` com `{ownerId, sessionDir}`, mantendo o modo legado. Cache compartilhado só da versão do protocolo. Nada disso está ligado à produção ainda.
