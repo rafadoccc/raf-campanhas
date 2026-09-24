@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-23T01:00Z · claude
+
+**Fiz:** Fase 4B (ADR-020): `WhatsAppManager` (for/peek/ensureSession/stop/stopAll/disconnect/persistState/startAll) e `WhatsAppProvider` com `{ownerId, sessionDir}`, mantendo o modo legado. Cache compartilhado só da versão do protocolo. Nada disso está ligado à produção ainda.
+**Arquivos:** apps/server/src/whatsapp-manager.ts (novo), apps/server/src/whatsapp-manager.test.ts (novo), apps/server/src/whatsapp.ts, package.json, apps/server/src/integration.test.ts
+**Tarefas:** T-100 (concluída)
+**Estado:** compila · lint ok · npm test 56+2 ok · integração 73/73 (2 execuções) · main.ts, app.ts, dispatcher.ts e packages/database NÃO mudaram (git diff vazio)
+**Armadilhas:** produção continua no provider global legado; o manager não é instanciado em lugar nenhum ainda (4C liga as rotas). Nunca deixe o provider global e um provider do manager apontarem para a mesma pasta — hoje é impossível por construção. Testes do manager usam dubles e pastas temporárias; nenhum toca a sessão real. Ao mover `defaultSessionsDir` para session-paths.ts na 4C/4E, cuidado com ciclo de import.
+**Próximo passo sugerido:** aguardar aprovação do dono para a 4C (rotas /api/whatsapp/* por usuário).
+
 ## 2026-09-22T21:00Z · claude
 
 **Fiz:** Fase 4A (ADR-019): modelo `WhatsAppSession` (uma conexão por usuário, número pareado exclusivo, sem credencial no banco) + `session-paths.ts` com o caminho seguro `SESSIONS_DIR/users/<userId>/whatsapp`. Migration só cria a tabela. Nada em uso ainda: o sistema continua com a conexão global.

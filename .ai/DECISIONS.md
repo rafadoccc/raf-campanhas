@@ -517,3 +517,29 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
   encontrá-la — a 4A não lê, move nem apaga nada lá dentro.
 - `WhatsAppAccount` (ritmo por número) **não muda**: o ritmo pertence ao número, não ao usuário.
 - Nada usa ainda a nova estrutura: provider, despachante, rotas, eventos e partida seguem iguais.
+
+
+## ADR-020 · WhatsAppManager e providers por usuário (Fase 4B)
+
+**Data:** 2026-09-23 · **Status:** aceita (decisão do dono) · **Autor:** claude
+**Escopo:** infraestrutura. Produção continua no provider GLOBAL legado (4C em diante).
+
+- `WhatsAppProvider` aceita `{ ownerId, sessionDir }` (conexão de um usuário) ou uma pasta base
+  (modo legado, `<base>/whatsapp`, que é o caminho de produção de hoje). Expõe `ownerId` e
+  `sessionDir` só para leitura; nunca descobre o dono por estado global.
+- `WhatsAppManager`: `for(userId)` (cria/devolve sempre a mesma instância), `peek`, `owners`,
+  `ensureSession`, `stop`, `stopAll`, `disconnect`, `persistState`, `startAll`.
+  Os caminhos saem só de `whatsappSessionDir(userId)`, então o gerenciador **não alcança** a
+  sessão global legada.
+- **STOP ≠ DISCONNECT:** `stop` encerra a conexão e PRESERVA a autenticação (desligar o sistema,
+  desativar usuário). `disconnect` é o pedido explícito do usuário: faz logout e remove a pasta
+  dele (só dela).
+- `startAll`: só usuário ativo, só `autoConnect`, só quem já tem sessão pareada (nunca gera QR
+  sozinho), cada um em seu próprio `try` (falha de um não impede os outros), e respeita
+  `WHATSAPP_AUTO_CONNECT=0`. Sem linha em `WhatsAppSession`, ninguém é reconectado — por isso a
+  sessão legada do dono não é apropriada automaticamente (migração é a 4E).
+- `persistState` grava em `WhatsAppSession` apenas `state`, `accountJid`, `lastConnectedAt` e
+  `lastError`. **Nunca QR, creds.json ou chaves.** Número já pareado em outra conta (unique da 4A)
+  vira `lastError`, sem derrubar a partida.
+- Único compartilhamento entre providers: a **versão do protocolo** (dado público), em cache de
+  módulo, esquecido no logout. Socket, credenciais, QR, estado, timers e eventos nunca.
