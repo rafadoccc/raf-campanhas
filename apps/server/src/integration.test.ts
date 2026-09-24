@@ -2317,6 +2317,11 @@ test('campaign list (026): cursor pages with no duplicates, only card data', asy
   assert.equal(card.groupCount, 1);
   assert.equal(card.messages, undefined, 'o cartão não carrega as mensagens');
   assert.equal(card.name, 'Lista 29', 'mais recentes primeiro');
+  // Filtros no servidor (funcionam junto com a paginação).
+  assert.equal((await dono.call('GET', '/campaigns?q=Lista%2007')).json().items.length, 1);
+  assert.equal((await dono.call('GET', '/campaigns?status=ACTIVE')).json().items.length, 0);
+  assert.equal((await dono.call('GET', '/campaigns?status=DRAFT,ACTIVE&limit=50')).json().items.length, 30);
+  assert.equal((await dono.call('GET', '/campaigns?status=QUALQUER')).json().items.length, 24, 'situação desconhecida é ignorada');
 });
 
 test('reuse (026): "use again" copies a campaign into a new draft; reschedule stops the old one atomically', async () => {

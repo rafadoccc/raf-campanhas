@@ -91,10 +91,14 @@ registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: p
 // mensagens, lista de grupos ou mídia inteira.
 app.get('/api/campaigns', async request => {
   await completeFinished(prisma);
-  const query = request.query as { cursor?: string; limit?: string };
+  const query = request.query as { cursor?: string; limit?: string; status?: string; q?: string };
   const take = Math.min(50, Math.max(1, parseInt(query.limit ?? '24') || 24));
+  // Filtros opcionais: situação (uma ou várias, separadas por vírgula) e parte do nome.
+  const allowed = ['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'] as const;
+  const statuses = (typeof query.status === 'string' ? query.status.split(',') : []).filter((x): x is typeof allowed[number] => (allowed as readonly string[]).includes(x));
+  const search = typeof query.q === 'string' ? query.q.trim().slice(0, 100) : '';
   const page = await prisma.campaign.findMany({
-    where: { deletedAt: null, userId: request.user!.id },
+    where: { deletedAt: null, userId: request.user!.id, ...(statuses.length ? { status: { in: statuses } } : {}), ...(search ? { name: { contains: search } } : {}) },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: take + 1,
     ...(typeof query.cursor === 'string' && query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
