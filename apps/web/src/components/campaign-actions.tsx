@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { deleteCampaign, editAction, editCampaign } from '../lib/campaign-ops';
-import { Alert, Button, IconButton, IconDelete, IconEdit, IconPause, IconReschedule, IconReuse, IconStart, IconStop, inputClass, useConfirm } from '../design';
+import { Alert, Button, IconButton, IconDelete, IconEdit, IconPause, IconReschedule, IconReuse, IconStart, IconStop, Select, useConfirm } from '../design';
 
 type Props = { id: string; name: string; status: string; provider?: string; groupCount?: number; intervalSeconds?: number; connectionState?: string; onChanged?: () => void };
 const editIcon = { edit: IconEdit, reuse: IconReuse, reschedule: IconReschedule } as const;
+const providerOptions = [{ value: 'simulator', label: 'Simulação' }, { value: 'baileys', label: 'WhatsApp real' }];
 
 export function CampaignActions({ id, name, status, provider = 'simulator', groupCount = 0, intervalSeconds = 180, connectionState = 'unavailable', onChanged }: Props) {
   const navigate = useNavigate();
@@ -40,7 +41,7 @@ export function CampaignActions({ id, name, status, provider = 'simulator', grou
 
   return <div className="space-y-2">
     <div className="flex flex-wrap items-center gap-2">
-      {status === 'DRAFT' && <select aria-label="Modo de envio" value={choice} disabled={busy} onChange={e => setChoice(e.target.value)} className={`${inputClass} !w-auto`}><option value="simulator">Simulação</option><option value="baileys">WhatsApp real</option></select>}
+      {status === 'DRAFT' && <Select label="Modo de envio" value={choice} disabled={busy} onChange={setChoice} options={providerOptions} className="w-40" />}
       {['DRAFT', 'PAUSED'].includes(status) && <Button variant="primary" icon={IconStart} disabled={busy || (real && !connected)} onClick={() => update('ACTIVE')}>{status === 'PAUSED' ? 'Retomar' : 'Iniciar'}</Button>}
       {status === 'ACTIVE' && <Button icon={IconPause} disabled={busy} onClick={() => update('PAUSED')}>Pausar</Button>}
       <Button icon={EditIcon} title={edit.title} disabled={busy} onClick={() => run(async () => { const target = await editCampaign({ id, name, status }, confirm); if (target) navigate(`/campanhas/${target}/editar`); })}>{edit.label}</Button>

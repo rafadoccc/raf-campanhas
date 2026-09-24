@@ -8,6 +8,8 @@ export const dataHora = (at: string | Date) => new Intl.DateTimeFormat('pt-BR', 
 /** Datas de campanha são gravadas como meia-noite UTC do dia escolhido. */
 export const dia = (at: string | Date) => new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(new Date(at));
 export const numero = (n: number) => n.toLocaleString('pt-BR');
+/** Piso de intervalo entre grupos (ADR-028): o servidor recusa qualquer valor abaixo disso. */
+export const MIN_INTERVAL_MINUTES = 3;
 export const tamanho = (bytes: number) => bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
 export const membros = (n?: number | null) => (n == null ? null : `${numero(n)} ${n === 1 ? 'membro' : 'membros'}`);
 export const tempoRelativo = (at: string | Date, agora = Date.now()) => {

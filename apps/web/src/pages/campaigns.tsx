@@ -4,13 +4,13 @@ import { api, errorMessage } from '../lib/api';
 import { deleteCampaign, editAction, editCampaign } from '../lib/campaign-ops';
 import {
   Alert, Badge, Button, ButtonLink, EmptyState, IconButton, LoadMoreSentinel, Page, PageHeader, ScrollArea, Skeleton,
-  IconAdd, IconDelete, IconEdit, IconGroups, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
+  IconAdd, IconDelete, IconEdit, IconGroups, IconMention, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
   accent, campaignStatus, dia, inputClass, useConfirm, useInfiniteList,
 } from '../design';
 
 type Campaign = {
   id: string; name: string; startsAt: string; endsAt: string; status: string; provider: string; createdAt: string;
-  intervalSeconds: number; mode: string; groupCount: number; schedules: { time: string }[];
+  intervalSeconds: number; mode: string; mentionAll: boolean; groupCount: number; schedules: { time: string }[];
   media: { id: string; kind: string; color: string | null } | null;
   progress: Record<string, number>;
 };
@@ -32,8 +32,7 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
   const when = campaign.mode === 'IMMEDIATE' ? 'Fila única' : campaign.schedules.map(s => s.time).join(', ');
   const edit = editAction(campaign.status);
   const EditIcon = editIcon[edit.kind];
-  return <li className="flex overflow-hidden rounded-lg border bg-white shadow-card" style={{ borderColor: color.border }}>
-    <div aria-hidden className="w-1 shrink-0" style={{ background: color.solid }} />
+  return <li className="flex rounded-lg border border-line bg-white shadow-card">
     <div className="flex min-w-0 flex-1 flex-col p-4">
       <div className="flex items-start gap-3">
         {campaign.media?.kind === 'image'
@@ -52,6 +51,7 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
             <span>· {when}</span>
             {campaign.mode !== 'IMMEDIATE' && <span>· {dia(campaign.startsAt)}–{dia(campaign.endsAt)}</span>}
             {campaign.status !== 'DRAFT' && campaign.provider === 'simulator' && <span>· simulação</span>}
+            {campaign.mentionAll && <span className="inline-flex items-center gap-0.5"><IconMention className="h-3 w-3" aria-hidden />todos</span>}
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
-import { forwardRef, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from 'react';
+import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ComponentType, type ReactNode } from 'react';
 import { Link, type LinkProps } from 'react-router-dom';
-import { IconEmpty, IconLoading } from './icons';
+import { IconCheck, IconChevron, IconEmpty, IconLoading } from './icons';
 
 // Peças básicas do design system (docs/design-system.md). Cantos de 5–6 px, borda fina,
 // sombra quase nula. Uma ação principal por área; o resto é secundário ou discreto.
@@ -66,6 +66,83 @@ export function Dot({ tone }: { tone: 'ok' | 'warn' | 'busy' | 'off' }) {
 }
 
 export const inputClass = 'block w-full rounded border border-line bg-white px-2.5 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50';
+
+export type SelectOption = { value: string; label: string };
+/**
+ * Seletor próprio (nada do menu nativo do sistema operacional): botão + lista flutuante,
+ * navegável por teclado (setas, Home/End, Enter/Espaço, Esc) e por clique. `name` grava um
+ * campo oculto para formulários que leem por `FormData`.
+ */
+export function Select({ value, onChange, options, label, name, disabled, className = '' }: {
+  value: string; onChange: (value: string) => void; options: SelectOption[]; label?: string; name?: string; disabled?: boolean; className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
+  const current = options.find(o => o.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    setActive(Math.max(0, options.findIndex(o => o.value === value)));
+    const onPointerDown = (event: MouseEvent) => { if (root.current && !root.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open, options, value]);
+
+  function choose(index: number) {
+    const option = options[index];
+    if (option) onChange(option.value);
+    setOpen(false);
+  }
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (disabled) return;
+    if (!open) {
+      if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) { event.preventDefault(); setOpen(true); }
+      return;
+    }
+    if (event.key === 'ArrowDown') { event.preventDefault(); setActive(i => Math.min(options.length - 1, i + 1)); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(i => Math.max(0, i - 1)); }
+    else if (event.key === 'Home') { event.preventDefault(); setActive(0); }
+    else if (event.key === 'End') { event.preventDefault(); setActive(options.length - 1); }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(active); }
+    else if (event.key === 'Escape') { event.preventDefault(); setOpen(false); }
+    else if (event.key === 'Tab') setOpen(false);
+  }
+
+  return <div ref={root} className={`relative ${className}`}>
+    {name && <input type="hidden" name={name} value={value} />}
+    <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={label} disabled={disabled}
+      onClick={() => setOpen(o => !o)} onKeyDown={onKeyDown}
+      className={`${inputClass} flex items-center justify-between gap-2 text-left ${disabled ? '' : 'cursor-pointer'}`}>
+      <span className="truncate">{current?.label ?? ''}</span>
+      <IconChevron className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+    </button>
+    {open && <ul role="listbox" tabIndex={-1} aria-label={label}
+      className="absolute z-20 mt-1 max-h-60 w-full min-w-max overflow-auto rounded border border-line bg-white py-1 text-sm shadow-pop">
+      {options.map((option, index) => <li key={option.value} role="option" aria-selected={option.value === value}
+        onMouseEnter={() => setActive(index)} onClick={() => choose(index)}
+        className={`flex cursor-pointer items-center justify-between gap-3 px-3 py-1.5 ${index === active ? 'bg-brand-50 text-brand-700' : ''} ${option.value === value ? 'font-medium' : ''}`}>
+        <span className="truncate">{option.label}</span>
+        {option.value === value && <IconCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+      </li>)}
+    </ul>}
+  </div>;
+}
+
+/** Caixa de marcação própria: `<input>` nativo (teclado, leitor de tela e formulários de graça)
+ * com `appearance-none` para trocar o visual do sistema operacional pelo do design system. */
+export function Checkbox({ checked, onChange, label, hint, name, disabled, className = '' }: {
+  checked: boolean; onChange: (checked: boolean) => void; label?: ReactNode; hint?: ReactNode; name?: string; disabled?: boolean; className?: string;
+}) {
+  return <label className={`inline-flex items-start gap-2 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${className}`}>
+    <span className="relative mt-0.5 grid h-4 w-4 shrink-0 place-items-center">
+      <input type="checkbox" name={name} checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)}
+        className="peer absolute inset-0 h-4 w-4 cursor-pointer appearance-none rounded-sm border border-line bg-white transition-colors checked:border-brand-600 checked:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-500 disabled:cursor-not-allowed" />
+      <IconCheck aria-hidden className="pointer-events-none absolute h-3 w-3 text-white opacity-0 peer-checked:opacity-100" />
+    </span>
+    {label && <span className="text-sm leading-4">{label}{hint && <span className="mt-0.5 block text-2xs font-normal text-slate-400">{hint}</span>}</span>}
+  </label>;
+}
 export function Field({ label, hint, children, className = '' }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return <label className={`block ${className}`}>
     <span className="mb-1 block text-xs font-medium text-muted">{label}</span>

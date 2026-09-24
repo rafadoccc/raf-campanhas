@@ -27,9 +27,9 @@ export default function LoginPage() {
 
   return <main className="flex min-h-full items-center justify-center p-6">
     <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-white p-6 shadow-card">
-      <header className="flex items-center gap-2">
-        <span aria-hidden className="grid h-7 w-7 place-items-center rounded bg-brand-600 text-2xs font-bold text-white">CC</span>
-        <div><p className="text-2xs font-medium uppercase tracking-wide text-muted">Central de Campanhas</p><h1 className="text-lg font-semibold leading-tight">Entrar</h1></div>
+      <header>
+        <p className="text-2xs font-medium uppercase tracking-wide text-muted">Central de Campanhas</p>
+        <h1 className="text-lg font-semibold leading-tight">Entrar</h1>
       </header>
       {!hasUsers && <Alert tone="warning">Nenhum usuário cadastrado ainda. Defina <code>ADMIN_EMAIL</code> e <code>ADMIN_PASSWORD</code> e reinicie o sistema, ou rode <code>npm run user:create</code>.</Alert>}
       {error && <Alert>{error}</Alert>}

@@ -16,10 +16,7 @@ export function Navigation() {
   const { user, signOut } = useAuth();
   const admin = user?.role === 'SUPER_ADMIN';
   return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-4">
-    <Link to="/" className="mr-3 flex shrink-0 items-center gap-2 font-semibold tracking-tight">
-      <span aria-hidden className="grid h-6 w-6 place-items-center rounded bg-brand-600 text-2xs font-bold text-white">CC</span>
-      <span className="hidden sm:inline">Central de Campanhas</span>
-    </Link>
+    <Link to="/" className="mr-3 shrink-0 truncate font-semibold tracking-tight">Central de Campanhas</Link>
     <div className="scroll-area flex min-w-0 items-center gap-1 overflow-x-auto">
       {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass}><Icon className="h-4 w-4" aria-hidden /><span className="hidden md:inline">{label}</span></NavLink>)}
       {admin && <NavLink to="/admin" className={linkClass}><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden md:inline">Administração</span></NavLink>}

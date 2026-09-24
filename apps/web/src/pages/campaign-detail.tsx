@@ -1,17 +1,19 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { MediaPreview, type CampaignMedia } from '../components/campaign-media';
 import { CampaignActions } from '../components/campaign-actions';
-import { api, connectionState as readConnection } from '../lib/api';
+import { api, errorMessage, connectionState as readConnection } from '../lib/api';
+import { retryAllFailed, retryDelivery } from '../lib/campaign-ops';
 import { usePolling } from '../lib/use-polling';
 import {
-  Badge, Card, CardHeader, EmptyState, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
-  IconBack, IconClock, IconGroups,
-  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, useInfiniteList, type Wait,
+  Alert, Badge, Button, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
+  IconBack, IconClock, IconGroups, IconMention, IconRefresh,
+  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, useConfirm, useInfiniteList, type Wait,
 } from '../design';
 
 type Group = { name: string; participants: number | null };
 type Campaign = {
-  id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string;
+  id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string; mentionAll: boolean;
   media: (CampaignMedia & { color?: string | null }) | null; readsTotal: number; delivered: number; progress: Record<string, number>;
   readsByGroup: { groupId: string; name: string; participants: number | null; count: number }[];
   groups: { group: Group }[]; messages: { content: string }[]; schedules: { time: string }[];
@@ -33,7 +35,7 @@ function timeline(d: Delivery) {
   return parts.join(' · ');
 }
 
-function DeliveryRow({ d }: { d: Delivery }) {
+function DeliveryRow({ d, canRetry, busy, onRetry }: { d: Delivery; canRetry: boolean; busy: boolean; onRetry: () => void }) {
   const status = deliveryStatus(d);
   const retrying = d.status === 'PENDING' && d.attempts > 0;
   return <li className="flex items-start justify-between gap-3 px-4 py-2.5">
@@ -43,12 +45,18 @@ function DeliveryRow({ d }: { d: Delivery }) {
       {d.wait?.reason && <p className="mt-0.5 text-2xs text-amber-700">{d.wait.reason}</p>}
       {d.error && <p className="mt-0.5 text-2xs text-red-700">{retrying ? 'Última tentativa: ' : ''}{d.error}{d.errorCode && <span className="text-slate-400"> [{d.errorCode}]</span>}</p>}
     </div>
-    <Badge tone={status.tone} title={status.title}>{status.label}</Badge>
+    <span className="flex items-center gap-1.5">
+      {d.status === 'FAILED' && canRetry && <IconButton icon={IconRefresh} label="Tentar de novo" disabled={busy} onClick={onRetry} />}
+      <Badge tone={status.tone} title={status.title}>{status.label}</Badge>
+    </span>
   </li>;
 }
 
 export default function CampaignPage() {
   const id = useParams().id ?? '';
+  const confirm = useConfirm();
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState('');
   const { data, error, reload } = usePolling(async signal => {
     const [campaign, connection] = await Promise.all([api<Campaign>(`/campaigns/${encodeURIComponent(id)}`, { signal }), readConnection(signal)]);
     return { campaign, connection };
@@ -72,13 +80,26 @@ export default function CampaignPage() {
   const next = (deliveries.items ?? []).filter(d => d.wait?.expectedAt).sort((a, b) => Date.parse(a.wait!.expectedAt) - Date.parse(b.wait!.expectedAt))[0];
   const when = campaign.mode === 'IMMEDIATE' ? 'Fila única' : campaign.schedules.map(s => s.time).join(', ');
   const refresh = () => { reload(); deliveries.reload(); };
+  // Tentar de novo (ADR-030): só faz sentido fora de uma campanha encerrada (aí é "usar de novo").
+  const canRetry = campaign.status !== 'CANCELLED';
+  async function retry(deliveryId: string) {
+    setRetrying(deliveryId); setRetryError('');
+    try { if (await retryDelivery(deliveryId, confirm)) refresh(); }
+    catch (e) { setRetryError(errorMessage(e, 'Não foi possível tentar de novo.')); }
+    finally { setRetrying(null); }
+  }
+  async function retryFailed() {
+    setRetrying('*'); setRetryError('');
+    try { const result = await retryAllFailed(campaign, confirm); if (result) refresh(); }
+    catch (e) { setRetryError(errorMessage(e, 'Não foi possível tentar de novo.')); }
+    finally { setRetrying(null); }
+  }
 
   return <Page className="lg:overflow-hidden">
     <Link to="/campanhas" className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-ink"><IconBack className="h-3.5 w-3.5" aria-hidden />Campanhas</Link>
     <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-5">
       <ScrollArea className="space-y-4 lg:col-span-2">
-        <Card className="overflow-hidden">
-          <div aria-hidden className="h-1" style={{ background: color.solid }} />
+        <Card>
           <div className="space-y-4 p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -87,6 +108,7 @@ export default function CampaignPage() {
                   <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groups.length} grupos</span>
                   <span>· a cada {campaign.intervalSeconds / 60} min · {when}</span>
                   {campaign.status !== 'DRAFT' && <span>· {campaign.provider === 'baileys' ? 'WhatsApp real' : 'simulação'}</span>}
+                  {campaign.mentionAll && <span className="inline-flex items-center gap-1"><IconMention className="h-3.5 w-3.5" aria-hidden />marca todos</span>}
                 </p>
               </div>
               <Badge tone={status.tone}>{status.label}</Badge>
@@ -121,12 +143,16 @@ export default function CampaignPage() {
       </ScrollArea>
 
       <Card className="flex min-h-[20rem] flex-col lg:col-span-3 lg:min-h-0">
-        <CardHeader title="Envios" action={total > 0 ? <span className="tabular text-xs text-muted">{total}</span> : undefined} />
+        <CardHeader title="Envios" action={<span className="flex items-center gap-2">
+          {canRetry && (p.FAILED ?? 0) > 0 && <Button size="sm" icon={IconRefresh} loading={retrying === '*'} disabled={!!retrying} onClick={retryFailed}>Tentar de novo as falhas</Button>}
+          {total > 0 && <span className="tabular text-xs text-muted">{total}</span>}
+        </span>} />
+        {retryError && <div className="px-4 pt-2"><Alert>{retryError}</Alert></div>}
         <ScrollArea className="flex-1">
           {!deliveries.items ? <div className="space-y-2 p-4"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
             : deliveries.items.length === 0 ? <EmptyState title="Os envios aparecem aqui quando a campanha começar." />
             : <>
-              <ul className="divide-y divide-line">{deliveries.items.map(d => <DeliveryRow key={d.id} d={d} />)}</ul>
+              <ul className="divide-y divide-line">{deliveries.items.map(d => <DeliveryRow key={d.id} d={d} canRetry={canRetry} busy={!!retrying} onRetry={() => retry(d.id)} />)}</ul>
               <LoadMoreSentinel active={deliveries.hasMore} onVisible={() => void deliveries.loadMore()} />
               {deliveries.loadingMore && <p className="py-3 text-center text-xs text-muted">Carregando mais…</p>}
             </>}

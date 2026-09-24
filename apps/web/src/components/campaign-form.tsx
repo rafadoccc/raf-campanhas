@@ -4,13 +4,14 @@ import { api, errorMessage } from '../lib/api';
 import { ServerClock } from './server-clock';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
 import {
-  Alert, Button, Card, Field, IconButton, Page, PageHeader, ScrollArea,
+  Alert, Button, Card, Checkbox, Field, IconButton, Page, PageHeader, ScrollArea, Select,
   IconAdd, IconBack, IconMoveDown, IconMoveUp, IconRemove, IconSearch,
-  buttonClass, inputClass, membros,
+  buttonClass, inputClass, membros, MIN_INTERVAL_MINUTES,
 } from '../design';
 
 type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null; participants: number | null };
-type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; intervalSeconds: number; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
+type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; intervalSeconds: number; mentionAll: boolean; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
+const modeOptions = [{ value: 'IMMEDIATE', label: 'Ao iniciar (fila única)' }, { value: 'SCHEDULED', label: 'Em horários diários' }];
 
 // Selo "só admins": diz também se a conta conectada é admin, para não precisar conferir no celular.
 function adminBadge(group: Group) {
@@ -36,7 +37,8 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const navigate = useNavigate();
   const [media, setMedia] = useState<CampaignMedia | null>(null);
   const [groups, setGroups] = useState<Group[]>([]); const [selected, setSelected] = useState<string[]>([]);
-  const [mode, setMode] = useState('IMMEDIATE'); const [interval, setIntervalValue] = useState(3);
+  const [mode, setMode] = useState('IMMEDIATE'); const [interval, setIntervalValue] = useState(MIN_INTERVAL_MINUTES);
+  const [mentionAll, setMentionAll] = useState(false);
   const [times, setTimes] = useState(['09:00']); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(!campaignId);
   const [search, setSearch] = useState('');
@@ -54,7 +56,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
       if (data.status !== 'DRAFT') throw Error('Somente rascunhos podem ser editados.');
       setMedia(data.media ?? null);
       setInitial({ name: data.name, startsAt: data.startsAt.slice(0, 10), endsAt: data.endsAt.slice(0, 10), messages: data.messages.map(m => m.content) });
-      setSelected(data.groups.map(g => g.groupId)); setMode(data.mode); setIntervalValue(data.intervalSeconds / 60);
+      setSelected(data.groups.map(g => g.groupId)); setMode(data.mode); setIntervalValue(data.intervalSeconds / 60); setMentionAll(data.mentionAll ?? false);
       setTimes(data.schedules.length ? data.schedules.map(s => s.time) : ['09:00']); setLoaded(true);
     }).catch(e => setError(e instanceof Error ? e.message : 'Não foi possível carregar a campanha.'));
   }, [campaignId]);
@@ -68,7 +70,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         const result = await api<CampaignMedia & { id: string }>(`/media?name=${encodeURIComponent(media.name)}`, { method: 'POST', headers: { 'Content-Type': media.mimeType }, body: media.file });
         mediaId = result.id; setMedia(result);
       }
-      const data = await api<{ id: string }>(`/campaigns${campaignId ? `/${campaignId}` : ''}`, { method: campaignId ? 'PATCH' : 'POST', json: { mediaId, name: form.get('name'), mode, intervalSeconds: interval * 60, startsAt: form.get('startsAt'), endsAt: form.get('endsAt'), groupIds: selected, messages: form.getAll('message'), times: mode === 'SCHEDULED' ? times : [] } });
+      const data = await api<{ id: string }>(`/campaigns${campaignId ? `/${campaignId}` : ''}`, { method: campaignId ? 'PATCH' : 'POST', json: { mediaId, name: form.get('name'), mode, intervalSeconds: interval * 60, mentionAll, startsAt: form.get('startsAt'), endsAt: form.get('endsAt'), groupIds: selected, messages: form.getAll('message'), times: mode === 'SCHEDULED' ? times : [] } });
       navigate(`/campanhas/${data.id}`);
     } catch (e) { setError(errorMessage(e, 'Não foi possível salvar a campanha.')); } finally { setSaving(false); }
   }
@@ -83,9 +85,14 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         <Card className="space-y-4 p-4">
           <Field label="Nome"><input defaultValue={initial.name} required maxLength={200} name="name" className={inputClass} placeholder="Ex.: Festival de Inverno" /></Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Quando enviar"><select value={mode} onChange={e => setMode(e.target.value)} className={inputClass}><option value="IMMEDIATE">Ao iniciar (fila única)</option><option value="SCHEDULED">Em horários diários</option></select></Field>
-            <Field label="Intervalo entre grupos (min)"><input type="number" required min={1} max={60} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} className={inputClass} /></Field>
+            <Field label="Quando enviar"><Select label="Quando enviar" value={mode} onChange={setMode} options={modeOptions} /></Field>
+            <Field label="Intervalo entre grupos (min)" hint={`Mínimo de ${MIN_INTERVAL_MINUTES} min entre grupos (evita bloqueio do WhatsApp).`}>
+              <input type="number" required min={MIN_INTERVAL_MINUTES} max={60} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} className={inputClass} />
+            </Field>
           </div>
+          <Checkbox checked={mentionAll} onChange={setMentionAll}
+            label="Marcar todos os membros (@todos)"
+            hint="Cada participante do grupo recebe notificação de menção. O texto da mensagem não muda — a marcação fica oculta, só o aviso aparece." />
           {mode === 'SCHEDULED' && <>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="De"><input defaultValue={initial.startsAt} required name="startsAt" type="date" className={inputClass} /></Field>
@@ -122,10 +129,8 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
           {/* Duas colunas: mais grupos à vista de uma vez. */}
           <ScrollArea className="max-h-80 rounded border border-line">
             <ul className="grid sm:grid-cols-2">{visible.map(group => <li key={group.id} className="border-b border-line sm:odd:border-r">
-              <label className={`flex cursor-pointer items-start gap-2 px-3 py-2 text-sm hover:bg-slate-50 ${selected.includes(group.id) ? 'bg-brand-50/60' : ''}`}>
-                <input type="checkbox" className="mt-0.5 accent-brand-600" checked={selected.includes(group.id)} onChange={() => toggle(group.id)} />
-                <GroupLabel group={group} />
-              </label>
+              <Checkbox className={`w-full px-3 py-2 hover:bg-slate-50 ${selected.includes(group.id) ? 'bg-brand-50/60' : ''}`}
+                checked={selected.includes(group.id)} onChange={() => toggle(group.id)} label={<GroupLabel group={group} />} />
             </li>)}</ul>
             {!!groups.length && !visible.length && <p className="p-4 text-sm text-muted">Nenhum grupo com “{search.trim()}”.</p>}
           </ScrollArea>

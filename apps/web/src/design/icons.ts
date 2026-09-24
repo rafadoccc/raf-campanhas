@@ -41,4 +41,7 @@ export {
   Inbox as IconEmpty,
   Timer as IconQueue,
   Radio as IconReach,
+  ChevronDown as IconChevron,
+  Check as IconCheck,
+  AtSign as IconMention,
 } from 'lucide-react';

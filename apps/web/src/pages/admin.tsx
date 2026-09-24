@@ -3,10 +3,12 @@ import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
 import {
-  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Page, PageHeader, ScrollArea, Skeleton,
+  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Page, PageHeader, ScrollArea, Select, Skeleton,
   IconAdd, IconAdmin, IconDisable, IconEnable, IconPassword, IconRemove,
   dataHora, inputClass, numero, useConfirm,
 } from '../design';
+
+const roleOptions = [{ value: 'USER', label: 'Usuário' }, { value: 'SUPER_ADMIN', label: 'Administrador' }];
 
 type AdminUser = {
   id: string; email: string; name: string; role: 'SUPER_ADMIN' | 'USER'; disabledAt: string | null; createdAt: string; lastSeenAt: string | null;
@@ -17,12 +19,13 @@ const connectionLabel: Record<string, string> = { connected: 'Conectado', qr: 'A
 
 function CreateUser({ onCreated, onClose }: { onCreated: () => void; onClose: () => void }) {
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const [role, setRole] = useState('USER');
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setBusy(true); setError('');
     try {
-      await api('/admin/users', { method: 'POST', json: { name: form.get('name'), email: form.get('email'), password: form.get('password'), role: form.get('role') } });
+      await api('/admin/users', { method: 'POST', json: { name: form.get('name'), email: form.get('email'), password: form.get('password'), role } });
       onCreated(); onClose();
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
@@ -32,7 +35,7 @@ function CreateUser({ onCreated, onClose }: { onCreated: () => void; onClose: ()
       <Field label="Nome"><input name="name" required maxLength={120} className={inputClass} /></Field>
       <Field label="E-mail"><input name="email" type="email" required autoComplete="off" className={inputClass} /></Field>
       <Field label="Senha inicial" hint="10+ caracteres; a pessoa troca depois."><input name="password" type="password" required minLength={10} autoComplete="new-password" className={inputClass} /></Field>
-      <Field label="Papel"><select name="role" defaultValue="USER" className={inputClass}><option value="USER">Usuário</option><option value="SUPER_ADMIN">Administrador</option></select></Field>
+      <Field label="Papel"><Select label="Papel" value={role} onChange={setRole} options={roleOptions} /></Field>
       <div className="flex gap-2"><Button type="submit" variant="primary" loading={busy} disabled={busy}>Criar</Button><Button onClick={onClose}>Cancelar</Button></div>
       {error && <div className="sm:col-span-2 lg:col-span-5"><Alert>{error}</Alert></div>}
     </form>

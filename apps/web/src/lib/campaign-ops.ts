@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, ApiError } from './api';
 
 // Ações de campanha usadas pela lista e pelo detalhe, com as mesmas regras nas duas telas.
 type Confirm = (options: { title: string; description?: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
@@ -41,4 +41,36 @@ export async function deleteCampaign(campaign: Campaign, confirm: Confirm): Prom
   if (running) await api(`/campaigns/${campaign.id}/status`, { method: 'PATCH', json: { status: 'CANCELLED' } });
   await api(`/campaigns/${campaign.id}`, { method: 'DELETE' });
   return true;
+}
+
+/**
+ * Tenta de novo um envio com falha (ADR-030). Falha "certa" (nada saiu) tenta direto; falha
+ * "incerta" (pode ter chegado) volta 409 do servidor — aí pede confirmação explícita, avisando
+ * do risco de duplicar, antes de repetir o pedido com `confirmUncertain`.
+ */
+export async function retryDelivery(id: string, confirm: Confirm): Promise<boolean> {
+  try {
+    await api(`/deliveries/${id}/retry`, { method: 'POST', json: {} });
+    return true;
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 409) throw error;
+    if (!await confirm({
+      title: 'Resultado incerto: tentar mesmo assim?',
+      description: 'Na tentativa anterior não dá para saber se a mensagem chegou ao grupo (o WhatsApp não confirmou nem recusou). Tentar de novo pode duplicar o envio se ela já tiver chegado.',
+      confirmLabel: 'Tentar mesmo assim',
+      danger: true,
+    })) return false;
+    await api(`/deliveries/${id}/retry`, { method: 'POST', json: { confirmUncertain: true } });
+    return true;
+  }
+}
+
+/** Tenta de novo, de uma vez, todas as falhas seguras da campanha (as incertas ficam de fora). */
+export async function retryAllFailed(campaign: Campaign, confirm: Confirm): Promise<{ retried: number; uncertainSkipped: number } | null> {
+  if (!await confirm({
+    title: 'Tentar de novo as falhas seguras?',
+    description: 'Repete só os envios em que é certo que nada chegou ao grupo. Falhas de resultado incerto ficam de fora e precisam ser confirmadas uma a uma.',
+    confirmLabel: 'Tentar de novo',
+  })) return null;
+  return api(`/campaigns/${campaign.id}/retry-failed`, { method: 'POST', json: {} });
 }
