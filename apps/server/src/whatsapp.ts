@@ -22,6 +22,20 @@ export async function resolveWebVersion(fetchVersion: () => Promise<{ version: W
   }
   return result.version;
 }
+// Versão do WhatsApp Web: dado público, igual para todo mundo. Com vários providers no mesmo
+// processo, buscar uma vez evita N consultas na partida. NADA além disso é compartilhado.
+let protocolVersion: Promise<WAVersion> | undefined;
+export async function sharedProtocolVersion(fetchVersion: () => Promise<{ version: WAVersion; isLatest: boolean }>) {
+  try {
+    return await (protocolVersion ??= resolveWebVersion(fetchVersion));
+  } catch (error) {
+    protocolVersion = undefined; // falhou: a próxima tentativa consulta de novo
+    throw error;
+  }
+}
+/** Esquece a versão em cache (ex.: depois de um logout). */
+export const forgetProtocolVersion = () => { protocolVersion = undefined; };
+
 export function defaultSessionsDir() {
   if (process.env.SESSIONS_DIR) return path.resolve(process.env.SESSIONS_DIR);
   if (process.platform === 'win32') {
@@ -43,10 +57,26 @@ export class WhatsAppProvider {
   private receiptWrites = new Set<Promise<void>>();
   private credsSaving: Promise<void> = Promise.resolve();
   private authDir: string;
+  /** Dono da conexão (ADR-020). null = sessão global legada, o caminho de produção de hoje. */
+  readonly ownerId: string | null;
   private data: { state: string; qr?: string; accountJid?: string; error?: string } = { state: 'disconnected' };
-  constructor(authDir = defaultSessionsDir()) {
-    this.authDir = path.join(authDir, 'whatsapp');
+  /**
+   * Sem argumento ou com uma pasta base: sessão GLOBAL legada (`<base>/whatsapp`), exatamente
+   * como sempre foi. Com `{ ownerId, sessionDir }`: sessão daquele usuário, na pasta que o
+   * WhatsAppManager calculou (session-paths.ts). Um provider nunca descobre o dono sozinho.
+   */
+  constructor(options: string | { ownerId: string; sessionDir: string } = defaultSessionsDir()) {
+    if (typeof options === 'string') {
+      this.ownerId = null;
+      this.authDir = path.join(options, 'whatsapp');
+    } else {
+      if (!options.ownerId || !options.sessionDir) throw new Error('Conexão por usuário exige ownerId e sessionDir.');
+      this.ownerId = options.ownerId;
+      this.authDir = options.sessionDir;
+    }
   }
+  /** Pasta de sessão desta conexão (só leitura; cada provider tem a sua). */
+  get sessionDir() { return this.authDir; }
   status() { return { ...this.data }; }
   /** Há uma sessão já pareada salva? Reconectar com ela não exige ler QR. */
   async hasPairedSession() {
@@ -69,7 +99,7 @@ export class WhatsAppProvider {
       const { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser, fetchLatestWaWebVersion, proto } = await import('@whiskeysockets/baileys');
       const { default: pino } = await import('pino');
       // Keep the verified version across reconnects; never silently downgrade.
-      this.version ??= await resolveWebVersion(() => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }));
+      this.version ??= await sharedProtocolVersion(() => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }));
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
       if (!this.wanted || generation !== this.generation) return;
@@ -165,6 +195,7 @@ export class WhatsAppProvider {
   async disconnect() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer);
     this.version = undefined;
+    forgetProtocolVersion();
     const sock = this.socket; this.socket = undefined;
     this.data = { state: 'disconnected' };
     let logoutFailed = false;

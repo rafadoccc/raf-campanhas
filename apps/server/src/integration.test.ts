@@ -4,6 +4,7 @@ import { prisma, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLea
 import { buildApp } from './app';
 import { hashPassword, requireSuperAdmin, bootstrapAdmin } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
+import { WhatsAppManager } from './whatsapp-manager';
 import { loadConfig } from './config';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1441,6 +1442,131 @@ test('migration (real MySQL): WhatsAppSession is created without touching any ex
     await assert.rejects(db.$executeRawUnsafe("UPDATE `WhatsAppSession` SET accountJid = '5511@s.whatsapp.net' WHERE id = 's2'"), /Duplicate/, 'um número, um usuário');
     await assert.rejects(db.$executeRawUnsafe("INSERT INTO `WhatsAppSession` (id, userId, updatedAt) VALUES ('s4', 'nao-existe', NOW(3))"), /foreign key/i);
   });
+});
+
+// ─── Partida e ciclo de vida das conexões por usuário (ADR-020, Fase 4B) ────────
+// Com dubles de provider: nenhum socket é aberto e nenhum arquivo de sessão real é tocado.
+type FakeBehaviour = { paired?: boolean; failConnect?: string };
+function managerFor(behaviour: Record<string, FakeBehaviour> = {}) {
+  const sessionsBase = mkdtempSync(join(tmpdir(), 'wa-startup-'));
+  mkdirSync(join(sessionsBase, 'whatsapp'), { recursive: true });
+  writeFileSync(join(sessionsBase, 'whatsapp', 'creds.json'), '{"me":{"id":"legado@s.whatsapp.net"}}');
+  const calls = new Map<string, string[]>();
+  const manager = new WhatsAppManager({
+    sessionsBase,
+    createProvider: (ownerId, sessionDir) => {
+      const how = behaviour[ownerId] ?? {};
+      const state = { state: 'disconnected' as string, accountJid: undefined as string | undefined, error: undefined as string | undefined };
+      calls.set(ownerId, []);
+      return {
+        ownerId, sessionDir,
+        status: () => ({ ...state }),
+        hasPairedSession: async () => how.paired ?? false,
+        connect: async () => {
+          calls.get(ownerId)!.push('connect');
+          if (how.failConnect) throw new Error(how.failConnect);
+          state.state = 'connected'; state.accountJid = `55${ownerId.slice(-6)}@s.whatsapp.net`;
+          return { ...state };
+        },
+        disconnect: async () => { calls.get(ownerId)!.push('disconnect'); state.state = 'disconnected'; state.accountJid = undefined; return { ...state }; },
+        stop: async () => { calls.get(ownerId)!.push('stop'); },
+      };
+    },
+  });
+  const legacyIntact = () => assert.equal(readFileSync(join(sessionsBase, 'whatsapp', 'creds.json'), 'utf8'), '{"me":{"id":"legado@s.whatsapp.net"}}', 'sessão legada intacta');
+  return { manager, calls, sessionsBase, legacyIntact, cleanup: () => rmSync(sessionsBase, { recursive: true, force: true }) };
+}
+async function startupUser(email: string, options: { disabled?: boolean; autoConnect?: boolean } = {}) {
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: { disabledAt: options.disabled ? new Date() : null },
+    create: { email, name: email.split('@')[0], passwordHash: 'x', disabledAt: options.disabled ? new Date() : null },
+  });
+  await prisma.whatsAppSession.upsert({ where: { userId: user.id }, update: { autoConnect: options.autoConnect ?? true, state: 'disconnected', accountJid: null, lastError: null }, create: { userId: user.id, autoConnect: options.autoConnect ?? true } });
+  return user;
+}
+
+test('startup (4B): reconnects each eligible session on its own; one failure does not stop the others', async () => {
+  const ok = await startupUser('start-ok@teste.local');
+  const bad = await startupUser('start-bad@teste.local');
+  const semSessao = await startupUser('start-nova@teste.local');
+  const { manager, calls, legacyIntact, cleanup } = managerFor({
+    [ok.id]: { paired: true },
+    [bad.id]: { paired: true, failConnect: 'socket caiu' },
+    [semSessao.id]: { paired: false },
+  });
+  try {
+    const result = await manager.startAll({} as NodeJS.ProcessEnv);
+    const outcome = (id: string) => result.find(r => r.userId === id)?.outcome;
+    assert.equal(outcome(ok.id), 'conectando');
+    assert.equal(outcome(bad.id), 'falhou', 'a falha de um fica registrada');
+    assert.equal(outcome(semSessao.id), 'sem-sessao', 'quem nunca pareou não é conectado (nenhum QR automático)');
+    assert.deepEqual(calls.get(semSessao.id), [], 'sem sessão pareada, nem tenta conectar');
+    // O banco reflete o ciclo de vida, sem nada sensível.
+    const connected = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: ok.id } });
+    assert.equal(connected.state, 'connected');
+    assert.ok(connected.accountJid?.endsWith('@s.whatsapp.net'));
+    assert.ok(connected.lastConnectedAt, 'registra quando conectou');
+    const failed = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: bad.id } });
+    assert.equal(failed.state, 'error');
+    assert.match(failed.lastError ?? '', /socket caiu/);
+    assert.equal(failed.accountJid, null);
+    assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: semSessao.id } })).state, 'disconnected');
+    legacyIntact();
+  } finally { await manager.stopAll(); cleanup(); }
+});
+
+test('startup (4B): skips disabled users, autoConnect=false and WHATSAPP_AUTO_CONNECT=0', async () => {
+  const ativo = await startupUser('start-ativo@teste.local');
+  const desativado = await startupUser('start-desativado@teste.local', { disabled: true });
+  const semAuto = await startupUser('start-sem-auto@teste.local', { autoConnect: false });
+  const { manager, calls, legacyIntact, cleanup } = managerFor({
+    [ativo.id]: { paired: true }, [desativado.id]: { paired: true }, [semAuto.id]: { paired: true },
+  });
+  try {
+    assert.deepEqual(await manager.startAll({ WHATSAPP_AUTO_CONNECT: '0' } as NodeJS.ProcessEnv), [], 'desligado por variável de ambiente');
+    assert.deepEqual(manager.owners(), [], 'nem cria provider');
+    const result = await manager.startAll({} as NodeJS.ProcessEnv);
+    const meus = result.filter(r => [ativo.id, desativado.id, semAuto.id].includes(r.userId));
+    assert.deepEqual(meus.map(r => r.userId), [ativo.id], 'só o usuário ativo com autoConnect');
+    assert.equal(calls.get(desativado.id), undefined, 'usuário desativado não reconecta');
+    assert.equal(calls.get(semAuto.id), undefined, 'autoConnect=false não reconecta');
+    // Usuário desativado pode ter o provider parado sem perder a sessão nem as credenciais.
+    const provider = manager.for(desativado.id);
+    await manager.stop(desativado.id);
+    assert.deepEqual(calls.get(desativado.id), ['stop'], 'stop, nunca disconnect/logout');
+    assert.ok(provider.sessionDir.includes(desativado.id), 'cada um na sua pasta');
+    legacyIntact();
+  } finally { await manager.stopAll(); cleanup(); }
+});
+
+test('lifecycle (4B): session row keeps only lifecycle data; disconnect clears the paired number', async () => {
+  const user = await startupUser('start-ciclo@teste.local');
+  const outro = await startupUser('start-ciclo-2@teste.local');
+  const { manager, calls, legacyIntact, cleanup } = managerFor({ [user.id]: { paired: true }, [outro.id]: { paired: true } });
+  try {
+    await manager.ensureSession(user.id);
+    await manager.ensureSession(user.id); // idempotente
+    assert.equal(await prisma.whatsAppSession.count({ where: { userId: user.id } }), 1);
+    await manager.for(user.id).connect();
+    await manager.persistState(user.id);
+    const row = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } });
+    assert.deepEqual(Object.keys(row).sort(), ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'state', 'updatedAt', 'userId'], 'nenhum campo de QR ou credencial');
+    assert.equal(row.state, 'connected');
+    // Número já pareado em outra conta: registra o motivo, sem quebrar a partida.
+    await prisma.whatsAppSession.update({ where: { userId: user.id }, data: { accountJid: null } });
+    await prisma.whatsAppSession.update({ where: { userId: outro.id }, data: { accountJid: row.accountJid } });
+    await manager.persistState(user.id); // a conexão segue com o mesmo número
+    const conflito = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } });
+    assert.equal(conflito.accountJid, null, 'não rouba o número do outro');
+    assert.match(conflito.lastError ?? '', /já está conectado em outra conta/);
+    // Desconectar de verdade limpa o número e sai do mapa.
+    await manager.disconnect(user.id);
+    assert.ok(calls.get(user.id)!.includes('disconnect'));
+    assert.equal(manager.peek(user.id), undefined);
+    assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } })).accountJid, null);
+    legacyIntact();
+  } finally { await manager.stopAll(); cleanup(); }
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
