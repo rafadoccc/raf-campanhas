@@ -28,7 +28,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-050  (M) Mapear erros internos antes de responder          owner: —        since: —      
 [x] T-051  (M) rate limiting na API                              owner: —        since: —      
 [ ] T-052  (M) Rotina de exclusão de mídia órfã e cota           owner: —        since: —
-[ ] T-053  (M) SIGKILL de fallback no timeout do ffprobe         owner: —        since: —
+[x] T-053  (M) SIGKILL de fallback no timeout do ffprobe         owner: —        since: —
 ```
 
 ## Fase 1 — Endurecimento
@@ -122,6 +122,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-100  Fase 4B: WhatsAppManager e providers por usuário          owner: —        since: —
 [x] T-101  Fase 4C: rotas /api/whatsapp/* por usuário + ponte legada  owner: —        since: —
 [x] T-102  Fase 4D: envio, eventos e recibos com dono inequívoco     owner: —        since: —
+[x] T-103  Auditoria de segurança de ponta a ponta e correções       owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

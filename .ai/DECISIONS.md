@@ -588,3 +588,33 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
 - **Selo/metadata do grupo:** `send` recebe o `groupId` da entrega e atualiza só aquela linha.
 - **Pacing intacto** (ADR-015): um envio por vez no sistema, relógio por número persistido.
   Paralelismo entre números continua sendo Fase 5.
+
+
+## ADR-023 · Auditoria de segurança de ponta a ponta (2026-09-24)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+**Corrigido:**
+- **IP forjável (alto):** `trustProxy: true` fazia o Fastify aceitar o X-Forwarded-For do próprio
+  cliente; o limite de tentativas de login por IP podia ser contornado trocando o cabeçalho.
+  Agora só proxies da rede interna (`TRUSTED_PROXIES = 'loopback, uniquelocal'`). `TRUST_PROXY=1`
+  passa a significar isso; `0` desliga; outro valor é lista explícita.
+- **Sessão sem prazo final:** validade deslizante renovava para sempre. Teto absoluto de 30 dias
+  desde o login (`SESSION_MAX_AGE_MS`); renovação nunca passa do teto; sessões vencidas são
+  apagadas a cada 6 h (antes só no login).
+- **Memória do limitador de login:** chaves por e-mail cresciam sem limite; teto de 10 mil com
+  descarte amortizado.
+- **Vazamento em mensagens de erro:** erros do sistema (caminhos, ENOENT/EACCES, node_modules)
+  agora viram a mensagem genérica.
+- **Cabeçalhos:** `Cross-Origin-Opener-Policy` e `Cross-Origin-Resource-Policy: same-origin`.
+- **ffprobe travado (T-053):** SIGKILL 2 s depois do SIGTERM.
+
+**Verificado sem problema:** SQL sempre parametrizado; nenhum `innerHTML`/`eval` no painel;
+cookie HttpOnly + SameSite=Lax + Secure; token de 32 bytes com hash no banco; scrypt com sal e
+tempo constante; CSRF por Origin obrigatório; isolamento por dono (ADR-018/022); upload validado
+por conteúdo (sharp/ffprobe), só JPEG/PNG/MP4; nenhum segredo versionado no Git.
+
+**Risco aceito:** `deepmerge-ts` < 8 (dependência interna do CLI do Prisma). Só roda na
+ferramenta de migrations, com a nossa configuração; nenhuma entrada de usuário chega lá. A
+correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atualizar (T-049).
+**Pendente:** mídia inteira em memória no download (T-048); mídia órfã (T-052).
