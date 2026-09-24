@@ -123,6 +123,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-101  Fase 4C: rotas /api/whatsapp/* por usuário + ponte legada  owner: —        since: —
 [x] T-102  Fase 4D: envio, eventos e recibos com dono inequívoco     owner: —        since: —
 [x] T-103  Auditoria de segurança de ponta a ponta e correções       owner: —        since: —
+[x] T-104  Fase 4E: migração da sessão legada (rename idempotente)     owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

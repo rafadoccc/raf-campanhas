@@ -618,3 +618,21 @@ por conteúdo (sharp/ffprobe), só JPEG/PNG/MP4; nenhum segredo versionado no Gi
 ferramenta de migrations, com a nossa configuração; nenhuma entrada de usuário chega lá. A
 correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atualizar (T-049).
 **Pendente:** mídia inteira em memória no download (T-048); mídia órfã (T-052).
+
+
+## ADR-024 · Migração da sessão global para o dono (Fases 4E/4F)
+
+**Data:** 2026-09-24 · **Status:** aceita (decisão do dono) · **Autor:** claude · **Branch:** dev
+
+- `migrateLegacySession` roda na partida, ANTES de qualquer conexão: `SESSIONS_DIR/whatsapp` →
+  `SESSIONS_DIR/users/<dono>/whatsapp` por **rename atômico** (nunca cópia: dezenas de milhares
+  de arquivos). Cria `WhatsAppSession` do dono com `autoConnect` e grava
+  `users/<dono>/migracao-sessao-legada.json` (de, para, quando).
+- Dono pela MESMA regra da ponte (`legacyOwnerCandidate`). Dono ambíguo, pasta do dono já
+  existente (conflito) ou falha do sistema operacional: **nada se move**, a sessão segue na pasta
+  antiga e a ponte continua valendo. Pasta vazia criada por uma tentativa falha é removida.
+- Idempotente: depois de migrar não há sessão legada; as partidas seguintes não fazem nada.
+- `WHATSAPP_MIGRATE_LEGACY=0` desliga. Reversão: `npm run whatsapp:reverter-migracao` (sistema
+  fechado), outro rename.
+- Após a migração a ponte se desliga sozinha; o dono reconecta pelo `WhatsAppManager` sem QR e
+  envia pela própria conexão (teste de ponta a ponta).
