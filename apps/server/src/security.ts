@@ -58,8 +58,12 @@ export function registerWeb(app: FastifyInstance, config: AppConfig) {
   if (config.webDist) {
     void app.register(fastifyStatic, {
       root: config.webDist,
-      wildcard: false,
-      index: false,
+      // wildcard: procura o arquivo a cada pedido. Com false, a lista era lida só na partida e
+      // recompilar o painel com o sistema ligado deixava tudo em branco até reiniciar.
+      wildcard: true,
+      // Raiz (/) abre o painel; com false, a raiz virava 403 (pasta sem índice).
+      index: ['index.html'],
+      dotfiles: 'deny',
       setHeaders(reply, filePath) {
         // Arquivos em assets/ têm hash no nome: podem ficar em cache para sempre.
         reply.header('Cache-Control', filePath.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache');
@@ -69,6 +73,9 @@ export function registerWeb(app: FastifyInstance, config: AppConfig) {
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith('/api/') || request.method !== 'GET') return reply.code(404).send({ error: 'Rota não encontrada.' });
     if (!config.webDist) return reply.code(503).send({ error: 'Painel não compilado. Rode npm run build.' });
+    // Arquivo do painel que não existe (ex.: aba aberta antes de uma recompilação) é 404 de
+    // verdade: devolver o index.html no lugar de um .js deixa a tela em branco sem erro nenhum.
+    if (request.url.startsWith('/assets/')) return reply.code(404).type('text/plain; charset=utf-8').send('Arquivo não encontrado.');
     return reply.header('Cache-Control', 'no-cache').type('text/html; charset=utf-8').sendFile('index.html');
   });
 }

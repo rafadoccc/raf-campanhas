@@ -64,7 +64,7 @@ export default function DashboardPage() {
       <Stat icon={IconQueue} label="Na fila" value={metric(d?.pendingNow)} hint="envios aguardando" />
     </Card>
 
-    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-3">
+    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
       <div className="flex min-h-0 flex-col gap-4 lg:col-span-2">
         <div className="grid gap-4 sm:grid-cols-2">
           <Card className="p-4">

@@ -205,7 +205,13 @@ export function ScrollArea({ children, className = '' }: { children: ReactNode; 
   return <div className={`scroll-area min-h-0 ${className}`}>{children}</div>;
 }
 
-/** Página que ocupa exatamente a altura disponível (sem rolagem do documento). */
-export function Page({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <main className={`mx-auto flex h-full w-full max-w-6xl flex-col gap-4 px-4 py-5 md:px-6 ${className}`}>{children}</main>;
+/**
+ * Página que ocupa exatamente a altura disponível; cada lista rola por dentro (Início,
+ * Campanhas). Com `scroll`, a página cresce com o conteúdo e rola inteira — para telas com
+ * várias seções empilhadas (Administração), onde espremer tudo numa tela corta conteúdo.
+ */
+export function Page({ children, className = '', scroll = false }: { children: ReactNode; className?: string; scroll?: boolean }) {
+  // No celular a página sempre cresce com o conteúdo e rola inteira (travar na altura da tela
+  // espremia colunas até sumirem); a altura fixa com listas rolando por dentro é só no desktop.
+  return <main className={`mx-auto flex ${scroll ? 'min-h-full' : 'min-h-full lg:h-full'} w-full max-w-6xl flex-col gap-4 px-4 py-5 md:px-6 ${className}`}>{children}</main>;
 }

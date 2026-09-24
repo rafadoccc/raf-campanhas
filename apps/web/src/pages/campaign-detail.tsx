@@ -97,7 +97,7 @@ export default function CampaignPage() {
 
   return <Page className="lg:overflow-hidden">
     <Link to="/campanhas" className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-ink"><IconBack className="h-3.5 w-3.5" aria-hidden />Campanhas</Link>
-    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-5">
+    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-5 lg:grid-rows-[minmax(0,1fr)]">
       <ScrollArea className="space-y-4 lg:col-span-2">
         <Card>
           <div className="space-y-4 p-4">

@@ -3,7 +3,7 @@ import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
 import {
-  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Page, PageHeader, PasswordInput, ScrollArea, Select, Skeleton, Stat,
+  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Page, PageHeader, PasswordInput, Select, Skeleton, Stat,
   IconAdd, IconAdmin, IconCampaigns, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
   IconLogout, IconPassword, IconQueue, IconRemove, IconSearch, IconSent, IconSystem, IconWhatsApp,
   dataHora, inputClass, numero, useConfirm,
@@ -207,13 +207,13 @@ export default function AdminPage() {
     (role === 'all' || u.role === role) &&
     (!term || normalize(u.name).includes(term) || normalize(u.email).includes(term)));
 
-  return <Page className="lg:overflow-hidden">
+  return <Page scroll>
     <PageHeader title="Administração" subtitle="Métricas do sistema inteiro e gestão de contas — nunca o conteúdo das campanhas."
       action={!creating && <Button variant="primary" icon={IconAdd} onClick={() => setCreating(true)}>Nova conta</Button>} />
     {error && !data && <Alert tone="warning">Não foi possível carregar o painel.</Alert>}
     <OverviewPanel overview={data?.overview ?? null} />
     {creating && <CreateUser onCreated={reload} onClose={() => setCreating(false)} />}
-    <Card className="flex min-h-0 flex-1 flex-col">
+    <Card>
       <CardHeader title="Contas" action={<span className="text-2xs text-muted">{users ? `${visible.length} de ${users.length}` : ''}</span>} />
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <div className="relative min-w-[10rem] flex-1">
@@ -227,11 +227,11 @@ export default function AdminPage() {
           {roleFilters.map(f => <button key={f.value} type="button" onClick={() => setRole(f.value)} className={`h-7 rounded-sm px-2.5 text-xs ${role === f.value ? 'bg-slate-100 font-medium text-ink' : 'text-muted hover:text-ink'}`}>{f.label}</button>)}
         </div>
       </div>
-      <ScrollArea className="flex-1">
+      <div>
         {!users ? <div className="space-y-2 p-4"><Skeleton className="h-14" /><Skeleton className="h-14" /></div>
           : visible.length === 0 ? <EmptyState title={term || status !== 'all' || role !== 'all' ? 'Nenhuma conta com esse filtro.' : 'Nenhuma conta.'} />
           : <ul className="divide-y divide-line">{visible.map(u => <UserRow key={u.id} user={u} self={u.id === me?.id} onChanged={reload} />)}</ul>}
-      </ScrollArea>
+      </div>
     </Card>
   </Page>;
 }

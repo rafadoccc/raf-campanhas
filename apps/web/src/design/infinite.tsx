@@ -85,7 +85,10 @@ export function LoadMoreSentinel({ onVisible, active }: { onVisible: () => void;
   useEffect(() => {
     const node = ref.current;
     if (!node || !active) return;
-    const root = node.closest('.scroll-area');
+    // A área que DE FATO rola: no desktop, a lista; no celular a lista cresce e quem rola é a
+    // página inteira. Nenhuma rolando ainda (poucos itens): a própria tela.
+    let root: Element | null = node.closest('.scroll-area');
+    while (root && root.scrollHeight <= root.clientHeight + 1) root = root.parentElement?.closest('.scroll-area') ?? null;
     const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) callback.current(); }, { root, rootMargin: '400px' });
     observer.observe(node);
     return () => observer.disconnect();
