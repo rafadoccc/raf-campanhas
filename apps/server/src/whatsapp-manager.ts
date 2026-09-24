@@ -13,7 +13,7 @@ import { whatsappSessionDir } from './session-paths';
 // de cada instância. O banco guarda só o ciclo de vida (nunca QR nem credenciais).
 
 /** O que o gerenciador usa de um provider. Permite injetar um duble nos testes. */
-export type ManagedProvider = Pick<WhatsAppProvider, 'ownerId' | 'sessionDir' | 'status' | 'connect' | 'disconnect' | 'stop' | 'hasPairedSession'>;
+export type ManagedProvider = Pick<WhatsAppProvider, 'ownerId' | 'sessionDir' | 'status' | 'connect' | 'disconnect' | 'stop' | 'hasPairedSession' | 'sync'>;
 
 export type StartOutcome = { userId: string; outcome: 'conectando' | 'sem-sessao' | 'falhou'; error?: string };
 
@@ -45,6 +45,9 @@ export class WhatsAppManager {
     this.providers.set(userId, provider);
     return provider;
   }
+
+  /** Caminho da sessão que este usuário teria, sem criar provider nem pasta. */
+  sessionDirFor(userId: string) { return whatsappSessionDir(userId, this.sessionsBase); }
 
   /** Consulta sem criar: usado por quem só quer saber se há conexão ativa. */
   peek(userId: string) { return this.providers.get(userId); }

@@ -4,12 +4,14 @@ import { bootstrapAdmin } from './auth';
 import { loadConfig } from './config';
 import { startDispatcher } from './dispatcher';
 import { WhatsAppProvider } from './whatsapp';
+import { WhatsAppManager } from './whatsapp-manager';
 
 async function main() {
   const config = loadConfig(process.env);
   await bootstrapAdmin(process.env);
-  const provider = new WhatsAppProvider();
-  const app = buildApp(provider, config);
+  const provider = new WhatsAppProvider(); // sessão global legada: envios reais continuam aqui (4D/4E)
+  const manager = new WhatsAppManager();   // conexões por usuário (rotas do WhatsApp)
+  const app = buildApp(provider, config, manager);
   const dispatcher = await startDispatcher(provider);
   let closing = false;
 
@@ -17,6 +19,7 @@ async function main() {
     if (closing) return;
     closing = true;
     await dispatcher.stop();
+    await manager.stopAll(); // encerra preservando a autenticação de cada usuário
     await provider.stop();
     await app.close();
     await prisma.$disconnect();
@@ -31,6 +34,9 @@ async function main() {
     console.log('Sessão do WhatsApp já pareada encontrada: reconectando.');
     void provider.connect();
   }
+  // Reconecta as conexões por usuário já pareadas (nenhuma existe até alguém parear pelo painel).
+  const reconnected = await manager.startAll();
+  for (const item of reconnected.filter(r => r.outcome === 'falhou')) console.warn('[WhatsApp] Reconexão falhou para', item.userId, item.error);
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);
 }

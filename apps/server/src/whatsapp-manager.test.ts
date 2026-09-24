@@ -34,6 +34,7 @@ function fakeProvider(ownerId: string, sessionDir: string, behaviour: { paired?:
     connect: async () => { calls.push('connect'); if (behaviour.failConnect) throw new Error(behaviour.failConnect); state.state = 'connected'; state.accountJid = `55${ownerId.slice(-4)}@s.whatsapp.net`; return { ...state }; },
     disconnect: async () => { calls.push('disconnect'); state.state = 'disconnected'; return { ...state }; },
     stop: async () => { calls.push('stop'); },
+    sync: async () => { calls.push('sync'); return { count: 0 }; },
   };
   return provider;
 }

@@ -22,13 +22,27 @@ mock.method(globalThis, 'fetch', async (input: Parameters<typeof fetch>[0], init
   if (/^https:\/\/(www\.google\.com|www\.cloudflare\.com)\//.test(String(input))) return new Response(null, { status: 200, headers: { date: new Date().toUTCString() } });
   return originalFetch(input, init);
 });
+// Gerenciador da suíte com pasta TEMPORÁRIA: nenhum teste consegue criar sessão no caminho real.
+const suiteSessions = mkdtempSync(join(tmpdir(), 'wa-suite-'));
 const app = buildApp({
   status: () => ({ state: 'disconnected' }),
   connect: async () => ({ state: 'disconnected' }),
   disconnect: async () => ({ state: 'disconnected' }),
   sync: async () => ({ count: 0 }),
-});
-after(async () => { await app.close(); await prisma.$disconnect(); });
+  hasPairedSession: async () => false,
+}, loadConfig({}), new WhatsAppManager({
+  sessionsBase: suiteSessions,
+  createProvider: (ownerId, sessionDir) => ({
+    ownerId, sessionDir,
+    status: () => ({ state: 'disconnected' }),
+    hasPairedSession: async () => false,
+    connect: async () => ({ state: 'disconnected' }),
+    disconnect: async () => ({ state: 'disconnected' }),
+    stop: async () => undefined,
+    sync: async () => ({ count: 0 }),
+  }),
+}));
+after(async () => { await app.close(); await prisma.$disconnect(); rmSync(suiteSessions, { recursive: true, force: true }); });
 const apiPath = (url: string) => url.startsWith('/api/') ? url : `/api${url}`;
 // Toda a API exige login: os testes entram uma vez pelo endpoint real e reutilizam o
 // cookie, sempre com a origem do painel (exigida em ações que alteram dados).
@@ -418,7 +432,7 @@ test('health reports the database, text columns keep long content and accents in
 });
 
 // ─── Login e proteção da API ────────────────────────────────────────────────────
-const fakeProvider = { status: () => ({ state: 'qr', qr: 'data:image/png;base64,SEGREDO' }), connect: async () => ({ state: 'qr' }), disconnect: async () => ({ state: 'disconnected' }), sync: async () => ({ count: 0 }) };
+const fakeProvider = { status: () => ({ state: 'qr', qr: 'data:image/png;base64,SEGREDO' }), connect: async () => ({ state: 'qr' }), disconnect: async () => ({ state: 'disconnected' }), sync: async () => ({ count: 0 }), hasPairedSession: async () => false };
 const anon = { host: 'localhost', origin: PANEL };
 
 test('every API route denies access without a session, including the QR code', async () => {
@@ -933,7 +947,7 @@ test('pace, failures and retries on a shared number: no duplicate and no send fa
 // ─── Papéis e autorização (ADR-016) ─────────────────────────────────────────────
 // Um app separado com uma rota administrativa de prova: ainda não existem rotas de admin.
 function roleApp() {
-  const probe = buildApp({ status: () => ({ state: 'disconnected' }), connect: async () => ({ state: 'disconnected' }), disconnect: async () => ({ state: 'disconnected' }), sync: async () => ({ count: 0 }) });
+  const probe = buildApp({ status: () => ({ state: 'disconnected' }), connect: async () => ({ state: 'disconnected' }), disconnect: async () => ({ state: 'disconnected' }), sync: async () => ({ count: 0 }), hasPairedSession: async () => false });
   probe.get('/api/admin/probe', { preHandler: requireSuperAdmin }, async request => ({ ok: true, role: request.user!.role }));
   probe.post('/api/admin/probe', { preHandler: requireSuperAdmin }, async () => ({ ok: true }));
   return probe;
@@ -1470,6 +1484,7 @@ function managerFor(behaviour: Record<string, FakeBehaviour> = {}) {
         },
         disconnect: async () => { calls.get(ownerId)!.push('disconnect'); state.state = 'disconnected'; state.accountJid = undefined; return { ...state }; },
         stop: async () => { calls.get(ownerId)!.push('stop'); },
+        sync: async () => { calls.get(ownerId)!.push('sync'); return { count: 0 }; },
       };
     },
   });
@@ -1567,6 +1582,179 @@ test('lifecycle (4B): session row keeps only lifecycle data; disconnect clears t
     assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } })).accountJid, null);
     legacyIntact();
   } finally { await manager.stopAll(); cleanup(); }
+});
+
+// ─── Rotas do WhatsApp por usuário (ADR-021, Fase 4C) ───────────────────────────
+// App próprio: conexão global legada e gerenciador com pasta temporária. Nenhum socket é
+// aberto e a sessão real do dono nunca entra nestes testes.
+function whatsappApp(options: { legacyPaired?: boolean; legacyState?: string } = {}) {
+  const sessionsBase = mkdtempSync(join(tmpdir(), 'wa-rotas-'));
+  mkdirSync(join(sessionsBase, 'whatsapp'), { recursive: true });
+  writeFileSync(join(sessionsBase, 'whatsapp', 'creds.json'), '{"me":{"id":"legado@s.whatsapp.net"}}');
+  const legacyCalls: string[] = [];
+  const legacy = {
+    status: () => ({ state: options.legacyState ?? 'connected', accountJid: '5511LEGADO@s.whatsapp.net', qr: 'qr-da-sessao-legada' }),
+    connect: async () => { legacyCalls.push('connect'); return { state: 'connected', accountJid: '5511LEGADO@s.whatsapp.net' }; },
+    disconnect: async () => { legacyCalls.push('disconnect'); return { state: 'disconnected' }; },
+    sync: async (ownerId: string) => { legacyCalls.push(`sync:${ownerId}`); return { count: 7 }; },
+    hasPairedSession: async () => options.legacyPaired ?? true,
+  };
+  const perUser = new Map<string, { calls: string[]; state: { state: string; qr?: string; accountJid?: string } }>();
+  const manager = new WhatsAppManager({
+    sessionsBase,
+    createProvider: (ownerId, sessionDir) => {
+      const entry = { calls: [] as string[], state: { state: 'disconnected' as string, qr: undefined as string | undefined, accountJid: undefined as string | undefined } };
+      perUser.set(ownerId, entry);
+      return {
+        ownerId, sessionDir,
+        status: () => ({ ...entry.state }),
+        hasPairedSession: async () => false,
+        connect: async () => { entry.calls.push('connect'); entry.state = { state: 'qr', qr: `qr-de-${ownerId}`, accountJid: undefined }; return { ...entry.state }; },
+        disconnect: async () => { entry.calls.push('disconnect'); entry.state = { state: 'disconnected', qr: undefined, accountJid: undefined }; return { ...entry.state }; },
+        stop: async () => { entry.calls.push('stop'); },
+        sync: async (owner: string) => { entry.calls.push(`sync:${owner}`); return { count: 3 }; },
+      };
+    },
+  });
+  const instance = buildApp(legacy, loadConfig({}), manager);
+  return { app: instance, manager, legacy, legacyCalls, perUser, sessionsBase, cleanup: async () => { await instance.close(); rmSync(sessionsBase, { recursive: true, force: true }); } };
+}
+async function sessionFor(instance: ReturnType<typeof buildApp>, email: string, role: 'USER' | 'SUPER_ADMIN' = 'USER') {
+  await prisma.user.upsert({ where: { email }, update: { role, disabledAt: null }, create: { email, name: email.split('@')[0], role, passwordHash: await hashPassword('senha-de-teste-123') } });
+  const login = await instance.inject({ method: 'POST', url: '/api/auth/login', headers: { host: 'localhost', origin: PANEL }, payload: { email, password: 'senha-de-teste-123' } });
+  assert.equal(login.statusCode, 200, login.body);
+  const cookie = String(login.headers['set-cookie']).split(';')[0];
+  const user = login.json().user as { id: string };
+  const call = (method: 'GET' | 'POST', path: string, payload?: object, extra: Record<string, string> = {}) =>
+    instance.inject({ method, url: `/api/whatsapp/${path}`, payload, headers: { host: 'localhost', origin: PANEL, cookie, ...extra } });
+  return { user, call };
+}
+/** Deixa apenas este usuário como SUPER_ADMIN ativo (a ponte legada exige dono inequívoco). */
+async function onlySuperAdmin(userId: string) {
+  const previous = await prisma.user.findMany({ where: { role: 'SUPER_ADMIN', disabledAt: null, NOT: { id: userId } }, select: { id: true } });
+  await prisma.user.updateMany({ where: { id: { in: previous.map(u => u.id) } }, data: { role: 'USER' } });
+  return async () => { await prisma.user.updateMany({ where: { id: { in: previous.map(u => u.id) } }, data: { role: 'SUPER_ADMIN' } }); };
+}
+
+test('whatsapp routes (4C): status, QR, connect, disconnect and sync are isolated per user', async () => {
+  const world = whatsappApp();
+  try {
+    const a = await sessionFor(world.app, 'rota-a@teste.local');
+    const b = await sessionFor(world.app, 'rota-b@teste.local');
+    // Usuário sem conexão: estado próprio, vazio.
+    assert.deepEqual((await a.call('GET', 'status')).json(), { state: 'disconnected' });
+    // A conecta: o QR é só dele e vem da memória do provider dele.
+    assert.equal((await a.call('POST', 'connect')).json().qr, `qr-de-${a.user.id}`);
+    assert.deepEqual((await b.call('GET', 'status')).json(), { state: 'disconnected' }, 'B não vê o QR nem o estado de A');
+    assert.equal((await a.call('GET', 'status')).json().qr, `qr-de-${a.user.id}`);
+    assert.deepEqual(world.perUser.get(b.user.id)?.calls ?? [], [], 'nada foi chamado no provider de B');
+    // Sincronizar usa o provider e o dono de quem pediu.
+    assert.equal((await b.call('POST', 'sync')).json().count, 3);
+    assert.deepEqual(world.perUser.get(b.user.id)!.calls, ['sync:' + b.user.id]);
+    assert.ok(!world.perUser.get(a.user.id)!.calls.includes(`sync:${b.user.id}`));
+    // Desconectar A não encosta em B.
+    await b.call('POST', 'connect');
+    await a.call('POST', 'disconnect');
+    assert.deepEqual(world.perUser.get(a.user.id)!.calls, ['connect', 'disconnect']);
+    assert.equal(world.perUser.get(b.user.id)!.state.state, 'qr', 'a conexão de B continua de pé');
+    assert.equal((await b.call('GET', 'status')).json().qr, `qr-de-${b.user.id}`);
+    // Nenhum deles tocou na conexão global legada.
+    assert.deepEqual(world.legacyCalls, []);
+  } finally { await world.cleanup(); }
+});
+
+test('whatsapp routes (4C): userId in body, query or headers never changes whose connection is used', async () => {
+  const world = whatsappApp();
+  try {
+    const a = await sessionFor(world.app, 'rota-spoof-a@teste.local');
+    const b = await sessionFor(world.app, 'rota-spoof-b@teste.local');
+    await b.call('POST', 'connect');
+    const spoof = { 'x-user-id': b.user.id, 'x-role': 'SUPER_ADMIN' };
+    assert.deepEqual((await a.call('GET', `status?userId=${b.user.id}`, undefined, spoof)).json(), { state: 'disconnected' }, 'continua sendo a conexão de A');
+    await a.call('POST', `connect?userId=${b.user.id}`, { userId: b.user.id }, spoof);
+    assert.equal((await a.call('GET', 'status')).json().qr, `qr-de-${a.user.id}`);
+    await a.call('POST', 'disconnect', { userId: b.user.id }, spoof);
+    assert.deepEqual(world.perUser.get(b.user.id)!.calls, ['connect'], 'B não foi desconectado nem sincronizado');
+    await a.call('POST', 'sync', { userId: b.user.id }, spoof);
+    assert.deepEqual(world.perUser.get(a.user.id)!.calls.filter(c => c.startsWith('sync')), [`sync:${a.user.id}`]);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: { host: 'localhost', ...spoof } })).statusCode, 401, 'sem sessão, nada');
+  } finally { await world.cleanup(); }
+});
+
+test('legacy bridge (4C): only the single active SUPER_ADMIN reaches the global session', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'rota-admin@teste.local', 'SUPER_ADMIN');
+    const user = await sessionFor(world.app, 'rota-user@teste.local');
+    // Com mais de um SUPER_ADMIN ativo o dono é ambíguo: ninguém recebe a sessão legada.
+    assert.deepEqual((await admin.call('GET', 'status')).json(), { state: 'disconnected' }, 'dono ambíguo: conexão própria, vazia');
+    const restore = await onlySuperAdmin(admin.user.id);
+    try {
+      const status = (await admin.call('GET', 'status')).json();
+      assert.equal(status.accountJid, '5511LEGADO@s.whatsapp.net', 'o dono inequívoco continua vendo a sessão legada');
+      // USER comum JAMAIS recebe a sessão global, nem forçando ids.
+      assert.deepEqual((await user.call('GET', 'status', undefined, { 'x-user-id': admin.user.id })).json(), { state: 'disconnected' });
+      assert.equal((await user.call('POST', 'sync')).json().count, 3, 'USER sincroniza pelo provider dele');
+      assert.deepEqual(world.legacyCalls, [], 'o USER não encostou na conexão global');
+      // O SUPER_ADMIN opera a legada: sincronizar e conectar vão para ela, com o dono certo.
+      assert.equal((await admin.call('POST', 'sync')).json().count, 7);
+      assert.deepEqual(world.legacyCalls, [`sync:${admin.user.id}`]);
+      // Assim que existir pasta própria (4E), a ponte se desliga sozinha.
+      mkdirSync(world.manager.sessionDirFor(admin.user.id), { recursive: true });
+      assert.deepEqual((await admin.call('GET', 'status')).json(), { state: 'disconnected' }, 'com pasta própria, a ponte sai de cena');
+      rmSync(world.manager.sessionDirFor(admin.user.id), { recursive: true, force: true });
+      // LEGACY_SESSION_OWNER apontando para outra pessoa também desliga a ponte para ele.
+      process.env.LEGACY_SESSION_OWNER = user.user.id;
+      try {
+        assert.deepEqual((await admin.call('GET', 'status')).json(), { state: 'disconnected' });
+        assert.deepEqual((await user.call('GET', 'status')).json(), { state: 'disconnected' }, 'declarar um USER não lhe dá a sessão global');
+      } finally { delete process.env.LEGACY_SESSION_OWNER; }
+    } finally { await restore(); }
+  } finally { await world.cleanup(); }
+});
+
+test('legacy bridge (4C): without a paired global session nobody gets the bridge', async () => {
+  const world = whatsappApp({ legacyPaired: false });
+  try {
+    const admin = await sessionFor(world.app, 'rota-admin-sem-sessao@teste.local', 'SUPER_ADMIN');
+    const restore = await onlySuperAdmin(admin.user.id);
+    try {
+      assert.deepEqual((await admin.call('GET', 'status')).json(), { state: 'disconnected' }, 'sem sessão legada pareada, conexão própria');
+      await admin.call('POST', 'connect');
+      assert.deepEqual(world.legacyCalls, [], 'a conexão global não é usada');
+      assert.equal(world.perUser.get(admin.user.id)!.calls[0], 'connect');
+    } finally { await restore(); }
+  } finally { await world.cleanup(); }
+});
+
+test('whatsapp routes (4C): a disabled user cannot reach any connection', async () => {
+  const world = whatsappApp();
+  try {
+    const user = await sessionFor(world.app, 'rota-desativado@teste.local');
+    await user.call('POST', 'connect');
+    await prisma.user.update({ where: { id: user.user.id }, data: { disabledAt: new Date() } });
+    for (const [method, path] of [['GET', 'status'], ['POST', 'connect'], ['POST', 'disconnect'], ['POST', 'sync']] as const) {
+      assert.equal((await user.call(method, path)).statusCode, 401, `${path}: sessão derrubada`);
+    }
+    await prisma.user.update({ where: { id: user.user.id }, data: { disabledAt: null } });
+  } finally { await world.cleanup(); }
+});
+
+test('whatsapp routes (4C): real campaigns keep using the old global path', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'rota-campanha@teste.local', 'SUPER_ADMIN');
+    const restore = await onlySuperAdmin(admin.user.id);
+    try {
+      const group = await prisma.group.create({ data: { name: 'Grupo da campanha', externalId: `120355${Date.now()}@g.us`, userId: admin.user.id } });
+      const campaign = await prisma.campaign.create({ data: { name: 'Campanha real', userId: admin.user.id, startsAt: new Date(), endsAt: new Date(), mode: 'IMMEDIATE', intervalSeconds: 180, messages: { create: [{ content: 'oi', position: 0 }] }, groups: { create: [{ groupId: group.id, position: 0 }] } } });
+      const activate = await world.app.inject({ method: 'PATCH', url: `/api/campaigns/${campaign.id}/status`, payload: { status: 'ACTIVE', provider: 'baileys', consent: true }, headers: { host: 'localhost', origin: PANEL, cookie: (await loginAs(world.app, 'rota-campanha@teste.local')).cookie } });
+      assert.equal(activate.statusCode, 200, activate.body);
+      const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+      assert.equal(saved.accountJid, '5511LEGADO@s.whatsapp.net', 'a campanha real continua saindo pelo número da conexão global');
+      assert.deepEqual(world.perUser.get(admin.user.id)?.calls ?? [], [], 'o provider novo não foi usado pelo envio');
+    } finally { await restore(); }
+  } finally { await world.cleanup(); }
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.

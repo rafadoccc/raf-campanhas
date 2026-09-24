@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import { DateTime } from 'luxon';
 import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey } from '@campaign/database';
 import { forecastQueue } from './queue-forecast';
@@ -9,10 +9,12 @@ import type { WhatsAppProvider } from './whatsapp';
 import { loadConfig, type AppConfig } from './config';
 import { registerAuth } from './auth';
 import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
+import { WhatsAppManager } from './whatsapp-manager';
+import { usesLegacySession } from './legacy-session';
 
-export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync'>;
+export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
-export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadConfig({})) {
+export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadConfig({}), manager: WhatsAppManager = new WhatsAppManager()) {
   const app = Fastify({
     trustProxy: config.trustProxy,
     // Cookie de sessão nunca vai para o log.
@@ -21,14 +23,31 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
   // Ordem importa: Host/Origem, depois sessão; só então as rotas.
   registerSecurity(app, config);
   registerAuth(app, config);
+  // Conexão do WhatsApp SEMPRE pela sessão de quem pediu (ADR-021). Nada do cliente escolhe
+  // conexão. A ponte legada só vale para o dono comprovado da sessão global (sai na 4E).
+  const legacyBridge = { legacyProvider: provider, ownSessionDir: (userId: string) => manager.sessionDirFor(userId) };
+  const connectionOf = async (request: FastifyRequest) => {
+    const owner = request.user!;
+    if (await usesLegacySession(owner, legacyBridge)) return { connection: provider as WhatsAppConnection, legacy: true, owner };
+    return { connection: manager.for(owner.id), legacy: false, owner };
+  };
   for (const [path, method] of [['status', 'GET'], ['connect', 'POST'], ['disconnect', 'POST'], ['sync', 'POST']] as const) {
     app.route({ method, url: `/api/whatsapp/${path}`, handler: async (request, reply) => {
       try {
-        if (path === 'status') return provider.status();
-        if (path === 'connect') return await provider.connect();
-        if (path === 'disconnect') return await provider.disconnect();
+        const { connection, legacy, owner } = await connectionOf(request);
+        // status: o QR vem só da memória do provider daquele usuário, nunca do banco.
+        if (path === 'status') return connection.status();
+        if (path === 'connect') {
+          const status = await connection.connect();
+          if (!legacy) await manager.persistState(owner.id);
+          return status;
+        }
+        if (path === 'disconnect') {
+          // Logout explícito: encerra e remove a autenticação SÓ deste usuário.
+          return legacy ? await connection.disconnect() : await manager.disconnect(owner.id);
+        }
         // Os grupos sincronizados pertencem a quem está logado (dono vem da sessão, ADR-017).
-        return await provider.sync(request.user!.id);
+        return await connection.sync(owner.id);
       } catch (error) {
         return reply.code(503).send({ error: publicMessage(error, 'Conector indisponível.') });
       }
