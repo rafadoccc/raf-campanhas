@@ -14,7 +14,7 @@
     "dev:web": "npm run dev --workspace=@campaign/web",
     "build": "npm run db:generate && npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && npm run build --workspace=@campaign/web",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && node --test apps/server/dist/config.test.js apps/server/dist/session-paths.test.js apps/server/dist/whatsapp-manager.test.js apps/server/dist/queue-forecast.test.js apps/server/dist/schedule.test.js apps/server/dist/clock.test.js apps/server/dist/whatsapp.test.js apps/server/dist/pairing.test.js && npm run test:polling",
+    "test": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && node --test apps/server/dist/config.test.js apps/server/dist/security.test.js apps/server/dist/session-paths.test.js apps/server/dist/whatsapp-manager.test.js apps/server/dist/queue-forecast.test.js apps/server/dist/schedule.test.js apps/server/dist/clock.test.js apps/server/dist/whatsapp.test.js apps/server/dist/pairing.test.js && npm run test:polling",
     "test:polling": "tsc --target ES2022 --module commonjs --esModuleInterop --skipLibCheck --outDir .tmp/polling-tests apps/web/src/lib/visible-polling.ts apps/web/src/lib/visible-polling.test.ts && node --test .tmp/polling-tests/visible-polling.test.js",
     "test:integration": "npm run build --workspace=@campaign/database && npm run build --workspace=@campaign/server && node --env-file=.env scripts/test-integration.cjs",
     "db:generate": "prisma generate --schema=packages/database/prisma/schema.prisma",
@@ -24,6 +24,7 @@
     "build:exe": "node scripts/build-exe.mjs",
     "dev:server": "npm run dev --workspace=@campaign/server",
     "user:create": "node --env-file=.env scripts/user-create.mjs",
+    "whatsapp:reverter-migracao": "node --env-file=.env scripts/session-rollback.mjs",
     "start": "node server.js"
   },
   "engines": {

@@ -588,3 +588,172 @@ organizações, um WhatsApp por USER (decisões do dono; Fases 2+ ainda não imp
 - **Selo/metadata do grupo:** `send` recebe o `groupId` da entrega e atualiza só aquela linha.
 - **Pacing intacto** (ADR-015): um envio por vez no sistema, relógio por número persistido.
   Paralelismo entre números continua sendo Fase 5.
+
+
+## ADR-023 · Auditoria de segurança de ponta a ponta (2026-09-24)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+**Corrigido:**
+- **IP forjável (alto):** `trustProxy: true` fazia o Fastify aceitar o X-Forwarded-For do próprio
+  cliente; o limite de tentativas de login por IP podia ser contornado trocando o cabeçalho.
+  Agora só proxies da rede interna (`TRUSTED_PROXIES = 'loopback, uniquelocal'`). `TRUST_PROXY=1`
+  passa a significar isso; `0` desliga; outro valor é lista explícita.
+- **Sessão sem prazo final:** validade deslizante renovava para sempre. Teto absoluto de 30 dias
+  desde o login (`SESSION_MAX_AGE_MS`); renovação nunca passa do teto; sessões vencidas são
+  apagadas a cada 6 h (antes só no login).
+- **Memória do limitador de login:** chaves por e-mail cresciam sem limite; teto de 10 mil com
+  descarte amortizado.
+- **Vazamento em mensagens de erro:** erros do sistema (caminhos, ENOENT/EACCES, node_modules)
+  agora viram a mensagem genérica.
+- **Cabeçalhos:** `Cross-Origin-Opener-Policy` e `Cross-Origin-Resource-Policy: same-origin`.
+- **ffprobe travado (T-053):** SIGKILL 2 s depois do SIGTERM.
+
+**Verificado sem problema:** SQL sempre parametrizado; nenhum `innerHTML`/`eval` no painel;
+cookie HttpOnly + SameSite=Lax + Secure; token de 32 bytes com hash no banco; scrypt com sal e
+tempo constante; CSRF por Origin obrigatório; isolamento por dono (ADR-018/022); upload validado
+por conteúdo (sharp/ffprobe), só JPEG/PNG/MP4; nenhum segredo versionado no Git.
+
+**Risco aceito:** `deepmerge-ts` < 8 (dependência interna do CLI do Prisma). Só roda na
+ferramenta de migrations, com a nossa configuração; nenhuma entrada de usuário chega lá. A
+correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atualizar (T-049).
+**Pendente:** mídia inteira em memória no download (T-048); mídia órfã (T-052).
+
+
+## ADR-024 · Migração da sessão global para o dono (Fases 4E/4F)
+
+**Data:** 2026-09-24 · **Status:** aceita (decisão do dono) · **Autor:** claude · **Branch:** dev
+
+- `migrateLegacySession` roda na partida, ANTES de qualquer conexão: `SESSIONS_DIR/whatsapp` →
+  `SESSIONS_DIR/users/<dono>/whatsapp` por **rename atômico** (nunca cópia: dezenas de milhares
+  de arquivos). Cria `WhatsAppSession` do dono com `autoConnect` e grava
+  `users/<dono>/migracao-sessao-legada.json` (de, para, quando).
+- Dono pela MESMA regra da ponte (`legacyOwnerCandidate`). Dono ambíguo, pasta do dono já
+  existente (conflito) ou falha do sistema operacional: **nada se move**, a sessão segue na pasta
+  antiga e a ponte continua valendo. Pasta vazia criada por uma tentativa falha é removida.
+- Idempotente: depois de migrar não há sessão legada; as partidas seguintes não fazem nada.
+- `WHATSAPP_MIGRATE_LEGACY=0` desliga. Reversão: `npm run whatsapp:reverter-migracao` (sistema
+  fechado), outro rename.
+- Após a migração a ponte se desliga sozinha; o dono reconecta pelo `WhatsAppManager` sem QR e
+  envia pela própria conexão (teste de ponta a ponta).
+
+
+## ADR-025 · Envios em paralelo entre números (Fase 5)
+
+**Data:** 2026-09-24 · **Status:** aceita (decisão do dono) · **Autor:** claude · **Branch:** dev
+
+- O despachante agrupa os envios vencidos em **faixas** (`laneOf`): uma por número de WhatsApp
+  (`numero:<accountJid>`) e uma para a simulação. Dentro de uma faixa: um envio por vez, com a
+  folga `SEND_SPACING_MS` daquela faixa. Faixas diferentes andam em paralelo.
+- A rodada (scan) só entrega lotes às faixas LIVRES e não espera por elas (`busyLanes`): um
+  número lento nunca segura os outros. Uma faixa ocupada não recebe outro lote.
+- O intervalo continua garantido pelo banco (ADR-015): trava do número antes da campanha na
+  reserva e na conclusão. Faixas diferentes nunca disputam a mesma trava de número.
+- `stop()` espera os envios em andamento de todas as faixas (até 30 s); cada faixa confere
+  `stopping` antes de iniciar um envio.
+- `TRUSTED_PROXIES` inclui `100.64.0.0/10` (borda do Railway); nenhum cliente da internet chega
+  por essa faixa.
+
+
+## ADR-026 · Design system, telas e reuso de campanha (branch dev)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- **Design system** em `apps/web/src/design/`: primitivos (Button, Card, Badge, Field, Stat,
+  Alert, EmptyState, Skeleton, ScrollArea, Page…), ícones lucide-react com nomes semânticos
+  (nunca setas de texto), formatos (hora, data, tamanho, cor de destaque) e dois utilitários de
+  interação: `ConfirmProvider`/`useConfirm` (substitui `confirm()` do navegador) e
+  `useInfiniteList`/`LoadMoreSentinel` (rolagem infinita por cursor). Cantos sempre 5–6 px
+  (`tailwind.config.ts`: `DEFAULT/md 5px, lg/xl/2xl 6px`); `rounded-full` só em pontos de status.
+- **Layout de app:** `main.tsx` fixa o menu e faz o conteúdo ocupar `h-dvh` menos o menu; cada
+  tela decide o que rola (`ScrollArea`, barra invisível) em vez do documento. Telas menos usadas
+  (`React.lazy`) carregam sob demanda.
+- **Início** cabe na tela em 1366×768 sem rolar o documento: métricas em uma faixa, próximo
+  envio + gráfico dos últimos 7 dias lado a lado, "em andamento" e "atividade recente" cada um
+  com a própria rolagem.
+- **Campanhas:** cartões em grade com rolagem infinita (cursor por `createdAt`), filtro por
+  situação e busca por nome (parâmetros `status`/`q` da API); mídia como miniatura pequena; a
+  faixa lateral do cartão usa a cor predominante da imagem (`accent()`, contraste garantido).
+  Grupos do formulário em duas colunas.
+- **Editar/Reagendar/Usar de novo** (`lib/campaign-ops.ts`, único lugar com a regra, usado pela
+  lista e pelo detalhe): rascunho edita; ativa/pausada "Reagendar" chama
+  `duplicate {reschedule:true}` (cancela os envios pendentes da original na mesma transação e
+  abre uma cópia em rascunho); concluída/cancelada "Usar de novo" só copia. Excluir sempre passa
+  por `useConfirm`.
+- **Painel do SUPER_ADMIN** (`pages/admin.tsx` + `admin-routes.ts`): lista em grade de colunas
+  fixas (alinhada mesmo sem botões na própria conta), cria conta, ativa/desativa, troca papel,
+  redefine senha — nunca mostra QR, senha nem conteúdo de campanha.
+- `railway.json`: `healthcheckPath /api/health`, restart automático, uma instância.
+
+
+## ADR-028 · Piso de 3 minutos entre grupos, garantido no banco (branch dev)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- Delays entre mensagens nunca podem ficar abaixo de 3 minutos (risco de bloqueio do número pelo
+  WhatsApp). A API já recusava `intervalSeconds < 180`; isso não bastava — campanhas gravadas
+  ANTES dessa validação, ou qualquer escrita direta no banco, escapavam do piso.
+- `MIN_INTERVAL_SECONDS = 180` e `effectiveInterval(intervalSeconds)` em
+  `packages/database/src/queue.ts`: usados em `claimDelivery`, `finishDelivery` e
+  `holdInterruptedAccounts` — o piso vale mesmo que `Campaign.intervalSeconds` esteja menor.
+  `intervalFloorSeconds()` só aceita `SEND_INTERVAL_FLOOR_SECONDS` (piso mais baixo, em segundos)
+  quando `CAMPAIGN_TEST_DATABASE` está definido — nunca em produção.
+- Migration `20260924180000_min_interval` levanta para 180 s qualquer `Campaign.intervalSeconds`
+  gravado abaixo disso; nada mais muda.
+- Formulário: `min={3}` no campo com aviso explícito; mensagem de erro da API atualizada.
+
+
+## ADR-029 · Marcar todos os membros do grupo (@todos oculto)
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- Campo `Campaign.mentionAll` (boolean, padrão `false`). Quando ligado, todo envio dessa campanha
+  leva o array `mentions` do Baileys com o id de cada participante do grupo, EXCETO a própria
+  conta (`mentionTargets` em `send-context.ts`, por número ou LID). O texto da mensagem não muda
+  — é a marcação "oculta" do WhatsApp: cada participante recebe notificação de menção sem o `@`
+  aparecer escrito. Vale para texto, imagem e vídeo.
+- `mentionAll` viaja com a campanha: some da campanha usada de novo (`duplicate`), é validado
+  como booleano estrito na API e passado do despachante ao conector a cada envio
+  (`{ mentionAll: delivery.campaign.mentionAll }`), nunca lido de outro lugar.
+- Interface: checkbox própria no formulário ("Marcar todos os membros (@todos)", com o aviso de
+  que o texto não muda) e selo discreto na lista e no detalhe da campanha quando ligado.
+
+
+## ADR-030 · Tentar de novo um envio com falha
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- Duas rotas novas em `campaign-routes.ts`: `POST /deliveries/:id/retry` (um envio) e
+  `POST /campaigns/:id/retry-failed` (todas as falhas seguras de uma campanha de uma vez).
+  Reabrem o `FAILED` para `PENDING` com `scheduledAt = agora`; o piso de 3 min e o relógio do
+  número em `claimDelivery` decidem quando ele realmente sai — "agora" nunca fura o ritmo.
+  Campanha `COMPLETED` volta a `ACTIVE` para o despachante voltar a olhar para ela; `CANCELLED`
+  nunca reabre por aqui (o caminho ali é "usar de novo").
+- **Falha "certa"** (nada saiu — ADR-014) tenta de novo direto. **Falha "incerta"** (pode ter
+  chegado) exige `{ confirmUncertain: true }` explícito, senão a rota responde 409: evita duplicar
+  um envio que talvez já tenha chegado ao grupo. `isUncertainFailure` (`send-context.ts`) é a
+  ÚNICA fonte dessa classificação — a palavra "incerto" na mensagem de erro, sem uma segunda
+  marca (coluna) para não correr o risco de as duas ficarem fora de sincronia.
+- O lote por campanha nunca inclui falhas incertas: cada uma exige confirmação própria.
+- Interface: botão "Tentar de novo" por envio com falha e "Tentar de novo as falhas" em lote no
+  detalhe da campanha; falha incerta pede confirmação com aviso do risco de duplicar.
+
+
+## ADR-031 · Painel do administrador com métricas do sistema inteiro
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- `GET /api/admin/overview` (`admin-overview.ts`): contas (total/ativas/admins), campanhas por
+  situação, envios/entregas/falhas de hoje, fila agora, últimos 7 dias (enviados e falhas por
+  dia), os 5 códigos de erro mais comuns dos últimos 7 dias, WhatsApp conectados AGORA (memória
+  do processo via `manager.owners()`/`peek()`, não só o último estado gravado no banco — que pode
+  estar defasado), posse do despachante (`WorkerLease`) e uptime/memória do processo Node. Só
+  números agregados: nenhuma rota de admin retorna nome de grupo, campanha ou mensagem.
+  `prisma.$transaction(async tx => { await Promise.all([...]) })`, nunca a forma em array — com
+  13 consultas o TypeScript perde a inferência de tipo por tupla nessa versão do Prisma.
+- Duas ações por conta, separadas de "desativar" (que também pausa campanhas e derruba sessões):
+  `POST /admin/users/:id/logout` (só encerra as sessões web) e
+  `POST /admin/users/:id/whatsapp/stop` (só derruba a conexão, preservando a autenticação — a
+  pessoa reconecta sem escanear o QR de novo).
+- Tela redesenhada: cartões de métrica, gráfico dos últimos 7 dias, status do despachante e do
+  processo, badges de erro, busca por nome/e-mail e filtro por situação/papel na lista de contas.

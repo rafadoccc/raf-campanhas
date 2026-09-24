@@ -1,3 +1,5 @@
+import { effectiveInterval } from '@campaign/database';
+
 // Previsão dos envios pendentes de uma campanha: quando cada um deve sair e, se estiver
 // esperando ou atrasado, por quê. Reproduz a regra do despachante (ADR-003/014): um envio por
 // vez, na ordem da sequência, o intervalo contado do fim do anterior, e só envios já vencidos
@@ -15,7 +17,7 @@ const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
 export function forecastQueue(items: ForecastItem[], campaign: ForecastCampaign, now: Date, connected: boolean, maxAttempts: number) {
   const result = new Map<string, Wait>();
   if (!['ACTIVE', 'PAUSED'].includes(campaign.status)) return result;
-  const interval = campaign.intervalSeconds * 1000;
+  const interval = effectiveInterval(campaign.intervalSeconds) * 1000;
   const paused = campaign.status === 'PAUSED';
   let t = Math.max(now.getTime(), campaign.nextAvailableAt?.getTime() ?? 0);
 

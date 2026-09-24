@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-export type CampaignMedia = { id?: string; name: string; kind: string; size: number; mimeType: string; file?: File };
+import { Alert, Button, IconDelete, IconImage, IconUpload, IconVideo, tamanho } from '../design';
+
+export type CampaignMedia = { id?: string; name: string; kind: string; size: number; mimeType: string; color?: string | null; file?: File };
+
 export function MediaPreview({ media }: { media: CampaignMedia }) {
   const [local, setLocal] = useState('');
   useEffect(() => {
@@ -9,20 +12,34 @@ export function MediaPreview({ media }: { media: CampaignMedia }) {
   }, [media.file]);
   // Mesma origem: o cookie de sessão acompanha a imagem/vídeo.
   const src = media.file ? local : `/api/media/${media.id}`;
-  return <div className="mt-3 space-y-2"><p className="break-all text-sm">{media.name} · {(media.size / 1_000_000).toFixed(2)} MB</p>{src && (media.kind === 'image' ? <img src={src} alt={`Mídia da campanha: ${media.name}`} className="max-h-64 max-w-full rounded-lg object-contain" /> : <video src={src} controls preload="metadata" className="max-h-64 max-w-full rounded-lg" />)}</div>;
+  const Icon = media.kind === 'image' ? IconImage : IconVideo;
+  return <div className="mt-3 space-y-2">
+    <p className="flex items-center gap-1.5 break-all text-xs text-muted"><Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />{media.name} · {tamanho(media.size)}</p>
+    {src && (media.kind === 'image'
+      ? <img src={src} alt={`Mídia da campanha: ${media.name}`} loading="lazy" decoding="async" className="max-h-64 max-w-full rounded object-contain" />
+      : <video src={src} controls preload="metadata" className="max-h-64 max-w-full rounded" />)}
+  </div>;
 }
+
 export function CampaignMediaInput({ value, onChange, disabled }: { value: CampaignMedia | null; onChange(value: CampaignMedia | null): void; disabled: boolean }) {
   const input = useRef<HTMLInputElement>(null); const [error, setError] = useState('');
-  return <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-6"><h2 className="font-semibold">Mídia <span className="font-normal text-slate-400">(opcional)</span></h2><p className="text-xs text-slate-500">Imagem JPEG/PNG até 16 MB ou vídeo MP4 até 64 MB. A mensagem vira a legenda.</p>
+  return <section className="space-y-3 rounded-lg border border-line bg-white p-4 shadow-card">
+    <div>
+      <h2 className="text-sm font-semibold">Mídia <span className="font-normal text-slate-400">(opcional)</span></h2>
+      <p className="text-2xs text-muted">Imagem JPEG/PNG até 16 MB ou vídeo MP4 até 64 MB. A mensagem vira a legenda, e a cor da imagem vira a cor da campanha.</p>
+    </div>
     <input ref={input} type="file" accept="image/jpeg,image/png,video/mp4" className="hidden" disabled={disabled} onChange={event => {
       const file = event.target.files?.[0]; event.target.value = ''; setError(''); if (!file) return;
       if (!['image/jpeg', 'image/png', 'video/mp4'].includes(file.type)) { setError('Selecione JPEG, PNG ou MP4.'); return; }
       const kind = file.type === 'video/mp4' ? 'video' : 'image';
-      if (!file.size || file.size > (kind === 'image' ? 16_000_000 : 64_000_000)) { setError('Arquivo vazio ou acima do limite informado.'); return; }
+      if (!file.size || file.size > (kind === 'image' ? 16_000_000 : 64_000_000)) { setError('Arquivo vazio ou acima do limite.'); return; }
       onChange({ name: file.name, size: file.size, mimeType: file.type, kind, file });
     }} />
-    <button type="button" disabled={disabled} onClick={() => input.current?.click()} className="rounded border px-3 py-2 text-emerald-700 disabled:opacity-50">{value ? 'Trocar mídia' : 'Adicionar mídia'}</button>
-    {value && <><button type="button" disabled={disabled} onClick={() => { onChange(null); setError(''); }} className="ml-3 text-sm text-red-700">Remover mídia</button><MediaPreview media={value} /></>}
-    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+    <div className="flex flex-wrap gap-2">
+      <Button icon={IconUpload} disabled={disabled} onClick={() => input.current?.click()}>{value ? 'Trocar mídia' : 'Adicionar mídia'}</Button>
+      {value && <Button variant="danger" icon={IconDelete} disabled={disabled} onClick={() => { onChange(null); setError(''); }}>Remover</Button>}
+    </div>
+    {value && <MediaPreview media={value} />}
+    {error && <Alert>{error}</Alert>}
   </section>;
 }

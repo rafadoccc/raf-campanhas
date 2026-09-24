@@ -31,9 +31,12 @@ export function registerSecurity(app: FastifyInstance, config: AppConfig) {
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Referrer-Policy', 'same-origin');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    reply.header('Cross-Origin-Opener-Policy', 'same-origin');
+    reply.header('Cross-Origin-Resource-Policy', 'same-origin');
     reply.header('Content-Security-Policy', CSP);
     if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=31536000');
-    if (request.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
+    // API sem cache, exceto quando a rota define o próprio (mídia imutável: cache privado).
+    if (request.url.startsWith('/api/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
     return payload;
   });
 
@@ -79,5 +82,7 @@ export class NotFoundError extends Error {}
 export function publicMessage(error: unknown, fallback: string) {
   if (!(error instanceof Error)) return fallback;
   if (error.constructor.name.startsWith('PrismaClient') || /prisma|invocation|ECONN|SQL/i.test(error.message)) return fallback;
+  // Erro do sistema operacional (arquivo, rede, permissão): traz caminhos e detalhes da máquina.
+  if ('syscall' in error || 'errno' in error || /\bE[A-Z]{2,}:|[A-Za-z]:\\|\/(?:home|usr|var|tmp|etc|root|app|data|opt)\/|node_modules/.test(error.message)) return fallback;
   return error.message;
 }

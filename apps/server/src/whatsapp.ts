@@ -2,7 +2,7 @@ import path from 'node:path';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads, applyServerEvent, type ServerEvent } from '@campaign/database';
-import { describeGroupForSend, notSent } from './send-context';
+import { describeGroupForSend, mentionTargets, notSent } from './send-context';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
 import { closeAction } from './connection-policy';
@@ -267,22 +267,24 @@ export class WhatsAppProvider {
     }, { timeout: 30000 });
     return { count: groups.length };
   }
-  async send(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string) {
+  async send(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string, options: { mentionAll?: boolean } = {}) {
     // Tudo até o sendMessage: uma falha aqui garante que nada saiu (reenvio permitido, ADR-014).
-    const { sock, content, group } = await this.prepareSend(groupJid, text, accountJid, media, groupId).catch(error => { throw notSent(error); });
+    const { sock, content, group } = await this.prepareSend(groupJid, text, accountJid, media, groupId, options).catch(error => { throw notSent(error); });
     // Daqui em diante o resultado pode ser incerto: nunca é reenviado automaticamente.
     const result = await sock.sendMessage(groupJid, content);
     if (!result?.key.id) throw new Error('Resultado do envio desconhecido. Confira no celular antes de reenviar.');
     // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
     return { messageId: result.key.id, context: group.context };
   }
-  private async prepareSend(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string) {
+  private async prepareSend(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string, options: { mentionAll?: boolean } = {}) {
     const sock = this.connected();
     if (accountJid !== this.data.accountJid) throw new Error('Número conectado difere do número da campanha.');
     if (!groupJid.endsWith('@g.us')) throw new Error('Destino não é um grupo.');
     // Registra a situação do grupo (membro, admin, só admins enviam) para explicar uma
     // eventual recusa do servidor.
-    const group = describeGroupForSend(await sock.groupMetadata(groupJid), { id: sock.user?.id, lid: sock.user?.lid });
+    const metadata = await sock.groupMetadata(groupJid);
+    const me = { id: sock.user?.id, lid: sock.user?.lid };
+    const group = describeGroupForSend(metadata, me);
     // Mantém selo (só admins / você é admin) e membros atualizados. Atinge SOMENTE o grupo
     // desta entrega (ADR-022): dois usuários podem ter o mesmo grupo, com situações diferentes.
     const alvo = groupId ? { id: groupId } : { externalId: groupJid, ...(this.ownerId ? { userId: this.ownerId } : {}) };
@@ -294,10 +296,15 @@ export class WhatsAppProvider {
     }
     if (this.socket !== sock || this.data.state !== 'connected') throw new Error('Conexão interrompida antes do envio.');
     if (media && !['image', 'video'].includes(media.kind)) throw Error('Tipo de mídia inválido.');
-    const content = !media ? { text } : media.kind === 'image'
-      ? { image: Buffer.from(media.data), mimetype: media.mimeType, caption: text }
-      : { video: Buffer.from(media.data), mimetype: media.mimeType, caption: text };
-    return { sock, content, group };
+    // "Marcar todos" (ADR-029): cada membro recebe a notificação de menção; o texto não muda.
+    // Funciona igual em texto, imagem e vídeo (a menção vai junto da legenda).
+    const mentions = options.mentionAll ? mentionTargets(metadata, me) : [];
+    const tag = mentions.length ? { mentions } : {};
+    const content = !media ? { text, ...tag } : media.kind === 'image'
+      ? { image: Buffer.from(media.data), mimetype: media.mimeType, caption: text, ...tag }
+      : { video: Buffer.from(media.data), mimetype: media.mimeType, caption: text, ...tag };
+    const context = options.mentionAll ? `${group.context} mencoes=${mentions.length}`.slice(0, 160) : group.context;
+    return { sock, content, group: { ...group, context } };
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);

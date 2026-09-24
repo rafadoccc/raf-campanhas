@@ -2,17 +2,20 @@ import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
-import { hashPassword, requireSuperAdmin, bootstrapAdmin } from './auth';
+import { hashPassword, requireSuperAdmin, bootstrapAdmin, SESSION_MAX_AGE_MS } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
 import { staticRouter, createSendingRouter } from './sending-router';
+import { migrateLegacySession, rollbackLegacySession, migrationRecordPath } from './session-migration';
+import { legacySessionOwnerId } from './legacy-session';
+import { whatsappSessionDir } from './session-paths';
 import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
-import { loadConfig } from './config';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { loadConfig, TRUSTED_PROXIES } from './config';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
-import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT } from './media';
+import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -154,11 +157,11 @@ test('dashboard orders campaign heads by effective time and omits paused campaig
 
 test('draft editing preserves ID, replaces configuration, and rejects editing after activation', async () => {
   const { id, groups } = await create(2);
-  const payload = { name: 'Editada', mode: 'IMMEDIATE', intervalSeconds: 60, messages: ['novo texto', 'segunda'], groupIds: groups.map(g => g.id).reverse() };
+  const payload = { name: 'Editada', mode: 'IMMEDIATE', intervalSeconds: 240, messages: ['novo texto', 'segunda'], groupIds: groups.map(g => g.id).reverse() };
   const result = await request('PATCH', `/campaigns/${id}`, payload);
   assert.equal(result.statusCode, 200, result.body); assert.equal(result.json().id, id);
   const detail = (await request('GET', `/campaigns/${id}`)).json();
-  assert.equal(detail.name, 'Editada'); assert.equal(detail.intervalSeconds, 60);
+  assert.equal(detail.name, 'Editada'); assert.equal(detail.intervalSeconds, 240);
   assert.deepEqual(detail.groups.map((g: { groupId: string }) => g.groupId), payload.groupIds);
   assert.deepEqual(detail.messages.map((m: { content: string }) => m.content), payload.messages);
   assert.equal((await deliveries(id)).length, 0);
@@ -211,7 +214,7 @@ test('stop cancels pending; soft delete preserves historical records and is idem
   assert.equal((await request('DELETE', `/campaigns/${id}`)).statusCode, 200);
   assert.equal((await deliveries(id)).length, 3);
   assert.equal((await request('GET', `/campaigns/${id}`)).statusCode, 404);
-  assert.ok(!(await request('GET', '/campaigns')).json().some((c: {id: string}) => c.id === id));
+  assert.ok(!(await request('GET', '/campaigns')).json().items.some((c: {id: string}) => c.id === id));
 });
 test('uncertain failure never retries; next group continues after the interval', async () => {
   const { id } = await create(2); await activate(id); const rows = await deliveries(id); const at = new Date(rows[0].scheduledAt.getTime() + 1);
@@ -235,7 +238,7 @@ test('restart preserves durable claim and pending order with a fresh database cl
   } finally { await fresh.$disconnect(); }
 });
 test('invalid intervals rejected; 100 groups persist in selection order', async () => {
-  for (const intervalSeconds of [0, -1, 59, 3601, 90.5, '180']) assert.equal((await request('POST', '/campaigns', { name: 'Invalid', intervalSeconds })).statusCode, 400);
+  for (const intervalSeconds of [0, -1, 59, 60, 179, 3601, 90.5, '180']) assert.equal((await request('POST', '/campaigns', { name: 'Invalid', intervalSeconds })).statusCode, 400);
   const { id, groups } = await create(100); await activate(id);
   assert.deepEqual((await deliveries(id)).map(r => r.groupId), groups.map(g => g.id));
 });
@@ -341,7 +344,7 @@ test('closed campaign retains old group reads while dashboard success uses today
   assert.equal(dashboard.sentToday, 1); assert.equal(dashboard.failedToday, 1); assert.equal(dashboard.successRate, 50);
   assert.ok(dashboard.recentActivity.some((e: { id: string; status: string }) => e.id === rows[0].id && e.status === 'SENT'));
   assert.ok(dashboard.recentActivity.some((e: { id: string; status: string }) => e.id === rows[1].id && e.status === 'FAILED'));
-  assert.ok(dashboard.recentActivity.length <= 8);
+  assert.ok(dashboard.recentActivity.length <= 20, 'atividade recente: até 20 itens (rolagem própria na tela)');
 });
 
 test('server time remains authoritative with a wrong client time and timezone', async () => {
@@ -424,7 +427,7 @@ test('health reports the database, text columns keep long content and accents in
 
   const longMessage = 'Olá, ação! 🎉 ' + 'x'.repeat(9_980);
   const group = await prisma.group.create({ data: { name: 'São João — Coração 💚', userId: ownerId } });
-  const r = await request('POST', '/campaigns', { name: 'Ç'.repeat(200), mode: 'IMMEDIATE', intervalSeconds: 60, messages: [longMessage], groupIds: [group.id] });
+  const r = await request('POST', '/campaigns', { name: 'Ç'.repeat(200), mode: 'IMMEDIATE', intervalSeconds: 180, messages: [longMessage], groupIds: [group.id] });
   assert.equal(r.statusCode, 201, r.body);
   const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: r.json().id }, include: { messages: true } });
   assert.equal(saved.name, 'Ç'.repeat(200));
@@ -493,7 +496,7 @@ test('login sets a hardened cookie, logout and expiry end the session, wrong pas
 test('published URL: secure cookie, only its host and origin accepted, security headers on every response', async () => {
   const config = loadConfig({ PUBLIC_URL: 'https://campanhas.exemplo.com.br', PORT: '8080' });
   assert.equal(config.host, '0.0.0.0');
-  assert.equal(config.trustProxy, true);
+  assert.equal(config.trustProxy, TRUSTED_PROXIES, 'só proxies da rede interna, nunca o cabeçalho do cliente');
   const probe = buildApp(fakeProvider, config);
   const site = { host: 'campanhas.exemplo.com.br', origin: 'https://campanhas.exemplo.com.br' };
   try {
@@ -1287,8 +1290,8 @@ const withoutClock = (dashboard: Record<string, unknown>) => { const { serverNow
 
 test('isolation: each user lists only their own campaigns, groups and deliveries', async () => {
   const { a, b, A, B } = await isoWorld();
-  assert.deepEqual(ids((await a.call('GET', '/campaigns')).json()), [A.campaignId], '1. A lista só as campanhas de A');
-  assert.deepEqual(ids((await b.call('GET', '/campaigns')).json()), [B.campaignId], '2. B lista só as campanhas de B');
+  assert.deepEqual(ids((await a.call('GET', '/campaigns')).json().items), [A.campaignId], '1. A lista só as campanhas de A');
+  assert.deepEqual(ids((await b.call('GET', '/campaigns')).json().items), [B.campaignId], '2. B lista só as campanhas de B');
   assert.deepEqual(ids((await a.call('GET', '/groups')).json()), [A.groupId]);
   assert.deepEqual(ids((await b.call('GET', '/groups')).json()), [B.groupId]);
   const historyB = (await b.call('GET', '/deliveries')).json() as { campaignId: string }[];
@@ -1373,7 +1376,7 @@ test('isolation: SUPER_ADMIN sees only their own data on the normal routes', asy
   const { A, B } = await isoWorld();
   const admin = await isoUser('iso-super@teste.local', 'SUPER_ADMIN');
   const own = await ownData(admin, 'S');
-  assert.deepEqual(ids((await admin.call('GET', '/campaigns')).json()), [own.campaignId], '14. só as campanhas dele');
+  assert.deepEqual(ids((await admin.call('GET', '/campaigns')).json().items), [own.campaignId], '14. só as campanhas dele');
   assert.deepEqual(ids((await admin.call('GET', '/groups')).json()), [own.groupId]);
   assert.deepEqual((await admin.call('GET', '/deliveries')).json(), []);
   const dashboard = (await admin.call('GET', '/dashboard')).json();
@@ -1389,7 +1392,7 @@ test('isolation: userId in body, query or headers never widens or changes the sc
   const { a, b, A, B } = await isoWorld();
   const spoof = { 'x-user-id': b.user.id, 'x-owner-id': b.user.id, cookie: '' };
   const asA = (method: Method, url: string, payload?: object) => a.call(method, url, payload, { 'x-user-id': b.user.id, 'x-role': 'SUPER_ADMIN' });
-  assert.deepEqual(ids((await asA('GET', `/campaigns?userId=${b.user.id}`)).json()), [A.campaignId], '15. query/cabeçalho ignorados');
+  assert.deepEqual(ids((await asA('GET', `/campaigns?userId=${b.user.id}`)).json().items), [A.campaignId], '15. query/cabeçalho ignorados');
   assert.deepEqual(ids((await asA('GET', `/groups?userId=${b.user.id}`)).json()), ids(await prisma.group.findMany({ where: { userId: a.user.id } })), 'só os grupos de A');
   assert.deepEqual((await asA('GET', `/deliveries?userId=${b.user.id}`)).json(), []);
   assert.deepEqual(withoutClock((await asA('GET', `/dashboard?userId=${b.user.id}`)).json()), withoutClock((await a.call('GET', '/dashboard')).json()));
@@ -2044,6 +2047,606 @@ test('groups (4D): sending for one owner updates only that owner group row', asy
     const depoisB = await prisma.group.findUniqueOrThrow({ where: { id: grupoB.id } });
     assert.deepEqual(depoisB, antesB, 'o grupo de B ficou idêntico');
   } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+// ─── Endurecimento de segurança (ADR-023) ───────────────────────────────────────
+test('sessions: an absolute 30-day limit applies even to a session used every day', async () => {
+  const email = 'sessao-antiga@teste.local';
+  await prisma.user.upsert({ where: { email }, update: { disabledAt: null }, create: { email, name: 'Antiga', passwordHash: await hashPassword('senha-de-teste-123') } });
+  const login = await loginAs(app, email);
+  const headers = { host: 'localhost', origin: PANEL, cookie: login.cookie };
+  const session = await prisma.authSession.findFirstOrThrow({ where: { user: { email } }, orderBy: { createdAt: 'desc' } });
+  // Quase no limite: a renovação deslizante nunca passa do prazo absoluto.
+  const nearLimit = new Date(Date.now() - SESSION_MAX_AGE_MS + 3_600_000);
+  await prisma.authSession.update({ where: { id: session.id }, data: { createdAt: nearLimit, expiresAt: new Date(Date.now() + 60_000) } });
+  assert.equal((await app.inject({ method: 'GET', url: '/api/auth/me', headers })).statusCode, 200);
+  const renewed = await prisma.authSession.findUniqueOrThrow({ where: { id: session.id } });
+  assert.ok(renewed.expiresAt.getTime() <= nearLimit.getTime() + SESSION_MAX_AGE_MS, 'renovação limitada ao prazo absoluto');
+  // Além do prazo: sessão recusada e apagada, mesmo com expiresAt no futuro.
+  await prisma.authSession.update({ where: { id: session.id }, data: { createdAt: new Date(Date.now() - SESSION_MAX_AGE_MS - 1000), expiresAt: new Date(Date.now() + 86_400_000) } });
+  assert.equal((await app.inject({ method: 'GET', url: '/api/auth/me', headers })).statusCode, 401);
+  assert.equal(await prisma.authSession.count({ where: { id: session.id } }), 0, 'a sessão vencida sai do banco');
+});
+
+test('headers: responses carry the isolation headers', async () => {
+  const r = await app.inject({ method: 'GET', url: '/api/health', headers: { host: 'localhost' } });
+  assert.equal(r.headers['cross-origin-opener-policy'], 'same-origin');
+  assert.equal(r.headers['cross-origin-resource-policy'], 'same-origin');
+  assert.equal(r.headers['x-content-type-options'], 'nosniff');
+  assert.equal(r.headers['x-frame-options'], 'DENY');
+  assert.match(String(r.headers['content-security-policy']), /frame-ancestors 'none'/);
+});
+
+// ─── Migração da sessão legada (ADR-024, Fase 4E) e ponta a ponta (4F) ──────────
+// Sessões FALSAS em pastas temporárias. A sessão real do dono nunca entra aqui.
+function fakeLegacySession(files = 40) {
+  const base = mkdtempSync(join(tmpdir(), 'wa-migra-'));
+  const legacy = join(base, 'whatsapp');
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, 'creds.json'), JSON.stringify({ me: { id: '5511MIGRA:7@s.whatsapp.net', lid: '99@lid' }, noiseKey: { private: 'x' } }));
+  for (let i = 0; i < files; i++) writeFileSync(join(legacy, `session-${i}.json`), JSON.stringify({ chave: i, dado: 'y'.repeat(50) }));
+  const snapshot = (dir: string) => Object.fromEntries(readdirSync(dir).sort().map(name => [name, readFileSync(join(dir, name), 'utf8')]));
+  return { base, legacy, snapshot, before: snapshot(legacy), cleanup: () => rmSync(base, { recursive: true, force: true }) };
+}
+async function migrationOwner() {
+  const owner = await prisma.user.upsert({ where: { email: 'migra-dono@teste.local' }, update: { role: 'SUPER_ADMIN', disabledAt: null }, create: { email: 'migra-dono@teste.local', name: 'Dono', role: 'SUPER_ADMIN', passwordHash: await hashPassword('senha-de-teste-123') } });
+  const restore = await onlySuperAdmin(owner.id);
+  return { owner, restore };
+}
+const quiet = { log: () => undefined };
+
+test('migration (4E): the global session becomes the owner session, byte for byte, without QR', async () => {
+  const session = fakeLegacySession();
+  const { owner, restore } = await migrationOwner();
+  try {
+    const result = await migrateLegacySession({ sessionsBase: session.base, ...quiet });
+    assert.equal(result.outcome, 'migrada');
+    const target = whatsappSessionDir(owner.id, session.base);
+    assert.ok(!existsSync(session.legacy), 'a pasta global deixou de existir (foi movida, não copiada)');
+    assert.deepEqual(session.snapshot(target), session.before, 'todos os arquivos idênticos na pasta do dono');
+    assert.ok(existsSync(migrationRecordPath(owner.id, session.base)), 'registro da migração ao lado da pasta');
+    const row = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: owner.id } });
+    assert.equal(row.autoConnect, true, 'reconecta sozinha na partida');
+    // Idempotente: a próxima partida não faz nada.
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, ...quiet })).outcome, 'sem-sessao-legada');
+    assert.deepEqual(session.snapshot(target), session.before);
+    // A ponte legada se desliga sozinha.
+    assert.equal(await legacySessionOwnerId({ legacyProvider: { hasPairedSession: async () => existsSync(join(session.legacy, 'creds.json')) }, ownSessionDir: id => whatsappSessionDir(id, session.base) }), null);
+    // Reverter devolve tudo, idêntico.
+    assert.equal((await rollbackLegacySession(owner.id, { sessionsBase: session.base })).outcome, 'revertida');
+    assert.deepEqual(session.snapshot(session.legacy), session.before);
+    assert.ok(!existsSync(target));
+    assert.equal((await rollbackLegacySession(owner.id, { sessionsBase: session.base })).outcome, 'nada-a-reverter');
+  } finally { await prisma.whatsAppSession.deleteMany({ where: { userId: owner.id } }); await restore(); session.cleanup(); }
+});
+
+test('migration (4E): with an ambiguous owner, a conflict or an OS failure nothing moves', async () => {
+  // Dono ambíguo: dois SUPER_ADMIN ativos.
+  let session = fakeLegacySession(5);
+  const outro = await prisma.user.upsert({ where: { email: 'migra-outro@teste.local' }, update: { role: 'SUPER_ADMIN', disabledAt: null }, create: { email: 'migra-outro@teste.local', name: 'Outro', role: 'SUPER_ADMIN', passwordHash: 'x' } });
+  try {
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, ...quiet })).outcome, 'dono-ambiguo');
+    assert.deepEqual(session.snapshot(session.legacy), session.before, 'nada mudou');
+    assert.ok(!existsSync(join(session.base, 'users')), 'nenhuma pasta nova');
+  } finally { await prisma.user.update({ where: { id: outro.id }, data: { role: 'USER' } }); session.cleanup(); }
+
+  const { owner, restore } = await migrationOwner();
+  try {
+    // Conflito: a pasta do dono já existe (ex.: pareou de novo pelo painel).
+    session = fakeLegacySession(5);
+    mkdirSync(whatsappSessionDir(owner.id, session.base), { recursive: true });
+    writeFileSync(join(whatsappSessionDir(owner.id, session.base), 'creds.json'), '{"me":{"id":"novo"}}');
+    const conflict = await migrateLegacySession({ sessionsBase: session.base, ...quiet });
+    assert.equal(conflict.outcome, 'conflito');
+    assert.deepEqual(session.snapshot(session.legacy), session.before, 'a legada ficou intacta');
+    assert.equal(readFileSync(join(whatsappSessionDir(owner.id, session.base), 'creds.json'), 'utf8'), '{"me":{"id":"novo"}}', 'a nova também');
+    session.cleanup();
+
+    // Falha do sistema operacional (arquivo em uso): nada se perde e a ponte segue valendo.
+    session = fakeLegacySession(5);
+    const failed = await migrateLegacySession({ sessionsBase: session.base, renameDir: async () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); }, ...quiet });
+    assert.deepEqual([failed.outcome, 'detail' in failed ? failed.detail : ''], ['falhou', 'EBUSY']);
+    assert.deepEqual(session.snapshot(session.legacy), session.before);
+    assert.ok(!existsSync(whatsappSessionDir(owner.id, session.base)), 'não sobra pasta vazia que desligaria a ponte');
+    assert.equal(await legacySessionOwnerId({ legacyProvider: { hasPairedSession: async () => true }, ownSessionDir: id => whatsappSessionDir(id, session.base) }), owner.id, 'a ponte continua levando ao dono');
+
+    // Desligada por variável de ambiente.
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, env: { WHATSAPP_MIGRATE_LEGACY: '0' }, ...quiet })).outcome, 'desligada');
+    assert.deepEqual(session.snapshot(session.legacy), session.before);
+  } finally { await restore(); session.cleanup(); }
+});
+
+test('end to end (4F): after migration the owner reconnects by himself and sends through his own connection', async () => {
+  const session = fakeLegacySession(10);
+  const { owner, restore } = await migrationOwner();
+  const { a } = await owners();
+  await pauseEverything();
+  try {
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, ...quiet })).outcome, 'migrada');
+    // Conexões: o provider do dono lê a sessão migrada de verdade para saber se está pareada.
+    const sent: { owner: string; jid: string }[] = [];
+    const manager = new WhatsAppManager({
+      sessionsBase: session.base,
+      createProvider: (ownerId, sessionDir) => {
+        let state = 'disconnected';
+        return {
+          ownerId, sessionDir,
+          status: () => ({ state, ...(state === 'connected' ? { accountJid: JID_LEGADO } : {}) }),
+          hasPairedSession: async () => existsSync(join(sessionDir, 'creds.json')),
+          connect: async () => { state = 'connected'; return { state }; },
+          disconnect: async () => ({ state: 'disconnected' }), stop: async () => undefined, sync: async () => ({ count: 0 }),
+          flushReads: async () => undefined, flushDeliveryEvents: async () => undefined,
+          send: async (jid: string) => { sent.push({ owner: ownerId, jid }); return { messageId: `3EB0E2E${sent.length}`, context: '' }; },
+        };
+      },
+    });
+    const started = await manager.startAll({} as NodeJS.ProcessEnv);
+    assert.equal(started.find(r => r.userId === owner.id)?.outcome, 'conectando', 'o dono reconectou sem QR');
+    // Sessão global vazia depois da migração: provider legado sem sessão pareada.
+    const legacyCalls: string[] = [];
+    const legacy = { ...manager.for(owner.id), status: () => ({ state: 'connected', accountJid: 'nao-usar' }), hasPairedSession: async () => false, send: async () => { legacyCalls.push('send'); return { messageId: 'x', context: '' }; } };
+    await manager.stop(owner.id); await manager.startAll({} as NodeJS.ProcessEnv); // "reinício"
+    const router = createSendingRouter<ManagedProvider>({ manager, legacyProvider: legacy as ManagedProvider });
+    const mine = await ownedCampaign(owner.id, JID_LEGADO);
+    const theirs = await ownedCampaign(a.id, JID_A);
+    const dispatcher = await startDispatcher(router, { scanIntervalMs: 50 });
+    try {
+      await waitFor(async () => (await fresh(mine.rows[0].id)).status === 'SENT', 'campanha do dono enviada');
+      await sleep(300);
+      assert.deepEqual(sent.map(s => s.owner), [owner.id], 'só pela conexão do dono');
+      assert.equal((await fresh(theirs.rows[0].id)).status, 'PENDING', 'o USER sem conexão não pega carona');
+      assert.deepEqual(legacyCalls, [], 'a sessão global não é mais usada');
+    } finally { await dispatcher.stop(); await manager.stopAll(); }
+  } finally { await prisma.whatsAppSession.deleteMany({ where: { userId: owner.id } }); await restore(); session.cleanup(); }
+});
+
+// ─── Envios em paralelo entre números (ADR-025, Fase 5) ─────────────────────────
+test('parallel (5): different numbers send at the same time; a slow number does not hold the others', async () => {
+  const { a, b } = await owners();
+  await pauseEverything();
+  // O relógio de cada número é persistido: sem zerar, o intervalo do teste anterior interfere.
+  await prisma.whatsAppAccount.deleteMany({ where: { id: { in: [JID_A, JID_B] } } });
+  const world = sendingWorld();
+  try {
+    const slow = world.connect(a.id, JID_A);
+    world.connect(b.id, JID_B);
+    const original = slow.provider.send;
+    // O número de A está lento: cada envio leva 2,5 s.
+    slow.provider.send = async (...args: Parameters<typeof original>) => { await sleep(2500); return original(...args); };
+    const campaignA = await ownedCampaign(a.id, JID_A, 1);
+    const campaignB = await ownedCampaign(b.id, JID_B, 2, 1);
+    const dispatcher = await startDispatcher(world.router, { scanIntervalMs: 50 });
+    try {
+      // B termina os DOIS envios enquanto o primeiro de A ainda está em andamento.
+      await waitFor(async () => (await prisma.delivery.findMany({ where: { campaignId: campaignB.campaign.id } })).every(d => d.status === 'SENT'), 'B terminou', 15_000);
+      assert.equal((await fresh(campaignA.rows[0].id)).status, 'PROCESSING', 'A ainda está enviando: B não esperou por ele');
+      await waitFor(async () => (await fresh(campaignA.rows[0].id)).status === 'SENT', 'A terminou', 15_000);
+      const [aRow] = await prisma.delivery.findMany({ where: { campaignId: campaignA.campaign.id } });
+      const [bFirst] = await prisma.delivery.findMany({ where: { campaignId: campaignB.campaign.id }, orderBy: { sequence: 'asc' } });
+      assert.ok(bFirst.attemptedAt! < aRow.sendReturnedAt!, 'os dois números enviaram ao mesmo tempo');
+      // Cada número por si: nenhum grupo trocado de número.
+      assert.deepEqual(slow.sent.map(s => s.jid), campaignA.groups.map(g => g.externalId));
+      assert.deepEqual(world.fakes.get(b.id)!.sent.map(s => s.jid), campaignB.groups.map(g => g.externalId));
+    } finally { await dispatcher.stop(); }
+    world.legacyIntact();
+  } finally { world.cleanup(); }
+});
+
+test('parallel (5): stopping waits for the sends in progress on every number', async () => {
+  const { a, b } = await owners();
+  await pauseEverything();
+  // O relógio de cada número é persistido: sem zerar, o intervalo do teste anterior interfere.
+  await prisma.whatsAppAccount.deleteMany({ where: { id: { in: [JID_A, JID_B] } } });
+  const world = sendingWorld();
+  try {
+    for (const [user, jid] of [[a, JID_A], [b, JID_B]] as const) {
+      const fake = world.connect(user.id, jid);
+      const original = fake.provider.send;
+      fake.provider.send = async (...args: Parameters<typeof original>) => { await sleep(800); return original(...args); };
+    }
+    const campaignA = await ownedCampaign(a.id, JID_A);
+    const campaignB = await ownedCampaign(b.id, JID_B);
+    const dispatcher = await startDispatcher(world.router, { scanIntervalMs: 50 });
+    try {
+      await waitFor(async () => (await prisma.delivery.count({ where: { id: { in: [campaignA.rows[0].id, campaignB.rows[0].id] }, status: 'PROCESSING' } })) === 2, 'os dois números enviando');
+    } finally { await dispatcher.stop(); }
+    // Nada fica pendurado em "enviando": os dois terminaram antes do stop voltar.
+    assert.equal((await fresh(campaignA.rows[0].id)).status, 'SENT');
+    assert.equal((await fresh(campaignB.rows[0].id)).status, 'SENT');
+    world.legacyIntact();
+  } finally { world.cleanup(); }
+});
+
+// ─── Mídia com prévia, lista paginada, reuso e métricas (ADR-026) ───────────────
+test('media (026): images get a dominant color and a small thumbnail; only the owner reads them', async () => {
+  const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#cc3300' } }).png().toBuffer();
+  const up = await app.inject({ method: 'POST', url: '/api/media?name=laranja.png', headers: auth({ 'content-type': 'image/png' }), payload: png });
+  assert.equal(up.statusCode, 201, up.body);
+  assert.match(up.json().color, /^#[0-9a-f]{6}$/);
+  const [r, g] = [parseInt(up.json().color.slice(1, 3), 16), parseInt(up.json().color.slice(3, 5), 16)];
+  assert.ok(r > 150 && g < 120, `cor predominante laranja/vermelha: ${up.json().color}`);
+  const thumb = await app.inject({ method: 'GET', url: `/api/media/${up.json().id}/thumb`, headers: auth() });
+  assert.equal(thumb.statusCode, 200);
+  assert.equal(thumb.headers['content-type'], 'image/webp');
+  assert.match(String(thumb.headers['cache-control']), /private/);
+  assert.ok(thumb.rawPayload.length > 0);
+  const intruso = await isoUser('midia-intruso@teste.local');
+  assert.equal((await intruso.call('GET', `/media/${up.json().id}/thumb`)).statusCode, 404, 'miniatura de outro dono: 404');
+  // Imagem antiga, sem prévia: ganha na primeira leitura da miniatura e no preenchimento da partida.
+  const antiga = await prisma.campaignMedia.create({ data: { userId: ownerId, name: 'antiga.png', mimeType: 'image/png', kind: 'image', size: png.length, data: png } });
+  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${antiga.id}/thumb`, headers: auth() })).statusCode, 200);
+  assert.ok((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: antiga.id } })).color);
+  const outra = await prisma.campaignMedia.create({ data: { userId: ownerId, name: 'outra.png', mimeType: 'image/png', kind: 'image', size: png.length, data: png } });
+  await backfillMediaPreviews();
+  const preenchida = await prisma.campaignMedia.findUniqueOrThrow({ where: { id: outra.id } });
+  assert.ok(preenchida.color && preenchida.thumbnail, 'preenchimento em segundo plano');
+});
+
+test('media (026): video ranges are read from the database in pieces, never the whole file', async () => {
+  const data = Buffer.alloc(5 * 1024 * 1024);
+  for (let i = 0; i < data.length; i++) data[i] = (i * 31) % 251;
+  const video = await prisma.campaignMedia.create({ data: { userId: ownerId, name: 'grande.mp4', mimeType: 'video/mp4', kind: 'video', size: data.length, data } });
+  const aberto = await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: 'bytes=0-' }) });
+  assert.equal(aberto.statusCode, 206);
+  assert.equal(aberto.headers['content-range'], `bytes 0-${2 * 1024 * 1024 - 1}/${data.length}`, 'pedido aberto vem em pedaço de 2 MB');
+  assert.ok(aberto.rawPayload.equals(data.subarray(0, 2 * 1024 * 1024)));
+  const meio = await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: 'bytes=3000000-3000099' }) });
+  assert.equal(meio.headers['content-range'], `bytes 3000000-3000099/${data.length}`);
+  assert.ok(meio.rawPayload.equals(data.subarray(3_000_000, 3_000_100)), 'trecho exato');
+  const fim = await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: 'bytes=-10' }) });
+  assert.ok(fim.rawPayload.equals(data.subarray(data.length - 10)), 'sufixo');
+  assert.equal((await app.inject({ method: 'GET', url: `/api/media/${video.id}`, headers: auth({ range: `bytes=${data.length}-` }) })).statusCode, 416);
+});
+
+test('campaign list (026): cursor pages with no duplicates, only card data', async () => {
+  const dono = await isoUser('lista-paginada@teste.local');
+  const group = await dono.call('POST', '/groups', { name: 'Grupo da lista' });
+  for (let i = 0; i < 30; i++) {
+    const r = await dono.call('POST', '/campaigns', draftBody([group.json().id], { name: `Lista ${String(i).padStart(2, '0')}` }));
+    assert.equal(r.statusCode, 201, r.body);
+  }
+  const first = (await dono.call('GET', '/campaigns?limit=24')).json();
+  assert.equal(first.items.length, 24);
+  assert.ok(first.nextCursor);
+  const second = (await dono.call('GET', `/campaigns?limit=24&cursor=${first.nextCursor}`)).json();
+  assert.equal(second.items.length, 6);
+  assert.equal(second.nextCursor, null);
+  const all = [...first.items, ...second.items].map((c: { id: string }) => c.id);
+  assert.equal(new Set(all).size, 30, 'sem repetição entre páginas');
+  const card = first.items[0];
+  assert.equal(card.groupCount, 1);
+  assert.equal(card.messages, undefined, 'o cartão não carrega as mensagens');
+  assert.equal(card.name, 'Lista 29', 'mais recentes primeiro');
+  // Filtros no servidor (funcionam junto com a paginação).
+  assert.equal((await dono.call('GET', '/campaigns?q=Lista%2007')).json().items.length, 1);
+  assert.equal((await dono.call('GET', '/campaigns?status=ACTIVE')).json().items.length, 0);
+  assert.equal((await dono.call('GET', '/campaigns?status=DRAFT,ACTIVE&limit=50')).json().items.length, 30);
+  assert.equal((await dono.call('GET', '/campaigns?status=QUALQUER')).json().items.length, 24, 'situação desconhecida é ignorada');
+});
+
+test('reuse (026): "use again" copies a campaign into a new draft; reschedule stops the old one atomically', async () => {
+  const dono = await isoUser('reuso@teste.local');
+  const g1 = (await dono.call('POST', '/groups', { name: 'Reuso 1' })).json();
+  const g2 = (await dono.call('POST', '/groups', { name: 'Reuso 2' })).json();
+  const media = (await dono.call('POST', '/media?name=reuso.png', await pngBytes(), { 'content-type': 'image/png' })).json();
+  const original = (await dono.call('POST', '/campaigns', { ...draftBody([g1.id, g2.id], { mediaId: media.id }), name: 'Festa', messages: ['Olá', 'Oi de novo'] })).json();
+  const copy = await dono.call('POST', `/campaigns/${original.id}/duplicate`, {});
+  assert.equal(copy.statusCode, 201, copy.body);
+  assert.equal(copy.json().name, 'Festa (2)');
+  const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: copy.json().id }, include: { groups: { orderBy: { position: 'asc' } }, messages: { orderBy: { position: 'asc' } } } });
+  assert.equal(saved.status, 'DRAFT');
+  assert.deepEqual(saved.groups.map(g => g.groupId), [g1.id, g2.id], 'mesmos grupos, mesma ordem');
+  assert.deepEqual(saved.messages.map(m => m.content), ['Olá', 'Oi de novo']);
+  assert.equal(saved.mediaId, media.id);
+  assert.equal((await dono.call('POST', `/campaigns/${copy.json().id}/duplicate`, {})).json().name, 'Festa (3)', 'numeração segue');
+  // Outro usuário não copia: 404 igual a inexistente.
+  const intruso = await isoUser('reuso-intruso@teste.local');
+  assert.equal((await intruso.call('POST', `/campaigns/${original.id}/duplicate`, {})).statusCode, 404);
+  // Reagendar só vale para ativa/pausada, e encerra a original na mesma transação.
+  assert.equal((await dono.call('POST', `/campaigns/${original.id}/duplicate`, { reschedule: true })).statusCode, 400);
+  const ativa = (await dono.call('POST', '/campaigns', { ...draftBody([g1.id, g2.id]), name: 'Em andamento' })).json();
+  assert.equal((await dono.call('PATCH', `/campaigns/${ativa.id}/status`, { status: 'ACTIVE', provider: 'simulator' })).statusCode, 200);
+  await prisma.delivery.updateMany({ where: { campaignId: ativa.id }, data: { scheduledAt: new Date(Date.now() + 86_400_000) } });
+  const nova = await dono.call('POST', `/campaigns/${ativa.id}/duplicate`, { reschedule: true });
+  assert.equal(nova.statusCode, 201, nova.body);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: ativa.id } })).status, 'CANCELLED');
+  assert.equal(await prisma.delivery.count({ where: { campaignId: ativa.id, status: 'PENDING' } }), 0, 'nenhum envio pendente sobra na original');
+  // Grupo que saiu (inativo) não entra na cópia; sem nenhum ativo, recusa.
+  await prisma.group.update({ where: { id: g2.id }, data: { active: false } });
+  const semG2 = (await dono.call('POST', `/campaigns/${original.id}/duplicate`, {})).json();
+  assert.deepEqual((await prisma.campaignGroup.findMany({ where: { campaignId: semG2.id } })).map(g => g.groupId), [g1.id]);
+  await prisma.group.update({ where: { id: g1.id }, data: { active: false } });
+  assert.equal((await dono.call('POST', `/campaigns/${original.id}/duplicate`, {})).statusCode, 400);
+});
+
+test('dashboard (026): delivered today, delivery rate, reach and the last 7 days', async () => {
+  const dono = await isoUser('metricas@teste.local');
+  const now = new Date();
+  const g1 = await prisma.group.create({ data: { name: 'M1', userId: dono.user.id, externalId: `120311${Date.now()}@g.us`, participants: 100 } });
+  const g2 = await prisma.group.create({ data: { name: 'M2', userId: dono.user.id, externalId: `120312${Date.now()}@g.us`, participants: 50 } });
+  await prisma.campaign.create({ data: {
+    name: 'Métricas', userId: dono.user.id, startsAt: now, endsAt: now, status: 'COMPLETED', provider: 'baileys', accountJid: JID_A, mode: 'IMMEDIATE',
+    groups: { create: [{ groupId: g1.id, position: 0 }, { groupId: g2.id, position: 1 }] },
+    deliveries: { create: [
+      { groupId: g1.id, messageBody: 'oi', provider: 'baileys', sequence: 0, status: 'SENT', sentAt: now, deliveredAt: now, scheduledAt: now },
+      { groupId: g2.id, messageBody: 'oi', provider: 'baileys', sequence: 1, status: 'SENT', sentAt: now, scheduledAt: new Date(now.getTime() + 1) },
+      { groupId: g1.id, messageBody: 'oi', provider: 'baileys', sequence: 2, status: 'SENT', sentAt: new Date(now.getTime() - 3 * 86_400_000), scheduledAt: new Date(now.getTime() + 2) },
+    ] },
+  } });
+  const d = (await dono.call('GET', '/dashboard')).json();
+  assert.equal(d.sentToday, 2);
+  assert.equal(d.deliveredToday, 1);
+  assert.equal(d.deliveryRate, 50);
+  assert.equal(d.groupsReachedToday, 2);
+  assert.equal(d.membersReachedToday, 150);
+  assert.equal(d.last7Days.length, 7);
+  assert.equal(d.last7Days[6].sent, 2, 'hoje');
+  assert.equal(d.last7Days.reduce((s: number, x: { sent: number }) => s + x.sent, 0), 3, 'a semana inteira');
+});
+
+// ─── Painel do SUPER_ADMIN (ADR-027, Fase 6) ─────────────────────────────────────
+test('admin (6): only SUPER_ADMIN reaches /api/admin, and it never exposes private content', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'painel-admin@teste.local', 'SUPER_ADMIN');
+    const user = await sessionFor(world.app, 'painel-user@teste.local');
+    const asUser = await loginAs(world.app, 'painel-user@teste.local');
+    const asAdmin = await loginAs(world.app, 'painel-admin@teste.local');
+    const h = (cookie: string) => ({ host: 'localhost', origin: PANEL, cookie });
+    for (const [method, url] of [['GET', '/api/admin/users'], ['POST', '/api/admin/users'], ['PATCH', `/api/admin/users/${admin.user.id}`], ['POST', `/api/admin/users/${admin.user.id}/password`]] as const) {
+      assert.equal((await world.app.inject({ method, url, payload: {}, headers: h(asUser.cookie) })).statusCode, 403, `USER em ${method} ${url}`);
+      assert.equal((await world.app.inject({ method, url, payload: {}, headers: { host: 'localhost', origin: PANEL } })).statusCode, 401);
+    }
+    const list = await world.app.inject({ method: 'GET', url: '/api/admin/users', headers: h(asAdmin.cookie) });
+    assert.equal(list.statusCode, 200);
+    for (const segredo of ['passwordHash', 'scrypt', 'data:image', 'messageBody', '"content"']) assert.ok(!list.body.includes(segredo), `não expõe ${segredo}`);
+    // O estado pode ser "qr" (aguardando leitura), mas o QR em si nunca vem.
+    assert.ok(list.json().every((u: { whatsapp: object }) => !('qr' in u.whatsapp)), 'nenhum campo qr');
+    const row = list.json().find((u: { id: string }) => u.id === user.user.id);
+    assert.deepEqual(Object.keys(row.counts).sort(), ['activeCampaigns', 'campaigns', 'failed', 'groups', 'sent']);
+    assert.ok('state' in row.whatsapp && 'accountJid' in row.whatsapp);
+  } finally { await world.cleanup(); }
+});
+
+test('admin (6): create, disable, enable, reset password and change role — with the safety locks', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'painel-admin2@teste.local', 'SUPER_ADMIN');
+    const asAdmin = await loginAs(world.app, 'painel-admin2@teste.local');
+    const h = { host: 'localhost', origin: PANEL, cookie: asAdmin.cookie };
+    // Criar: papel padrão USER; e-mail repetido recusado; senha fraca recusada.
+    const created = await world.app.inject({ method: 'POST', url: '/api/admin/users', headers: h, payload: { email: 'Novo.Usuario@Teste.local', name: 'Novo', password: 'senha-de-teste-123' } });
+    assert.equal(created.statusCode, 201, created.body);
+    assert.equal(created.json().role, 'USER');
+    assert.equal(created.json().email, 'novo.usuario@teste.local');
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users', headers: h, payload: { email: 'novo.usuario@teste.local', name: 'X', password: 'senha-de-teste-123' } })).statusCode, 409);
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users', headers: h, payload: { email: 'outro@teste.local', name: 'X', password: 'curta' } })).statusCode, 400);
+    const novoId = created.json().id as string;
+    // O novo usuário entra, tem uma campanha ativa e uma conexão aberta.
+    const novo = await loginAs(world.app, 'novo.usuario@teste.local');
+    assert.equal(novo.status, 200);
+    world.manager.for(novoId);
+    const group = await prisma.group.create({ data: { name: 'Do novo', userId: novoId } });
+    const campaign = await prisma.campaign.create({ data: { name: 'Ativa do novo', userId: novoId, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', groups: { create: [{ groupId: group.id, position: 0 }] } } });
+    // Desativar: sessões caem, campanha pausa, conexão encerra SEM logout.
+    const off = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { disabled: true } });
+    assert.equal(off.statusCode, 200, off.body);
+    assert.ok(off.json().disabledAt);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/auth/me', headers: { host: 'localhost', cookie: novo.cookie } })).statusCode, 401, 'sessão derrubada');
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'PAUSED');
+    assert.deepEqual(world.perUser.get(novoId)!.calls, ['stop'], 'stop, nunca disconnect');
+    assert.equal((await loginAs(world.app, 'novo.usuario@teste.local')).status, 401);
+    // Reativar e trocar a senha: a nova vale, sessões antigas caem.
+    assert.equal((await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { disabled: false } })).json().disabledAt, null);
+    const antes = await loginAs(world.app, 'novo.usuario@teste.local');
+    assert.equal((await world.app.inject({ method: 'POST', url: `/api/admin/users/${novoId}/password`, headers: h, payload: { password: 'outra-senha-forte-1' } })).statusCode, 200);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/auth/me', headers: { host: 'localhost', cookie: antes.cookie } })).statusCode, 401);
+    assert.equal((await loginAs(world.app, 'novo.usuario@teste.local', 'outra-senha-forte-1')).status, 200);
+    // Travas: nada em si mesmo; nunca remover o último administrador ativo.
+    assert.equal((await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${admin.user.id}`, headers: h, payload: { disabled: true } })).statusCode, 400);
+    assert.equal((await world.app.inject({ method: 'POST', url: `/api/admin/users/${admin.user.id}/password`, headers: h, payload: { password: 'senha-de-teste-999' } })).statusCode, 400);
+    const restore = await onlySuperAdmin(admin.user.id);
+    try {
+      const promovido = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { role: 'SUPER_ADMIN' } });
+      assert.equal(promovido.json().role, 'SUPER_ADMIN');
+      assert.equal((await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: h, payload: { role: 'USER' } })).statusCode, 200, 'com dois ativos, pode rebaixar');
+      // Com um único administrador ativo, ele não pode ser removido.
+      await prisma.user.update({ where: { id: novoId }, data: { role: 'SUPER_ADMIN' } });
+      await prisma.user.update({ where: { id: admin.user.id }, data: { disabledAt: new Date() } });
+      const asNovo = await loginAs(world.app, 'novo.usuario@teste.local', 'outra-senha-forte-1');
+      await prisma.user.update({ where: { id: admin.user.id }, data: { disabledAt: null, role: 'USER' } });
+      const ultimo = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${admin.user.id}`, headers: { host: 'localhost', origin: PANEL, cookie: asNovo.cookie }, payload: { role: 'SUPER_ADMIN' } });
+      assert.equal(ultimo.statusCode, 200, 'promover outro é permitido');
+      await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'USER' } });
+      const semSaida = await world.app.inject({ method: 'PATCH', url: `/api/admin/users/${novoId}`, headers: { host: 'localhost', origin: PANEL, cookie: asNovo.cookie }, payload: { disabled: true } });
+      assert.equal(semSaida.statusCode, 400, 'o único administrador não se desativa');
+      await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'SUPER_ADMIN' } });
+      await prisma.user.update({ where: { id: novoId }, data: { role: 'USER' } });
+    } finally { await restore(); }
+    assert.equal((await world.app.inject({ method: 'PATCH', url: '/api/admin/users/nao-existe', headers: h, payload: { disabled: true } })).statusCode, 404);
+  } finally { await world.cleanup(); }
+});
+
+// ─── Painel do administrador (ADR-031) ──────────────────────────────────────────
+test('admin (031): the overview reports system-wide numbers, never a campaign or message', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'visao-admin@teste.local', 'SUPER_ADMIN');
+    const user = await sessionFor(world.app, 'visao-user@teste.local');
+    const asAdmin = await loginAs(world.app, 'visao-admin@teste.local');
+    const asUser = await loginAs(world.app, 'visao-user@teste.local');
+    const h = { host: 'localhost', origin: PANEL, cookie: asAdmin.cookie };
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/admin/overview', headers: { host: 'localhost', origin: PANEL, cookie: asUser.cookie } })).statusCode, 403, 'USER não entra');
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/admin/overview', headers: { host: 'localhost', origin: PANEL } })).statusCode, 401);
+
+    const group = await prisma.group.create({ data: { name: 'Segredo da campanha', userId: user.user.id } });
+    const campaign = await prisma.campaign.create({ data: { name: 'Nome sigiloso', userId: user.user.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', provider: 'baileys',
+      groups: { create: [{ groupId: group.id, position: 0 }] }, messages: { create: [{ content: 'conteúdo sigiloso', position: 0 }] },
+      deliveries: { create: [{ groupId: group.id, messageBody: 'conteúdo sigiloso', sequence: 0, scheduledAt: new Date(), provider: 'baileys', status: 'SENT', sentAt: new Date() }] } } });
+    world.manager.for(user.user.id);
+    world.perUser.get(user.user.id)!.state = { state: 'connected', accountJid: '5511999999999@s.whatsapp.net' };
+
+    const overview = await world.app.inject({ method: 'GET', url: '/api/admin/overview', headers: h });
+    assert.equal(overview.statusCode, 200, overview.body);
+    for (const segredo of [group.name, campaign.name, 'conteúdo sigiloso', 'messageBody']) assert.ok(!overview.body.includes(segredo), `não expõe ${segredo}`);
+    const body = overview.json();
+    assert.ok(body.users.total >= 2 && body.users.active >= 2);
+    assert.ok(body.campaigns.total >= 1 && body.campaigns.active >= 1);
+    assert.ok(body.today.sent >= 1, 'o envio de hoje entra na contagem');
+    assert.equal(body.last7Days.length, 7);
+    assert.ok(body.whatsapp.connectedNow >= 1, 'a conexão simulada como conectada conta');
+    assert.ok('dispatcher' in body && 'process' in body && typeof body.process.uptimeSeconds === 'number');
+  } finally { await world.cleanup(); }
+});
+
+test('admin (031): force-logout and stop-WhatsApp act on the account without touching its campaigns', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'acao-admin@teste.local', 'SUPER_ADMIN');
+    const asAdmin = await loginAs(world.app, 'acao-admin@teste.local');
+    const h = { host: 'localhost', origin: PANEL, cookie: asAdmin.cookie };
+    const alvo = await sessionFor(world.app, 'acao-alvo@teste.local');
+    const logged = await loginAs(world.app, 'acao-alvo@teste.local');
+    world.manager.for(alvo.user.id);
+    const group = await prisma.group.create({ data: { name: 'Do alvo', userId: alvo.user.id } });
+    const campaign = await prisma.campaign.create({ data: { name: 'Ativa do alvo', userId: alvo.user.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', groups: { create: [{ groupId: group.id, position: 0 }] } } });
+
+    const out = await world.app.inject({ method: 'POST', url: `/api/admin/users/${alvo.user.id}/logout`, headers: h });
+    assert.equal(out.statusCode, 200, out.body);
+    assert.ok(out.json().sessionsEnded >= 1);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/auth/me', headers: { host: 'localhost', cookie: logged.cookie } })).statusCode, 401, 'sessão derrubada');
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE', 'campanha não é pausada por um logout forçado');
+
+    const stopped = await world.app.inject({ method: 'POST', url: `/api/admin/users/${alvo.user.id}/whatsapp/stop`, headers: h });
+    assert.equal(stopped.statusCode, 200, stopped.body);
+    assert.deepEqual(world.perUser.get(alvo.user.id)!.calls, ['stop']);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE', 'campanha não é pausada ao derrubar só o WhatsApp');
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users/nao-existe/logout', headers: h })).statusCode, 404);
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users/nao-existe/whatsapp/stop', headers: h })).statusCode, 404);
+  } finally { await world.cleanup(); }
+});
+
+// ─── Intervalo mínimo de 3 minutos (ADR-028) ────────────────────────────────────
+test('minimum interval (028): the API refuses less than 3 minutes and the queue never paces faster', async () => {
+  const group = await prisma.group.create({ data: { name: 'Piso', userId: ownerId } });
+  const base = { name: 'Piso', mode: 'IMMEDIATE', messages: ['oi'], groupIds: [group.id] };
+  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 179 })).statusCode, 400, '179 s: recusado');
+  assert.match((await request('POST', '/campaigns', { ...base, intervalSeconds: 60 })).json().error, /mínimo de 3 minutos/);
+  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 180 })).statusCode, 201, '180 s: aceito');
+  // Campanha com intervalo antigo de 60 s gravada direto no banco: a fila aplica o piso.
+  const previous = process.env.SEND_INTERVAL_FLOOR_SECONDS;
+  process.env.SEND_INTERVAL_FLOOR_SECONDS = '180';
+  try {
+    const { campaign, rows: [row] } = await realCampaign(1, 60);
+    const at = new Date();
+    assert.ok(await claimDelivery(prisma, row.id, at));
+    const reserved = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+    assert.equal(reserved.nextAvailableAt!.getTime(), at.getTime() + 180_000, 'reserva ocupa o número por 3 min, não 60 s');
+    await finishDelivery(prisma, row.id, { providerId: '3EB0PISO', context: '' }, at);
+    const number = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: ACCOUNT } });
+    assert.equal(number.nextAvailableAt!.getTime(), at.getTime() + 180_000, 'o número fica livre só 3 min depois');
+    assert.equal(number.lastIntervalSeconds, 180);
+    // Previsão do painel usa o mesmo piso.
+    const { forecastQueue } = await import('./queue-forecast.js');
+    const plan = forecastQueue([{ id: 'a', status: 'PENDING', sequence: 0, provider: 'baileys', scheduledAt: at, attemptedAt: null, attempts: 0 }, { id: 'b', status: 'PENDING', sequence: 1, provider: 'baileys', scheduledAt: at, attemptedAt: null, attempts: 0 }], { status: 'ACTIVE', nextAvailableAt: null, intervalSeconds: 60 }, at, true, 3);
+    assert.equal(plan.get('b')!.expectedAt.getTime() - plan.get('a')!.expectedAt.getTime(), 180_000);
+  } finally {
+    if (previous === undefined) delete process.env.SEND_INTERVAL_FLOOR_SECONDS; else process.env.SEND_INTERVAL_FLOOR_SECONDS = previous;
+  }
+});
+
+test('migration (real MySQL): campaigns below 3 minutes are raised to 3 minutes, nothing else changes', async () => {
+  await withLegacyDatabase(async (db, apply, names) => {
+    const target = '20260924180000_min_interval';
+    for (const name of names.slice(0, names.indexOf(target))) await apply(name);
+    await db.$executeRawUnsafe("INSERT INTO \`User\` (id, email, name, passwordHash, role, updatedAt) VALUES ('u1', 'u1@x', 'U', 'h', 'SUPER_ADMIN', NOW(3))");
+    await db.$executeRawUnsafe("INSERT INTO \`Campaign\` (id, userId, name, startsAt, endsAt, intervalSeconds, updatedAt) VALUES ('rapida', 'u1', 'R', NOW(3), NOW(3), 60, NOW(3)), ('normal', 'u1', 'N', NOW(3), NOW(3), 300, NOW(3))");
+    await apply(target);
+    const rows = await db.$queryRawUnsafe<{ id: string; intervalSeconds: number }[]>('SELECT id, intervalSeconds FROM \`Campaign\` ORDER BY id');
+    assert.deepEqual(rows.map(r => [r.id, Number(r.intervalSeconds)]), [['normal', 300], ['rapida', 180]]);
+  });
+});
+
+// ─── Marcar todos (ADR-029) ─────────────────────────────────────────────────────
+test('mention all (029): saved with the campaign, copied on reuse and passed to every send', async () => {
+  const group = await prisma.group.create({ data: { name: 'Marcar', userId: ownerId } });
+  const base = { name: 'Com todos', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [group.id] };
+  assert.equal((await request('POST', '/campaigns', { ...base, mentionAll: 'sim' })).statusCode, 400, 'só booleano');
+  const created = await request('POST', '/campaigns', { ...base, mentionAll: true });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.equal((await request('GET', `/campaigns/${created.json().id}`)).json().mentionAll, true);
+  assert.equal((await request('POST', '/campaigns', base)).json().mentionAll, false, 'padrão: desligado');
+  const copy = await request('POST', `/campaigns/${created.json().id}/duplicate`, {});
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: copy.json().id } })).mentionAll, true, 'usar de novo mantém a opção');
+  // O despachante repassa a opção ao conector.
+  const { campaign, rows: [row] } = await realCampaign(1);
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { mentionAll: true } });
+  const options: unknown[] = [];
+  const wa = fakeWhatsApp(async () => ({ messageId: '3EB0TODOS', context: 'x' }));
+  const originalSend = (wa.provider as unknown as { send: (...args: unknown[]) => unknown }).send;
+  (wa.provider as unknown as { send: (...args: unknown[]) => unknown }).send = (...args: unknown[]) => { options.push(args[5]); return originalSend(...args); };
+  const dispatcher = await startDispatcher(wa.router, { scanIntervalMs: 50 });
+  try { await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio'); }
+  finally { await dispatcher.stop(); }
+  assert.deepEqual(options, [{ mentionAll: true }]);
+});
+
+// ─── Tentar de novo (ADR-030) ────────────────────────────────────────────────────
+test('retry (030): a safe failure retries straight away; an uncertain one needs confirmation first', async () => {
+  const { rows: [certain, uncertain] } = await realCampaign(2);
+  await prisma.delivery.update({ where: { id: certain.id }, data: { status: 'FAILED', error: 'Só administradores podem enviar neste grupo.', errorCode: 'grupo:so-admins' } });
+  await prisma.delivery.update({ where: { id: uncertain.id }, data: { status: 'FAILED', error: 'Timed Out. Resultado incerto: confira no celular. Sem reenvio automático para não duplicar.', errorCode: 'ETIMEDOUT' } });
+
+  // Falha certa: tenta de novo direto, sem precisar confirmar nada.
+  const safe = await request('POST', `/deliveries/${certain.id}/retry`, {});
+  assert.equal(safe.statusCode, 200, safe.body);
+  assert.deepEqual(safe.json(), { retried: true });
+  const requeued = await fresh(certain.id);
+  assert.equal(requeued.status, 'PENDING'); assert.equal(requeued.error, null); assert.equal(requeued.errorCode, null);
+
+  // Falha incerta: primeiro pedido volta 409 pedindo confirmação; nada muda ainda.
+  const blocked = await request('POST', `/deliveries/${uncertain.id}/retry`, {});
+  assert.equal(blocked.statusCode, 409); assert.equal(blocked.json().uncertain, true);
+  assert.equal((await fresh(uncertain.id)).status, 'FAILED', 'sem confirmação, nada muda');
+  const confirmed = await request('POST', `/deliveries/${uncertain.id}/retry`, { confirmUncertain: true });
+  assert.equal(confirmed.statusCode, 200, confirmed.body);
+  assert.equal((await fresh(uncertain.id)).status, 'PENDING');
+
+  // Só FAILED pode ser tentado de novo.
+  await prisma.delivery.update({ where: { id: certain.id }, data: { status: 'SENT' } });
+  assert.equal((await request('POST', `/deliveries/${certain.id}/retry`, {})).statusCode, 400);
+});
+
+test('retry (030): blocked for another user\'s delivery or a cancelled campaign; a completed campaign reactivates', async () => {
+  const other = await prisma.user.create({ data: { email: `outro-retry-${Date.now()}@teste.local`, name: 'Outro', passwordHash: 'x' } });
+  const group = await prisma.group.create({ data: { name: 'De outro', userId: other.id } });
+  const foreignCampaign = await prisma.campaign.create({ data: { name: 'De outro', userId: other.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', mode: 'IMMEDIATE',
+    groups: { create: [{ groupId: group.id, position: 0 }] }, deliveries: { create: [{ groupId: group.id, messageBody: 'oi', sequence: 0, scheduledAt: new Date(), status: 'FAILED', error: 'x' }] } } });
+  const foreignDelivery = await prisma.delivery.findFirstOrThrow({ where: { campaignId: foreignCampaign.id } });
+  assert.equal((await request('POST', `/deliveries/${foreignDelivery.id}/retry`, {})).statusCode, 404, 'entrega de outro dono não existe para mim');
+
+  const { campaign, rows: [row] } = await realCampaign(1);
+  await prisma.delivery.update({ where: { id: row.id }, data: { status: 'FAILED', error: 'Recusado.' } });
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'CANCELLED' } });
+  assert.equal((await request('POST', `/deliveries/${row.id}/retry`, {})).statusCode, 400, 'campanha encerrada não reabre por aqui');
+  assert.equal((await request('POST', `/campaigns/${campaign.id}/retry-failed`, {})).statusCode, 400);
+
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'COMPLETED' } });
+  assert.equal((await request('POST', `/deliveries/${row.id}/retry`, {})).statusCode, 200);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE', 'volta a ativa para o despachante olhar de novo');
+});
+
+test('retry (030): retrying all failures in a campaign skips the uncertain ones and reports both counts', async () => {
+  const { campaign, rows: [a, b, c] } = await realCampaign(3);
+  await prisma.delivery.update({ where: { id: a.id }, data: { status: 'FAILED', error: 'Recusado.' } });
+  await prisma.delivery.update({ where: { id: b.id }, data: { status: 'FAILED', error: 'Resultado incerto: confira no celular.' } });
+  await prisma.delivery.update({ where: { id: c.id }, data: { status: 'SENT' } });
+  const result = await request('POST', `/campaigns/${campaign.id}/retry-failed`, {});
+  assert.equal(result.statusCode, 200, result.body);
+  assert.deepEqual(result.json(), { retried: 1, uncertainSkipped: 1 });
+  assert.equal((await fresh(a.id)).status, 'PENDING');
+  assert.equal((await fresh(b.id)).status, 'FAILED', 'incerta não entra no lote');
+  assert.equal((await fresh(c.id)).status, 'SENT');
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.

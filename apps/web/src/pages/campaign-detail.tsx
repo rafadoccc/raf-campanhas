@@ -1,14 +1,20 @@
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { MediaPreview, type CampaignMedia } from '../components/campaign-media';
 import { CampaignActions } from '../components/campaign-actions';
-import { api, connectionState as readConnection } from '../lib/api';
+import { api, errorMessage, connectionState as readConnection } from '../lib/api';
+import { retryAllFailed, retryDelivery } from '../lib/campaign-ops';
 import { usePolling } from '../lib/use-polling';
-import { campaignStatus, card, deliveryStatus, hora, horaSeg, membros, page, Pill, type Wait } from '../components/ui';
+import {
+  Alert, Badge, Button, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
+  IconBack, IconClock, IconGroups, IconMention, IconRefresh,
+  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, useConfirm, useInfiniteList, type Wait,
+} from '../design';
 
 type Group = { name: string; participants: number | null };
 type Campaign = {
-  id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string;
-  media: CampaignMedia | null; readsTotal: number; delivered: number; progress: Record<string, number>;
+  id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string; mentionAll: boolean;
+  media: (CampaignMedia & { color?: string | null }) | null; readsTotal: number; delivered: number; progress: Record<string, number>;
   readsByGroup: { groupId: string; name: string; participants: number | null; count: number }[];
   groups: { group: Group }[]; messages: { content: string }[]; schedules: { time: string }[];
 };
@@ -29,96 +35,129 @@ function timeline(d: Delivery) {
   return parts.join(' · ');
 }
 
-function DeliveryRow({ d }: { d: Delivery }) {
+function DeliveryRow({ d, canRetry, busy, onRetry }: { d: Delivery; canRetry: boolean; busy: boolean; onRetry: () => void }) {
   const status = deliveryStatus(d);
   const retrying = d.status === 'PENDING' && d.attempts > 0;
-  return <li className="flex items-start justify-between gap-3 px-5 py-3">
+  return <li className="flex items-start justify-between gap-3 px-4 py-2.5">
     <div className="min-w-0">
-      <p className="font-medium">{d.sequence + 1}. {d.group.name}{membros(d.group.participants) && <span className="font-normal text-slate-400"> · {membros(d.group.participants)}</span>}</p>
-      <p className="mt-0.5 text-xs text-slate-500">{timeline(d)}</p>
-      {d.wait?.reason && <p className="mt-0.5 text-xs text-amber-700">{d.wait.reason}</p>}
-      {d.error && <p className="mt-0.5 text-xs text-red-700">{retrying ? 'Última tentativa: ' : ''}{d.error}{d.errorCode && <span className="text-slate-400"> [{d.errorCode}]</span>}</p>}
+      <p className="truncate text-sm font-medium"><span className="tabular mr-1.5 text-slate-400">{d.sequence + 1}</span>{d.group.name}{membros(d.group.participants) && <span className="font-normal text-slate-400"> · {membros(d.group.participants)}</span>}</p>
+      <p className="mt-0.5 text-2xs text-muted">{timeline(d)}</p>
+      {d.wait?.reason && <p className="mt-0.5 text-2xs text-amber-700">{d.wait.reason}</p>}
+      {d.error && <p className="mt-0.5 text-2xs text-red-700">{retrying ? 'Última tentativa: ' : ''}{d.error}{d.errorCode && <span className="text-slate-400"> [{d.errorCode}]</span>}</p>}
     </div>
-    <Pill tone={status.tone} title={status.title}>{status.label}</Pill>
+    <span className="flex items-center gap-1.5">
+      {d.status === 'FAILED' && canRetry && <IconButton icon={IconRefresh} label="Tentar de novo" disabled={busy} onClick={onRetry} />}
+      <Badge tone={status.tone} title={status.title}>{status.label}</Badge>
+    </span>
   </li>;
-}
-
-function Stat({ label, value, tone = '' }: { label: string; value: number | string; tone?: string }) {
-  return <div><p className="text-xs text-slate-500">{label}</p><p className={`text-xl font-bold ${tone}`}>{value}</p></div>;
 }
 
 export default function CampaignPage() {
   const id = useParams().id ?? '';
-  const [query] = useSearchParams();
-  const pageNumber = Math.max(0, parseInt(query.get('page') ?? '0') || 0);
+  const confirm = useConfirm();
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState('');
   const { data, error, reload } = usePolling(async signal => {
-    const [campaign, deliveries, connection] = await Promise.all([
-      api<Campaign>(`/campaigns/${encodeURIComponent(id)}`, { signal }),
-      api<Delivery[]>(`/deliveries?campaignId=${encodeURIComponent(id)}&page=${pageNumber}`, { signal }),
-      readConnection(signal)
-    ]);
-    return { campaign, deliveries, connection };
-  }, [id, pageNumber]);
-  if (!data) return <main className={page}>{error ? <p>Não foi possível carregar a campanha. <Link to="/campanhas" className="underline">Voltar</Link></p> : <p className="text-slate-500">Carregando…</p>}</main>;
+    const [campaign, connection] = await Promise.all([api<Campaign>(`/campaigns/${encodeURIComponent(id)}`, { signal }), readConnection(signal)]);
+    return { campaign, connection };
+  }, [id]);
+  // Envios: 100 por página, carregados conforme a rolagem; a 1ª página (com a previsão) atualiza sozinha.
+  const deliveries = useInfiniteList<Delivery>(async (cursor, signal) => {
+    const page = cursor ? Number(cursor) : 0;
+    const items = await api<Delivery[]>(`/deliveries?campaignId=${encodeURIComponent(id)}&page=${page}`, { signal });
+    return { items, next: items.length === 100 ? String(page + 1) : null };
+  }, [id]);
 
-  const { campaign, deliveries, connection } = data;
+  if (!data) return <Page>{error ? <p>Não foi possível carregar a campanha. <Link to="/campanhas" className="underline">Voltar</Link></p> : <><Skeleton className="h-8 w-64" /><Skeleton className="h-40" /></>}</Page>;
+
+  const { campaign, connection } = data;
   const status = campaignStatus[campaign.status] ?? campaignStatus.DRAFT;
+  const color = accent(campaign.media?.color);
   const p = campaign.progress;
   const total = Object.values(p).reduce((a, b) => a + b, 0);
   const sent = p.SENT ?? 0;
   const pending = (p.PENDING ?? 0) + (p.PROCESSING ?? 0);
-  // Próximo a sair, com o motivo da espera (se houver).
-  const next = deliveries.filter(d => d.wait?.expectedAt).sort((a, b) => Date.parse(a.wait!.expectedAt) - Date.parse(b.wait!.expectedAt))[0];
+  const next = (deliveries.items ?? []).filter(d => d.wait?.expectedAt).sort((a, b) => Date.parse(a.wait!.expectedAt) - Date.parse(b.wait!.expectedAt))[0];
   const when = campaign.mode === 'IMMEDIATE' ? 'Fila única' : campaign.schedules.map(s => s.time).join(', ');
+  const refresh = () => { reload(); deliveries.reload(); };
+  // Tentar de novo (ADR-030): só faz sentido fora de uma campanha encerrada (aí é "usar de novo").
+  const canRetry = campaign.status !== 'CANCELLED';
+  async function retry(deliveryId: string) {
+    setRetrying(deliveryId); setRetryError('');
+    try { if (await retryDelivery(deliveryId, confirm)) refresh(); }
+    catch (e) { setRetryError(errorMessage(e, 'Não foi possível tentar de novo.')); }
+    finally { setRetrying(null); }
+  }
+  async function retryFailed() {
+    setRetrying('*'); setRetryError('');
+    try { const result = await retryAllFailed(campaign, confirm); if (result) refresh(); }
+    catch (e) { setRetryError(errorMessage(e, 'Não foi possível tentar de novo.')); }
+    finally { setRetrying(null); }
+  }
 
-  return <main className={`${page} space-y-5`}>
-    <Link to="/campanhas" className="text-sm text-slate-500 hover:text-slate-900">← Campanhas</Link>
+  return <Page className="lg:overflow-hidden">
+    <Link to="/campanhas" className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-ink"><IconBack className="h-3.5 w-3.5" aria-hidden />Campanhas</Link>
+    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-5">
+      <ScrollArea className="space-y-4 lg:col-span-2">
+        <Card>
+          <div className="space-y-4 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h1 className="truncate text-lg font-semibold" title={campaign.name}>{campaign.name}</h1>
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
+                  <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groups.length} grupos</span>
+                  <span>· a cada {campaign.intervalSeconds / 60} min · {when}</span>
+                  {campaign.status !== 'DRAFT' && <span>· {campaign.provider === 'baileys' ? 'WhatsApp real' : 'simulação'}</span>}
+                  {campaign.mentionAll && <span className="inline-flex items-center gap-1"><IconMention className="h-3.5 w-3.5" aria-hidden />marca todos</span>}
+                </p>
+              </div>
+              <Badge tone={status.tone}>{status.label}</Badge>
+            </div>
+            {total > 0 && <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+                <Stat label="Enviados" value={`${sent}/${total}`} />
+                {campaign.provider === 'baileys' && <Stat label="Entregues" value={campaign.delivered ?? 0} tone="text-brand-700" />}
+                <Stat label="Aguardando" value={pending} />
+                <Stat label="Falhas" value={p.FAILED ?? 0} tone={p.FAILED ? 'text-red-700' : 'text-ink'} />
+              </div>
+              <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
+            </>}
+            {next && <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded bg-slate-50 px-3 py-2 text-xs"><IconClock className="h-3.5 w-3.5 text-muted" aria-hidden /><span className="text-muted">Próximo:</span><strong>{next.group.name}</strong><span>às {hora(next.wait!.expectedAt)}</span>{next.wait!.reason && <span className="text-amber-700">· {next.wait!.reason}</span>}</p>}
+            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} provider={campaign.provider} intervalSeconds={campaign.intervalSeconds} groupCount={campaign.groups.length} />
+          </div>
+        </Card>
 
-    <section className={`${card} p-6`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{campaign.name}</h1>
-          <p className="mt-1 text-sm text-slate-500">{campaign.groups.length} grupos · a cada {campaign.intervalSeconds / 60} min · {when}{campaign.status !== 'DRAFT' && (campaign.provider === 'baileys' ? ' · WhatsApp real' : ' · Simulação')}</p>
-        </div>
-        <Pill tone={status.tone}>{status.label}</Pill>
-      </div>
-      {total > 0 && <>
-        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Enviados" value={`${sent}/${total}`} />
-          {campaign.provider === 'baileys' && <Stat label="Entregues ✓✓" value={campaign.delivered ?? 0} tone="text-emerald-700" />}
-          <Stat label="Aguardando" value={pending} />
-          <Stat label="Falhas" value={p.FAILED ?? 0} tone={p.FAILED ? 'text-red-700' : ''} />
-        </div>
-        <progress aria-label="Progresso de envios" value={sent} max={total} className="mt-4 h-1.5 w-full accent-emerald-600" />
-      </>}
-      {next && <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-        <span className="text-slate-500">Próximo:</span> <strong>{next.group.name}</strong> às {hora(next.wait!.expectedAt)}
-        {next.wait!.reason && <span className="text-amber-700"> · {next.wait!.reason}</span>}
-      </p>}
-      <CampaignActions onChanged={reload} connectionState={connection} id={id} status={campaign.status} provider={campaign.provider} intervalSeconds={campaign.intervalSeconds} groupCount={campaign.groups.length} />
-    </section>
+        {campaign.status === 'DRAFT' && <Card className="space-y-3 p-4">
+          <h2 className="text-sm font-semibold">Conferir antes de iniciar</h2>
+          {campaign.messages.map((m, i) => <p key={i} className="whitespace-pre-wrap rounded bg-slate-50 p-3 text-sm">{m.content}</p>)}
+          <ol className="space-y-1 text-sm">{campaign.groups.map((g, i) => <li key={i} className="truncate"><span className="tabular mr-1.5 text-slate-400">{i + 1}</span>{g.group.name}{membros(g.group.participants) && <span className="text-slate-400"> · {membros(g.group.participants)}</span>}</li>)}</ol>
+        </Card>}
 
-    {campaign.status === 'DRAFT' && <section className={`${card} space-y-3 p-6`}>
-      <h2 className="font-semibold">Conferir antes de iniciar</h2>
-      {campaign.messages.map((m, i) => <p key={i} className="whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm">{m.content}</p>)}
-      <ol className="space-y-1 text-sm">{campaign.groups.map((g, i) => <li key={i}>{i + 1}. {g.group.name}{membros(g.group.participants) && <span className="text-slate-400"> · {membros(g.group.participants)}</span>}</li>)}</ol>
-    </section>}
+        {campaign.media && <Card className="p-4"><h2 className="text-sm font-semibold">Mídia</h2><MediaPreview media={campaign.media} /></Card>}
 
-    {campaign.media && <section className={`${card} p-6`}><h2 className="font-semibold">Mídia</h2><MediaPreview media={campaign.media} /></section>}
+        {campaign.provider === 'baileys' && total > 0 && <Card>
+          <CardHeader title="Visualizações" action={<span className="tabular text-base font-semibold">{campaign.readsTotal}</span>} />
+          <p className="px-4 pt-2 text-2xs text-muted">Leituras confirmadas pelo WhatsApp. Zero não quer dizer que não chegou.</p>
+          <ul className="divide-y divide-line px-4 pb-2 text-sm">{campaign.readsByGroup.map(g => <li key={g.groupId} className="flex justify-between gap-4 py-2"><span className="truncate">{g.name}{membros(g.participants) && <span className="text-slate-400"> · {membros(g.participants)}</span>}</span><span className="tabular font-medium">{g.count}</span></li>)}</ul>
+        </Card>}
+      </ScrollArea>
 
-    {deliveries.length > 0 && <section className={card}>
-      <h2 className="px-5 pb-2 pt-5 font-semibold">Envios</h2>
-      <ul className="divide-y divide-slate-100">{deliveries.map(d => <DeliveryRow key={d.id} d={d} />)}</ul>
-      {(pageNumber > 0 || deliveries.length === 100) && <div className="flex justify-between border-t p-4 text-sm text-emerald-700">
-        {pageNumber > 0 ? <Link to={`?page=${pageNumber - 1}`}>← Anteriores</Link> : <span />}
-        {deliveries.length === 100 && <Link to={`?page=${pageNumber + 1}`}>Próximos →</Link>}
-      </div>}
-    </section>}
-
-    {campaign.provider === 'baileys' && total > 0 && <section className={`${card} p-6`}>
-      <div className="flex items-baseline justify-between"><h2 className="font-semibold">Visualizações</h2><span className="text-xl font-bold">{campaign.readsTotal}</span></div>
-      <p className="mt-1 text-xs text-slate-500">Leituras confirmadas pelo WhatsApp. Zero não quer dizer que não chegou.</p>
-      <ul className="mt-3 divide-y divide-slate-100 text-sm">{campaign.readsByGroup.map(g => <li key={g.groupId} className="flex justify-between gap-4 py-2"><span>{g.name}{membros(g.participants) && <span className="text-slate-400"> · {membros(g.participants)}</span>}</span><span className="font-medium">{g.count}</span></li>)}</ul>
-    </section>}
-  </main>;
+      <Card className="flex min-h-[20rem] flex-col lg:col-span-3 lg:min-h-0">
+        <CardHeader title="Envios" action={<span className="flex items-center gap-2">
+          {canRetry && (p.FAILED ?? 0) > 0 && <Button size="sm" icon={IconRefresh} loading={retrying === '*'} disabled={!!retrying} onClick={retryFailed}>Tentar de novo as falhas</Button>}
+          {total > 0 && <span className="tabular text-xs text-muted">{total}</span>}
+        </span>} />
+        {retryError && <div className="px-4 pt-2"><Alert>{retryError}</Alert></div>}
+        <ScrollArea className="flex-1">
+          {!deliveries.items ? <div className="space-y-2 p-4"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
+            : deliveries.items.length === 0 ? <EmptyState title="Os envios aparecem aqui quando a campanha começar." />
+            : <>
+              <ul className="divide-y divide-line">{deliveries.items.map(d => <DeliveryRow key={d.id} d={d} canRetry={canRetry} busy={!!retrying} onRetry={() => retry(d.id)} />)}</ul>
+              <LoadMoreSentinel active={deliveries.hasMore} onVisible={() => void deliveries.loadMore()} />
+              {deliveries.loadingMore && <p className="py-3 text-center text-xs text-muted">Carregando mais…</p>}
+            </>}
+        </ScrollArea>
+      </Card>
+    </div>
+  </Page>;
 }

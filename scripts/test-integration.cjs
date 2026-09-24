@@ -12,7 +12,9 @@ async function main() {
   const url = new URL(process.env.DATABASE_URL);
   if (url.protocol !== 'mysql:') throw Error('DATABASE_URL precisa ser mysql://');
   url.pathname = `/${database}`;
-  const env = { ...process.env, DATABASE_URL: url.toString(), CAMPAIGN_TEST_DATABASE: database };
+  // Piso de intervalo reduzido SÓ neste banco descartável: os testes de ritmo medem em segundos
+  // (ADR-028). A fila só aceita esta variável quando CAMPAIGN_TEST_DATABASE está definida.
+  const env = { ...process.env, DATABASE_URL: url.toString(), CAMPAIGN_TEST_DATABASE: database, SEND_INTERVAL_FLOOR_SECONDS: '0' };
   const redact = text => String(text).replaceAll(process.env.DATABASE_URL, '[DATABASE_URL]').replaceAll(url.toString(), '[DATABASE_URL]');
 
   const db = new PrismaClient();
@@ -20,7 +22,9 @@ async function main() {
     await db.$executeRawUnsafe(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     const migration = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--schema=packages/database/prisma/schema.prisma'], { env, encoding: 'utf8' });
     if (migration.status !== 0) throw Error('Migração isolada falhou. ' + redact(migration.stderr || migration.stdout));
-    const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', 'apps/server/dist/integration.test.js'], { env, stdio: 'inherit' });
+    // TEST_NAME_PATTERN="parallel" roda só os testes cujo nome casa (útil para investigar).
+    const filter = process.env.TEST_NAME_PATTERN ? [`--test-name-pattern=${process.env.TEST_NAME_PATTERN}`] : [];
+    const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...filter, 'apps/server/dist/integration.test.js'], { env, stdio: 'inherit' });
     process.exitCode = result.status ?? 1;
   } finally {
     // Somente o banco aleatório criado acima entra aqui.

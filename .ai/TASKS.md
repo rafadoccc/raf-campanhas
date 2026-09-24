@@ -28,7 +28,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-050  (M) Mapear erros internos antes de responder          owner: —        since: —      
 [x] T-051  (M) rate limiting na API                              owner: —        since: —      
 [ ] T-052  (M) Rotina de exclusão de mídia órfã e cota           owner: —        since: —
-[ ] T-053  (M) SIGKILL de fallback no timeout do ffprobe         owner: —        since: —
+[x] T-053  (M) SIGKILL de fallback no timeout do ffprobe         owner: —        since: —
 ```
 
 ## Fase 1 — Endurecimento
@@ -122,6 +122,17 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-100  Fase 4B: WhatsAppManager e providers por usuário          owner: —        since: —
 [x] T-101  Fase 4C: rotas /api/whatsapp/* por usuário + ponte legada  owner: —        since: —
 [x] T-102  Fase 4D: envio, eventos e recibos com dono inequívoco     owner: —        since: —
+[x] T-103  Auditoria de segurança de ponta a ponta e correções       owner: —        since: —
+[x] T-104  Fase 4E: migração da sessão legada (rename idempotente)     owner: —        since: —
+[x] T-105  Fase 5: envios em paralelo entre números diferentes      owner: —        since: —
+[x] T-106  Design system, telas, reuso de campanha e cor da imagem     owner: —        since: —
+[x] T-107  Fase 6: painel do SUPER_ADMIN (/api/admin/*)              owner: —        since: —
+[x] T-108  Intervalo mínimo de 3 min garantido no servidor e na fila  owner: —        since: —
+[x] T-109  Marcar todos (@todos) nas mensagens                       owner: —        since: —
+[x] T-110  Tentar de novo envios com falha (seguro e manual)          owner: —        since: —
+[x] T-111  Painel do administrador completo (métricas do sistema)     owner: —        since: —
+[x] T-112  Select e Checkbox próprios; visual sem bordas decorativas  owner: —        since: —
+[~] T-113  Docs, STATE e junção dev → main                            owner: claude   since: 2026-09-24T05:25Z
 ```
 
 ## Fase 5 — Deploy em VPS

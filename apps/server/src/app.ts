@@ -1,6 +1,6 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey } from '@campaign/database';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey, MIN_INTERVAL_SECONDS, effectiveInterval } from '@campaign/database';
 import { forecastQueue } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
@@ -11,6 +11,7 @@ import { registerAuth } from './auth';
 import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
 import { WhatsAppManager } from './whatsapp-manager';
 import { createSendingRouter } from './sending-router';
+import { registerAdminRoutes } from './admin-routes';
 import { usesLegacySession } from './legacy-session';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
@@ -84,24 +85,41 @@ app.post('/api/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
+// Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
+registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
+// Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de
+// mensagens, lista de grupos ou mídia inteira.
 app.get('/api/campaigns', async request => {
   await completeFinished(prisma);
-  const campaigns = await prisma.campaign.findMany({
-    where: { deletedAt: null, userId: request.user!.id },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      groups: { orderBy: { position: 'asc' }, include: { group: { select: { id: true, name: true } } } },
-      messages: { orderBy: { position: 'asc' } },
-      schedules: { orderBy: { time: 'asc' } },
-      _count: { select: { deliveries: true } }
-    }
+  const query = request.query as { cursor?: string; limit?: string; status?: string; q?: string };
+  const take = Math.min(50, Math.max(1, parseInt(query.limit ?? '24') || 24));
+  // Filtros opcionais: situação (uma ou várias, separadas por vírgula) e parte do nome.
+  const allowed = ['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'] as const;
+  const statuses = (typeof query.status === 'string' ? query.status.split(',') : []).filter((x): x is typeof allowed[number] => (allowed as readonly string[]).includes(x));
+  const search = typeof query.q === 'string' ? query.q.trim().slice(0, 100) : '';
+  const page = await prisma.campaign.findMany({
+    where: { deletedAt: null, userId: request.user!.id, ...(statuses.length ? { status: { in: statuses } } : {}), ...(search ? { name: { contains: search } } : {}) },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: take + 1,
+    ...(typeof query.cursor === 'string' && query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+    select: {
+      id: true, name: true, startsAt: true, endsAt: true, status: true, provider: true, intervalSeconds: true, mode: true, mentionAll: true, createdAt: true,
+      schedules: { orderBy: { time: 'asc' }, select: { time: true } },
+      media: { select: { id: true, kind: true, color: true } },
+      _count: { select: { groups: true } },
+    },
   });
+  const items = page.slice(0, take);
   // Contagem por status, para o bloco da campanha mostrar o progresso sem abrir o detalhe.
-  const counts = await prisma.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: campaigns.map(c => c.id) } }, _count: { _all: true } });
-  return campaigns.map(campaign => ({
-    ...campaign,
-    progress: Object.fromEntries(counts.filter(row => row.campaignId === campaign.id).map(row => [row.status, row._count._all])),
-  }));
+  const counts = await prisma.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: items.map(c => c.id) } }, _count: { _all: true } });
+  return {
+    items: items.map(({ _count, ...campaign }) => ({
+      ...campaign,
+      groupCount: _count.groups,
+      progress: Object.fromEntries(counts.filter(row => row.campaignId === campaign.id).map(row => [row.status, row._count._all])),
+    })),
+    nextCursor: page.length > take ? items[items.length - 1].id : null,
+  };
 });
 
 app.get('/api/deliveries', async (request) => {
@@ -122,19 +140,21 @@ app.get('/api/deliveries', async (request) => {
   // O número pode estar ocupado por outra campanha (ADR-006): a previsão parte do mais tarde dos dois relógios.
   const accountId = campaign ? paceKey(campaign.provider, campaign.accountJid) : null;
   const account = accountId ? await prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : null;
-  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + (campaign?.intervalSeconds ?? 0) * 1000 : 0);
+  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + effectiveInterval(campaign?.intervalSeconds ?? 0) * 1000 : 0);
   const paced = campaign ? { ...campaign, nextAvailableAt: new Date(Math.max(campaign.nextAvailableAt?.getTime() ?? 0, numberFreeAt)) } : null;
   const forecast = paced ? forecastQueue(deliveries, paced, await currentTime(), provider.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
   return deliveries.map(delivery => ({ ...delivery, wait: forecast?.get(delivery.id) ?? null }));
 });
 
 for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/api/campaigns' : '/api/campaigns/:id', handler: async (request, reply) => {
-  const body = request.body as { name?: unknown; startsAt?: unknown; endsAt?: unknown; groupIds?: unknown; messages?: unknown; times?: unknown; mode?: unknown; intervalSeconds?: unknown; mediaId?: unknown };
+  const body = request.body as { name?: unknown; startsAt?: unknown; endsAt?: unknown; groupIds?: unknown; messages?: unknown; times?: unknown; mode?: unknown; intervalSeconds?: unknown; mediaId?: unknown; mentionAll?: unknown };
   if (body?.mediaId !== undefined && body.mediaId !== null && (typeof body.mediaId !== 'string' || !await prisma.campaignMedia.count({ where: { id: body.mediaId, userId: request.user!.id } }))) return reply.code(400).send({ error: 'Mídia inválida. Selecione um arquivo novamente.' });
   const mediaId = typeof body?.mediaId === 'string' ? body.mediaId : body?.mediaId === null ? null : undefined;
   const mode = body?.mode ?? 'SCHEDULED';
   const intervalSeconds = body?.intervalSeconds ?? 180;
-  if (!['IMMEDIATE', 'SCHEDULED'].includes(String(mode)) || typeof intervalSeconds !== 'number' || !Number.isInteger(intervalSeconds) || intervalSeconds < 60 || intervalSeconds > 3600) return reply.code(400).send({ error: 'Modo inválido ou intervalo fora de 1 a 60 minutos.' });
+  if (body?.mentionAll !== undefined && typeof body.mentionAll !== 'boolean') return reply.code(400).send({ error: 'Opção "marcar todos" inválida.' });
+  const mentionAll = body?.mentionAll === true;
+  if (!['IMMEDIATE', 'SCHEDULED'].includes(String(mode)) || typeof intervalSeconds !== 'number' || !Number.isInteger(intervalSeconds) || intervalSeconds < MIN_INTERVAL_SECONDS || intervalSeconds > 3600) return reply.code(400).send({ error: 'Modo inválido ou intervalo fora de 3 a 60 minutos (mínimo de 3 minutos entre grupos).' });
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const now = await currentTime();
   const startsAt = mode === 'IMMEDIATE' ? now : new Date(String(body?.startsAt ?? ''));
@@ -168,7 +188,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
         if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
         if (campaign.status !== 'DRAFT') throw new Error('Somente rascunhos podem ser editados.');
         return tx.campaign.update({ where: { id }, data: {
-          name, startsAt, endsAt, mode: String(mode), intervalSeconds, updatedAt: now, mediaId,
+          name, startsAt, endsAt, mode: String(mode), intervalSeconds, mentionAll, updatedAt: now, mediaId,
           groups: { deleteMany: {}, create: groupIds.map((groupId, position) => ({ groupId, position })) },
           messages: { deleteMany: {}, create: messages.map((content, position) => ({ content, position })) },
           schedules: { deleteMany: {}, create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }
@@ -183,7 +203,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   return reply.status(201).send(await prisma.campaign.create({
     data: {
       userId: request.user!.id, // dono = sessão; body.userId é ignorado (ADR-017)
-      name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, createdAt: now, updatedAt: now, mediaId,
+      name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, mentionAll, createdAt: now, updatedAt: now, mediaId,
       groups: { create: [...new Set(groupIds)].map((groupId, position) => ({ groupId, position })) },
       messages: { create: messages.map((content, position) => ({ content, position })) },
       schedules: { create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }

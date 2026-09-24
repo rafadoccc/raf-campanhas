@@ -8,13 +8,19 @@ import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
 import { createSendingRouter } from './sending-router';
 import { legacySessionOwnerId } from './legacy-session';
 import { legacyWhatsappSessionDir } from './session-paths';
+import { migrateLegacySession } from './session-migration';
+import { backfillMediaPreviews } from './media';
 
 async function main() {
   const config = loadConfig(process.env);
   await bootstrapAdmin(process.env);
+  // Fase 4E: a sessão global vira a sessão do dono (rename atômico, antes de qualquer conexão
+  // abrir). Idempotente; com dono ambíguo ou qualquer falha, nada muda e a ponte continua.
+  const migration = await migrateLegacySession();
+  if (!['sem-sessao-legada', 'desligada'].includes(migration.outcome)) console.info('[WhatsApp] Migração da sessão global:', migration.outcome);
   const manager = new WhatsAppManager(); // conexões por usuário
-  // Sessão global legada: a pasta NÃO se move (isso é a 4E). Quando a ponte reconhece um dono
-  // inequívoco, o provider legado passa a carregar esse dono — é o que isola os eventos dele.
+  // Se a migração não aconteceu (dono ambíguo ou falha do sistema), a sessão global segue na
+  // pasta antiga e a ponte cuida dela: o provider legado carrega o dono, isolando os eventos.
   const legacyOwnerId = await legacySessionOwnerId({
     legacyProvider: new WhatsAppProvider(),
     ownSessionDir: (userId: string) => manager.sessionDirFor(userId),
@@ -49,6 +55,8 @@ async function main() {
   // Reconecta as conexões por usuário já pareadas (nenhuma existe até alguém parear pelo painel).
   const reconnected = await manager.startAll();
   for (const item of reconnected.filter(r => r.outcome === 'falhou')) console.warn('[WhatsApp] Reconexão falhou para', item.userId, item.error);
+  // Imagens antigas ganham cor e miniatura em segundo plano (ADR-026); não atrasa a partida.
+  void backfillMediaPreviews().catch(() => undefined);
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);
 }

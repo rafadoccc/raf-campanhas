@@ -27,8 +27,11 @@ export type LegacyBridgeDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
-/** Id do dono comprovado da sessão global legada, ou null quando não há dono inequívoco. */
-export async function legacySessionOwnerId(deps: LegacyBridgeDeps): Promise<string | null> {
+/**
+ * Dono inequívoco da sessão legada pareada (condições 1 e 2), sem olhar se já foi migrada.
+ * Usado pela migração da 4E, que precisa do dono justamente para criar a pasta própria.
+ */
+export async function legacyOwnerCandidate(deps: Omit<LegacyBridgeDeps, 'ownSessionDir'>): Promise<string | null> {
   const db = deps.db ?? prisma;
   const env = deps.env ?? process.env;
   if (!await deps.legacyProvider.hasPairedSession()) return null;
@@ -41,13 +44,18 @@ export async function legacySessionOwnerId(deps: LegacyBridgeDeps): Promise<stri
       const admins = await db.user.findMany({ where: { role: 'SUPER_ADMIN', disabledAt: null }, select: { id: true }, take: 2 });
       return admins.length === 1 ? admins[0] : null;
     })();
-  if (!candidate) return null;
+  return candidate?.id ?? null;
+}
 
+/** Id do dono comprovado da sessão global legada, ou null quando não há dono inequívoco. */
+export async function legacySessionOwnerId(deps: LegacyBridgeDeps): Promise<string | null> {
+  const owner = await legacyOwnerCandidate(deps);
+  if (!owner) return null;
   // Já tem pasta própria (migrado na 4E): a ponte não vale mais.
   try {
-    if (existsSync(deps.ownSessionDir(candidate.id))) return null;
+    if (existsSync(deps.ownSessionDir(owner))) return null;
   } catch { return null; }
-  return candidate.id;
+  return owner;
 }
 
 /** Este usuário deve operar a sessão global legada? (rotas do WhatsApp) */

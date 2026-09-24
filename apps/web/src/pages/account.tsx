@@ -1,9 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { card, page, primaryButton } from '../components/ui';
-
-const field = 'mt-1 w-full rounded-lg border border-slate-300 p-2';
+import { Alert, Badge, Button, Card, Field, Page, PageHeader, IconPassword, inputClass } from '../design';
 
 export default function AccountPage() {
   const { user } = useAuth();
@@ -24,16 +22,20 @@ export default function AccountPage() {
     finally { setBusy(false); }
   }
 
-  return <main className={`${page} max-w-xl space-y-6`}>
-    <header><h1 className="text-2xl font-bold">{user?.name}</h1><p className="text-sm text-slate-500">{user?.email}</p></header>
-    <form onSubmit={submit} className={`${card} space-y-4 p-6`}>
-      <h2 className="font-semibold">Trocar senha</h2>
-      {notice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{notice}</p>}
-      {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      <label className="block text-sm font-medium">Senha atual<input name="current" type="password" required autoComplete="current-password" className={field} /></label>
-      <label className="block text-sm font-medium">Nova senha (mínimo 10 caracteres)<input name="next" type="password" required minLength={10} autoComplete="new-password" className={field} /></label>
-      <label className="block text-sm font-medium">Repita a nova senha<input name="confirm" type="password" required minLength={10} autoComplete="new-password" className={field} /></label>
-      <button disabled={busy} className={primaryButton}>{busy ? 'Salvando…' : 'Salvar nova senha'}</button>
-    </form>
-  </main>;
+  return <Page>
+    <div className="mx-auto w-full max-w-md space-y-4">
+      <PageHeader title={user?.name ?? 'Minha conta'} subtitle={<span className="inline-flex items-center gap-2">{user?.email}<Badge tone={user?.role === 'SUPER_ADMIN' ? 'info' : 'neutral'}>{user?.role === 'SUPER_ADMIN' ? 'Administrador' : 'Usuário'}</Badge></span>} />
+      <Card as="div" className="p-5">
+        <form onSubmit={submit} className="space-y-4">
+          <h2 className="text-sm font-semibold">Trocar senha</h2>
+          {notice && <Alert tone="brand">{notice}</Alert>}
+          {error && <Alert>{error}</Alert>}
+          <Field label="Senha atual"><input name="current" type="password" required autoComplete="current-password" className={inputClass} /></Field>
+          <Field label="Nova senha" hint="Mínimo de 10 caracteres."><input name="next" type="password" required minLength={10} autoComplete="new-password" className={inputClass} /></Field>
+          <Field label="Repita a nova senha"><input name="confirm" type="password" required minLength={10} autoComplete="new-password" className={inputClass} /></Field>
+          <Button type="submit" variant="primary" icon={IconPassword} loading={busy} disabled={busy}>{busy ? 'Salvando…' : 'Salvar nova senha'}</Button>
+        </form>
+      </Card>
+    </div>
+  </Page>;
 }
