@@ -2,5 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
-* { box-sizing: border-box; }
-body { margin: 0; background: #f7f8fc; color: #18212f; font-family: Arial, Helvetica, sans-serif; }
+@layer base {
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; }
+  body { margin: 0; @apply bg-canvas font-sans text-sm text-ink antialiased; }
+  :focus-visible { outline: 2px solid theme('colors.brand.500'); outline-offset: 1px; }
+}
+
+@layer utilities {
+  /* Rolagem com barra invisível (a área continua rolável por roda, toque e teclado). */
+  .scroll-area { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
+  .scroll-area::-webkit-scrollbar { display: none; }
+  /* Números alinhados nas métricas. */
+  .tabular { font-variant-numeric: tabular-nums; }
+}
