@@ -5,7 +5,20 @@
 
 ---
 
-## 2026-09-24T18:40Z · claude
+## 2026-09-24T19:10Z · claude
+
+**Fiz:** corrigido o "erro de senha" na dev: a conta do dono só existia no banco de produção
+(`campanhas`), não no `campanhas_dev`; e o servidor da dev estava parado (por isso o "Sem
+conexão com o servidor"). Novo `npm run dev:sincronizar-login` copia o login dos
+administradores da produção para a dev (só o hash, só escreve em banco `*_dev`); a conta de
+teste `admin@dev.local` virou a do dono, com os dados de teste dela. `PasswordInput` no design
+system (olhinho mostrar/esconder) em todos os campos de senha: login, Minha conta, admin.
+**Arquivos:** scripts/dev-sync-login.mjs (novo), package.json, apps/web/src/design/{primitives,icons}.ts(x), apps/web/src/pages/{login,account,admin}.tsx, .ai/STATE.md
+**Tarefas:** T-114 (concluída)
+**Estado:** compila · lint ok · testes ok · hash da dev conferido igual ao da produção · olhinho testado no navegador (texto ↔ senha)
+**Armadilhas:** a logo "CC" já tinha saído do código; quem ainda a vê está com um painel antigo
+(produção local precisa reabrir o .exe para recompilar; Railway precisa do redeploy do main).
+**Próximo passo sugerido:** conferir o redeploy do Railway com a tela de login nova.
 
 **Fiz:** piso de 3 minutos entre grupos garantido no banco (ADR-028, não só na API — protege
 campanhas antigas); marcar todos os membros do grupo com @todos oculto (ADR-029); tentar de

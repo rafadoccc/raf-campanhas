@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { Alert, Badge, Button, Card, Field, Page, PageHeader, IconPassword, inputClass } from '../design';
+import { Alert, Badge, Button, Card, Field, Page, PageHeader, PasswordInput, IconPassword, inputClass } from '../design';
 
 export default function AccountPage() {
   const { user } = useAuth();
@@ -30,9 +30,9 @@ export default function AccountPage() {
           <h2 className="text-sm font-semibold">Trocar senha</h2>
           {notice && <Alert tone="brand">{notice}</Alert>}
           {error && <Alert>{error}</Alert>}
-          <Field label="Senha atual"><input name="current" type="password" required autoComplete="current-password" className={inputClass} /></Field>
-          <Field label="Nova senha" hint="Mínimo de 10 caracteres."><input name="next" type="password" required minLength={10} autoComplete="new-password" className={inputClass} /></Field>
-          <Field label="Repita a nova senha"><input name="confirm" type="password" required minLength={10} autoComplete="new-password" className={inputClass} /></Field>
+          <Field label="Senha atual"><PasswordInput name="current" required autoComplete="current-password" /></Field>
+          <Field label="Nova senha" hint="Mínimo de 10 caracteres."><PasswordInput name="next" required minLength={10} autoComplete="new-password" /></Field>
+          <Field label="Repita a nova senha"><PasswordInput name="confirm" required minLength={10} autoComplete="new-password" /></Field>
           <Button type="submit" variant="primary" icon={IconPassword} loading={busy} disabled={busy}>{busy ? 'Salvando…' : 'Salvar nova senha'}</Button>
         </form>
       </Card>

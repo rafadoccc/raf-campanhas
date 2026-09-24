@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { Alert, Button, Field, inputClass } from '../design';
+import { Alert, Button, Field, PasswordInput, inputClass } from '../design';
 
 export default function LoginPage() {
   const { user, signIn } = useAuth();
@@ -34,7 +34,7 @@ export default function LoginPage() {
       {!hasUsers && <Alert tone="warning">Nenhum usuário cadastrado ainda. Defina <code>ADMIN_EMAIL</code> e <code>ADMIN_PASSWORD</code> e reinicie o sistema, ou rode <code>npm run user:create</code>.</Alert>}
       {error && <Alert>{error}</Alert>}
       <Field label="E-mail"><input name="email" type="email" required autoComplete="username" autoFocus className={inputClass} /></Field>
-      <Field label="Senha"><input name="password" type="password" required autoComplete="current-password" className={inputClass} /></Field>
+      <Field label="Senha"><PasswordInput name="password" required autoComplete="current-password" /></Field>
       <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
     </form>
   </main>;

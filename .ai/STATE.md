@@ -50,7 +50,11 @@ Um único processo Node. Toda rota `/api` exige sessão (negar por padrão). Pub
   pelo dono (ver `AGENTS.md` Seção 5).
 - **dev** (worktree `raf-campanhas-dev`): banco `campanhas_dev`, porta 3001,
   `SESSIONS_DIR` próprio fora do projeto. Todo trabalho de agente entra por aqui primeiro;
-  main recebe por merge depois de testado.
+  main recebe por merge depois de testado. O banco da dev NÃO tem as contas da produção: rode
+  `npm run dev:sincronizar-login` (na pasta da dev) para o dono entrar na dev com o mesmo
+  e-mail e senha da produção (copia só o hash; lê a produção, escreve só em banco `*_dev`).
+  Depois de recompilar o painel, reinicie o servidor da dev — senão ele fica fora do ar ou em
+  branco ("Sem conexão com o servidor" no login).
 
 ### Multiusuário: como os dados se separam
 

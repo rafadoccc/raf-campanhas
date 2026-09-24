@@ -3,7 +3,7 @@ import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
 import {
-  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Page, PageHeader, ScrollArea, Select, Skeleton, Stat,
+  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Page, PageHeader, PasswordInput, ScrollArea, Select, Skeleton, Stat,
   IconAdd, IconAdmin, IconCampaigns, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
   IconLogout, IconPassword, IconQueue, IconRemove, IconSearch, IconSent, IconSystem, IconWhatsApp,
   dataHora, inputClass, numero, useConfirm,
@@ -104,7 +104,7 @@ function CreateUser({ onCreated, onClose }: { onCreated: () => void; onClose: ()
     <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
       <Field label="Nome"><input name="name" required maxLength={120} className={inputClass} /></Field>
       <Field label="E-mail"><input name="email" type="email" required autoComplete="off" className={inputClass} /></Field>
-      <Field label="Senha inicial" hint="10+ caracteres; a pessoa troca depois."><input name="password" type="password" required minLength={10} autoComplete="new-password" className={inputClass} /></Field>
+      <Field label="Senha inicial" hint="10+ caracteres; a pessoa troca depois."><PasswordInput name="password" required minLength={10} autoComplete="new-password" /></Field>
       <Field label="Papel"><Select label="Papel" value={role} onChange={setRole} options={roleOptions} /></Field>
       <div className="flex gap-2"><Button type="submit" variant="primary" loading={busy} disabled={busy}>Criar</Button><Button onClick={onClose}>Cancelar</Button></div>
       {error && <div className="sm:col-span-2 lg:col-span-5"><Alert>{error}</Alert></div>}
@@ -178,7 +178,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
       </div>}
     </div>
     {resetting && <form onSubmit={resetPassword} className="mt-2 flex flex-wrap items-center gap-2">
-      <input name="password" type="password" required minLength={10} autoComplete="new-password" placeholder="Nova senha (10+ caracteres)" aria-label={`Nova senha para ${user.name}`} className={`${inputClass} !w-64`} />
+      <PasswordInput name="password" required minLength={10} autoComplete="new-password" placeholder="Nova senha (10+ caracteres)" aria-label={`Nova senha para ${user.name}`} className="w-64" />
       <Button type="submit" size="sm" variant="primary" loading={busy}>Salvar senha</Button>
       <Button size="sm" variant="ghost" icon={IconRemove} onClick={() => setResetting(false)}>Cancelar</Button>
       <span className="text-2xs text-muted">As sessões abertas dessa conta serão encerradas.</span>

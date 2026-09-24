@@ -133,6 +133,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-111  Painel do administrador completo (métricas do sistema)     owner: —        since: —
 [x] T-112  Select e Checkbox próprios; visual sem bordas decorativas  owner: —        since: —
 [x] T-113  Docs, STATE e junção dev → main                            owner: —        since: —
+[x] T-114  Login da dev com a conta da produção; olhinho na senha     owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

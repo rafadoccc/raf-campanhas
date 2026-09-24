@@ -25,7 +25,8 @@
     "dev:server": "npm run dev --workspace=@campaign/server",
     "user:create": "node --env-file=.env scripts/user-create.mjs",
     "whatsapp:reverter-migracao": "node --env-file=.env scripts/session-rollback.mjs",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev:sincronizar-login": "node --env-file=.env scripts/dev-sync-login.mjs"
   },
   "engines": {
     "node": ">=22"

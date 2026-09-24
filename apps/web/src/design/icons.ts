@@ -45,6 +45,8 @@ export {
   Check as IconCheck,
   AtSign as IconMention,
   PowerOff as IconDisconnect,
+  Eye as IconShow,
+  EyeOff as IconHide,
   Cpu as IconSystem,
   Cable as IconDispatcher,
 } from 'lucide-react';

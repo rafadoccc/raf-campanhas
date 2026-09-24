@@ -1,6 +1,6 @@
-import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ComponentType, type ReactNode } from 'react';
+import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type ComponentType, type ReactNode } from 'react';
 import { Link, type LinkProps } from 'react-router-dom';
-import { IconCheck, IconChevron, IconEmpty, IconLoading } from './icons';
+import { IconCheck, IconChevron, IconEmpty, IconHide, IconLoading, IconShow } from './icons';
 
 // Peças básicas do design system (docs/design-system.md). Cantos de 5–6 px, borda fina,
 // sombra quase nula. Uma ação principal por área; o resto é secundário ou discreto.
@@ -66,6 +66,19 @@ export function Dot({ tone }: { tone: 'ok' | 'warn' | 'busy' | 'off' }) {
 }
 
 export const inputClass = 'block w-full rounded border border-line bg-white px-2.5 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50';
+
+/** Campo de senha com o "olhinho" para mostrar/esconder o que foi digitado. */
+export function PasswordInput({ className = '', ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const [visible, setVisible] = useState(false);
+  const Icon = visible ? IconHide : IconShow;
+  return <div className={`relative ${className}`}>
+    <input {...rest} type={visible ? 'text' : 'password'} className={`${inputClass} pr-9`} />
+    <button type="button" onClick={() => setVisible(v => !v)} aria-label={visible ? 'Esconder senha' : 'Mostrar senha'} title={visible ? 'Esconder senha' : 'Mostrar senha'} aria-pressed={visible}
+      className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r text-slate-400 hover:text-ink">
+      <Icon className="h-4 w-4" aria-hidden />
+    </button>
+  </div>;
+}
 
 export type SelectOption = { value: string; label: string };
 /**
