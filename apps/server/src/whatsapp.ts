@@ -59,7 +59,15 @@ export class WhatsAppProvider {
   private authDir: string;
   /** Dono da conexão (ADR-020). null = sessão global legada, o caminho de produção de hoje. */
   readonly ownerId: string | null;
-  private data: { state: string; qr?: string; accountJid?: string; error?: string } = { state: 'disconnected' };
+  private current: { state: string; qr?: string; accountJid?: string; error?: string } = { state: 'disconnected' };
+  /** Avisado a cada troca de estado (conectando → conectado → caiu…), para o dono gravar no banco. */
+  private readonly onStateChange?: () => void;
+  private get data() { return this.current; }
+  private set data(value: { state: string; qr?: string; accountJid?: string; error?: string }) {
+    const changed = value.state !== this.current.state || value.accountJid !== this.current.accountJid;
+    this.current = value;
+    if (changed) this.onStateChange?.();
+  }
   /**
    * Sem argumento ou com uma pasta base: sessão GLOBAL legada (`<base>/whatsapp`), exatamente
    * como sempre foi. Com `{ ownerId, sessionDir }`: sessão daquele usuário, na pasta que o
@@ -67,7 +75,7 @@ export class WhatsAppProvider {
    */
   /** Sessão global legada (pasta antiga), mesmo quando já tem dono resolvido pela ponte. */
   readonly legacySession: boolean;
-  constructor(options: string | { ownerId: string; sessionDir: string; legacySession?: boolean } = defaultSessionsDir()) {
+  constructor(options: string | { ownerId: string; sessionDir: string; legacySession?: boolean; onStateChange?: () => void } = defaultSessionsDir()) {
     if (typeof options === 'string') {
       this.ownerId = null;
       this.authDir = path.join(options, 'whatsapp');
@@ -77,6 +85,7 @@ export class WhatsAppProvider {
       this.ownerId = options.ownerId;
       this.authDir = options.sessionDir;
       this.legacySession = options.legacySession ?? false;
+      this.onStateChange = options.onStateChange;
     }
   }
   /** Pasta de sessão desta conexão (só leitura; cada provider tem a sua). */
@@ -308,6 +317,9 @@ export class WhatsAppProvider {
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);
+    // Encerrada sem logout: a autenticação fica, mas a conexão não está mais de pé.
+    this.socket = undefined;
+    this.data = { state: 'disconnected' };
     await Promise.all(this.receiptWrites);
   }
 }

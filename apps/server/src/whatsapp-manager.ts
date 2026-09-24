@@ -21,19 +21,22 @@ type Options = {
   db?: typeof prisma;
   /** Raiz das sessões; nos testes, uma pasta temporária. */
   sessionsBase?: string;
-  createProvider?: (ownerId: string, sessionDir: string) => ManagedProvider;
+  /** onStateChange: chamar a cada troca de estado da conexão (o gerenciador grava no banco). */
+  createProvider?: (ownerId: string, sessionDir: string, onStateChange: () => void) => ManagedProvider;
 };
 
 export class WhatsAppManager {
   private providers = new Map<string, ManagedProvider>();
   private readonly db: typeof prisma;
   private readonly sessionsBase?: string;
-  private readonly createProvider: (ownerId: string, sessionDir: string) => ManagedProvider;
+  private readonly createProvider: (ownerId: string, sessionDir: string, onStateChange: () => void) => ManagedProvider;
+  /** Gravações de estado em fila, uma por vez por usuário (a última sempre vence). */
+  private persisting = new Map<string, Promise<void>>();
 
   constructor(options: Options = {}) {
     this.db = options.db ?? prisma;
     this.sessionsBase = options.sessionsBase;
-    this.createProvider = options.createProvider ?? ((ownerId, sessionDir) => new WhatsAppProvider({ ownerId, sessionDir }));
+    this.createProvider = options.createProvider ?? ((ownerId, sessionDir, onStateChange) => new WhatsAppProvider({ ownerId, sessionDir, onStateChange }));
   }
 
   /** Provider do usuário, criando na primeira vez. Sempre a mesma instância para o mesmo id. */
@@ -41,7 +44,7 @@ export class WhatsAppManager {
     const existing = this.providers.get(userId);
     if (existing) return existing;
     // whatsappSessionDir valida o id e garante que o caminho fica dentro da pasta de sessões.
-    const provider = this.createProvider(userId, whatsappSessionDir(userId, this.sessionsBase));
+    const provider = this.createProvider(userId, whatsappSessionDir(userId, this.sessionsBase), () => this.queuePersist(userId));
     this.providers.set(userId, provider);
     return provider;
   }
@@ -96,8 +99,30 @@ export class WhatsAppManager {
    * Copia para o banco o estado atual da conexão (exibição e partida). Nunca grava QR nem
    * credenciais: só estado, número pareado, último acesso e último erro.
    */
+  /**
+   * Grava o estado depois de cada troca (conectou, caiu, reconectando…). Antes só era gravado no
+   * pedido de conectar: o banco ficava em "connecting" sem número para sempre e a trava de
+   * número único nunca era conferida.
+   */
+  queuePersist(userId: string) {
+    const previous = this.persisting.get(userId) ?? Promise.resolve();
+    const next = previous.then(() => this.persistState(userId)).catch(error => {
+      console.error('[WhatsApp] Não foi possível gravar o estado da conexão de', userId, error instanceof Error ? error.message : error);
+    });
+    this.persisting.set(userId, next);
+    void next.finally(() => { if (this.persisting.get(userId) === next) this.persisting.delete(userId); });
+    return next;
+  }
+
   async persistState(userId: string) {
-    const status = this.providers.get(userId)?.status() ?? { state: 'disconnected' as const };
+    const provider = this.providers.get(userId);
+    if (!provider) {
+      // Conexão encerrada (stop): só marca desconectado, sem apagar um erro já registrado —
+      // ex.: o aviso de número de outra conta, gravado logo antes deste encerramento.
+      await this.db.whatsAppSession.updateMany({ where: { userId, state: { not: 'error' } }, data: { state: 'disconnected' } });
+      return;
+    }
+    const status = provider.status();
     const connected = status.state === 'connected';
     const data = {
       state: status.state.slice(0, 20),
@@ -110,7 +135,12 @@ export class WhatsAppManager {
       // Número já pareado em outro usuário (accountJid é único): registra e segue.
       const code = (error as { code?: string }).code;
       if (code !== 'P2002') throw error;
-      await this.db.whatsAppSession.updateMany({ where: { userId }, data: { state: status.state.slice(0, 20), lastError: 'Este número já está conectado em outra conta.' } });
+      // Um número pertence a uma única conta (ADR-019): a conexão duplicada é encerrada, sem
+      // logout (não mexe no aparelho de ninguém), e a conta fica com o aviso.
+      await this.db.whatsAppSession.updateMany({ where: { userId }, data: { state: 'error', lastError: 'Este número já está conectado em outra conta.' } });
+      console.warn('[WhatsApp] Número já pertence a outra conta; conexão de', userId, 'encerrada.');
+      const duplicate = this.providers.get(userId);
+      if (duplicate) { this.providers.delete(userId); await duplicate.stop().catch(() => undefined); }
     }
   }
 
