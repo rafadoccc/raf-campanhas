@@ -5,9 +5,12 @@ import { buildApp } from './app';
 import { hashPassword, requireSuperAdmin, bootstrapAdmin, SESSION_MAX_AGE_MS } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
 import { staticRouter, createSendingRouter } from './sending-router';
+import { migrateLegacySession, rollbackLegacySession, migrationRecordPath } from './session-migration';
+import { legacySessionOwnerId } from './legacy-session';
+import { whatsappSessionDir } from './session-paths';
 import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
 import { loadConfig, TRUSTED_PROXIES } from './config';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -2072,6 +2075,129 @@ test('headers: responses carry the isolation headers', async () => {
   assert.equal(r.headers['x-content-type-options'], 'nosniff');
   assert.equal(r.headers['x-frame-options'], 'DENY');
   assert.match(String(r.headers['content-security-policy']), /frame-ancestors 'none'/);
+});
+
+// ─── Migração da sessão legada (ADR-024, Fase 4E) e ponta a ponta (4F) ──────────
+// Sessões FALSAS em pastas temporárias. A sessão real do dono nunca entra aqui.
+function fakeLegacySession(files = 40) {
+  const base = mkdtempSync(join(tmpdir(), 'wa-migra-'));
+  const legacy = join(base, 'whatsapp');
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, 'creds.json'), JSON.stringify({ me: { id: '5511MIGRA:7@s.whatsapp.net', lid: '99@lid' }, noiseKey: { private: 'x' } }));
+  for (let i = 0; i < files; i++) writeFileSync(join(legacy, `session-${i}.json`), JSON.stringify({ chave: i, dado: 'y'.repeat(50) }));
+  const snapshot = (dir: string) => Object.fromEntries(readdirSync(dir).sort().map(name => [name, readFileSync(join(dir, name), 'utf8')]));
+  return { base, legacy, snapshot, before: snapshot(legacy), cleanup: () => rmSync(base, { recursive: true, force: true }) };
+}
+async function migrationOwner() {
+  const owner = await prisma.user.upsert({ where: { email: 'migra-dono@teste.local' }, update: { role: 'SUPER_ADMIN', disabledAt: null }, create: { email: 'migra-dono@teste.local', name: 'Dono', role: 'SUPER_ADMIN', passwordHash: await hashPassword('senha-de-teste-123') } });
+  const restore = await onlySuperAdmin(owner.id);
+  return { owner, restore };
+}
+const quiet = { log: () => undefined };
+
+test('migration (4E): the global session becomes the owner session, byte for byte, without QR', async () => {
+  const session = fakeLegacySession();
+  const { owner, restore } = await migrationOwner();
+  try {
+    const result = await migrateLegacySession({ sessionsBase: session.base, ...quiet });
+    assert.equal(result.outcome, 'migrada');
+    const target = whatsappSessionDir(owner.id, session.base);
+    assert.ok(!existsSync(session.legacy), 'a pasta global deixou de existir (foi movida, não copiada)');
+    assert.deepEqual(session.snapshot(target), session.before, 'todos os arquivos idênticos na pasta do dono');
+    assert.ok(existsSync(migrationRecordPath(owner.id, session.base)), 'registro da migração ao lado da pasta');
+    const row = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: owner.id } });
+    assert.equal(row.autoConnect, true, 'reconecta sozinha na partida');
+    // Idempotente: a próxima partida não faz nada.
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, ...quiet })).outcome, 'sem-sessao-legada');
+    assert.deepEqual(session.snapshot(target), session.before);
+    // A ponte legada se desliga sozinha.
+    assert.equal(await legacySessionOwnerId({ legacyProvider: { hasPairedSession: async () => existsSync(join(session.legacy, 'creds.json')) }, ownSessionDir: id => whatsappSessionDir(id, session.base) }), null);
+    // Reverter devolve tudo, idêntico.
+    assert.equal((await rollbackLegacySession(owner.id, { sessionsBase: session.base })).outcome, 'revertida');
+    assert.deepEqual(session.snapshot(session.legacy), session.before);
+    assert.ok(!existsSync(target));
+    assert.equal((await rollbackLegacySession(owner.id, { sessionsBase: session.base })).outcome, 'nada-a-reverter');
+  } finally { await prisma.whatsAppSession.deleteMany({ where: { userId: owner.id } }); await restore(); session.cleanup(); }
+});
+
+test('migration (4E): with an ambiguous owner, a conflict or an OS failure nothing moves', async () => {
+  // Dono ambíguo: dois SUPER_ADMIN ativos.
+  let session = fakeLegacySession(5);
+  const outro = await prisma.user.upsert({ where: { email: 'migra-outro@teste.local' }, update: { role: 'SUPER_ADMIN', disabledAt: null }, create: { email: 'migra-outro@teste.local', name: 'Outro', role: 'SUPER_ADMIN', passwordHash: 'x' } });
+  try {
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, ...quiet })).outcome, 'dono-ambiguo');
+    assert.deepEqual(session.snapshot(session.legacy), session.before, 'nada mudou');
+    assert.ok(!existsSync(join(session.base, 'users')), 'nenhuma pasta nova');
+  } finally { await prisma.user.update({ where: { id: outro.id }, data: { role: 'USER' } }); session.cleanup(); }
+
+  const { owner, restore } = await migrationOwner();
+  try {
+    // Conflito: a pasta do dono já existe (ex.: pareou de novo pelo painel).
+    session = fakeLegacySession(5);
+    mkdirSync(whatsappSessionDir(owner.id, session.base), { recursive: true });
+    writeFileSync(join(whatsappSessionDir(owner.id, session.base), 'creds.json'), '{"me":{"id":"novo"}}');
+    const conflict = await migrateLegacySession({ sessionsBase: session.base, ...quiet });
+    assert.equal(conflict.outcome, 'conflito');
+    assert.deepEqual(session.snapshot(session.legacy), session.before, 'a legada ficou intacta');
+    assert.equal(readFileSync(join(whatsappSessionDir(owner.id, session.base), 'creds.json'), 'utf8'), '{"me":{"id":"novo"}}', 'a nova também');
+    session.cleanup();
+
+    // Falha do sistema operacional (arquivo em uso): nada se perde e a ponte segue valendo.
+    session = fakeLegacySession(5);
+    const failed = await migrateLegacySession({ sessionsBase: session.base, renameDir: async () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); }, ...quiet });
+    assert.deepEqual([failed.outcome, 'detail' in failed ? failed.detail : ''], ['falhou', 'EBUSY']);
+    assert.deepEqual(session.snapshot(session.legacy), session.before);
+    assert.ok(!existsSync(whatsappSessionDir(owner.id, session.base)), 'não sobra pasta vazia que desligaria a ponte');
+    assert.equal(await legacySessionOwnerId({ legacyProvider: { hasPairedSession: async () => true }, ownSessionDir: id => whatsappSessionDir(id, session.base) }), owner.id, 'a ponte continua levando ao dono');
+
+    // Desligada por variável de ambiente.
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, env: { WHATSAPP_MIGRATE_LEGACY: '0' }, ...quiet })).outcome, 'desligada');
+    assert.deepEqual(session.snapshot(session.legacy), session.before);
+  } finally { await restore(); session.cleanup(); }
+});
+
+test('end to end (4F): after migration the owner reconnects by himself and sends through his own connection', async () => {
+  const session = fakeLegacySession(10);
+  const { owner, restore } = await migrationOwner();
+  const { a } = await owners();
+  await pauseEverything();
+  try {
+    assert.equal((await migrateLegacySession({ sessionsBase: session.base, ...quiet })).outcome, 'migrada');
+    // Conexões: o provider do dono lê a sessão migrada de verdade para saber se está pareada.
+    const sent: { owner: string; jid: string }[] = [];
+    const manager = new WhatsAppManager({
+      sessionsBase: session.base,
+      createProvider: (ownerId, sessionDir) => {
+        let state = 'disconnected';
+        return {
+          ownerId, sessionDir,
+          status: () => ({ state, ...(state === 'connected' ? { accountJid: JID_LEGADO } : {}) }),
+          hasPairedSession: async () => existsSync(join(sessionDir, 'creds.json')),
+          connect: async () => { state = 'connected'; return { state }; },
+          disconnect: async () => ({ state: 'disconnected' }), stop: async () => undefined, sync: async () => ({ count: 0 }),
+          flushReads: async () => undefined, flushDeliveryEvents: async () => undefined,
+          send: async (jid: string) => { sent.push({ owner: ownerId, jid }); return { messageId: `3EB0E2E${sent.length}`, context: '' }; },
+        };
+      },
+    });
+    const started = await manager.startAll({} as NodeJS.ProcessEnv);
+    assert.equal(started.find(r => r.userId === owner.id)?.outcome, 'conectando', 'o dono reconectou sem QR');
+    // Sessão global vazia depois da migração: provider legado sem sessão pareada.
+    const legacyCalls: string[] = [];
+    const legacy = { ...manager.for(owner.id), status: () => ({ state: 'connected', accountJid: 'nao-usar' }), hasPairedSession: async () => false, send: async () => { legacyCalls.push('send'); return { messageId: 'x', context: '' }; } };
+    await manager.stop(owner.id); await manager.startAll({} as NodeJS.ProcessEnv); // "reinício"
+    const router = createSendingRouter<ManagedProvider>({ manager, legacyProvider: legacy as ManagedProvider });
+    const mine = await ownedCampaign(owner.id, JID_LEGADO);
+    const theirs = await ownedCampaign(a.id, JID_A);
+    const dispatcher = await startDispatcher(router, { scanIntervalMs: 50 });
+    try {
+      await waitFor(async () => (await fresh(mine.rows[0].id)).status === 'SENT', 'campanha do dono enviada');
+      await sleep(300);
+      assert.deepEqual(sent.map(s => s.owner), [owner.id], 'só pela conexão do dono');
+      assert.equal((await fresh(theirs.rows[0].id)).status, 'PENDING', 'o USER sem conexão não pega carona');
+      assert.deepEqual(legacyCalls, [], 'a sessão global não é mais usada');
+    } finally { await dispatcher.stop(); await manager.stopAll(); }
+  } finally { await prisma.whatsAppSession.deleteMany({ where: { userId: owner.id } }); await restore(); session.cleanup(); }
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
