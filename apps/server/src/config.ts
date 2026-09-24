@@ -12,13 +12,27 @@ export type AppConfig = {
   /** Nomes aceitos no cabeçalho Host (proteção contra DNS rebinding); null = não checa. */
   allowedHosts: string[] | null;
   secureCookies: boolean;
-  trustProxy: boolean;
+  /** false, ou a lista de proxies confiáveis (formato do Fastify/proxy-addr). */
+  trustProxy: boolean | string;
   sessionTtlMs: number;
   /** Pasta do painel compilado (apps/web/dist); null se ainda não foi compilado. */
   webDist: string | null;
 };
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
+
+// Proxies em quem o servidor confia para informar o IP real: só os da rede interna (a borda
+// da hospedagem chega por endereço privado ou pelo próprio computador). NUNCA `true`: com
+// `true` o Fastify aceita o X-Forwarded-For que o próprio cliente manda, e qualquer um
+// contorna o limite de tentativas de login trocando de "IP" a cada pedido.
+export const TRUSTED_PROXIES = 'loopback, uniquelocal';
+
+function trustProxyFrom(value: string | undefined, deployed: boolean): boolean | string {
+  if (value === undefined || value === '') return deployed ? TRUSTED_PROXIES : false;
+  if (value === '0') return false;
+  if (value === '1') return TRUSTED_PROXIES;
+  return value; // lista explícita, ex.: "10.0.0.0/8, 127.0.0.1"
+}
 
 // Lê e valida o ambiente uma vez, na partida. Configuração inválida derruba o processo
 // com uma mensagem clara em vez de um comportamento estranho depois.
@@ -75,8 +89,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedOrigins,
     allowedHosts,
     secureCookies: publicUrl.protocol === 'https:',
-    // Publicado atrás do proxy da hospedagem: IP e protocolo reais vêm do X-Forwarded-*.
-    trustProxy: env.TRUST_PROXY ? env.TRUST_PROXY === '1' : deployed,
+    // Publicado atrás do proxy da hospedagem: IP e protocolo reais vêm do X-Forwarded-*,
+    // mas só quando quem os envia é um proxy da rede interna.
+    trustProxy: trustProxyFrom(env.TRUST_PROXY?.trim(), deployed),
     sessionTtlMs: ttlHours * 3_600_000,
     webDist: existsSync(path.join(dist, 'index.html')) ? dist : null,
   };

@@ -56,7 +56,21 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Em memória: suficiente para um processo único. Conta falhas por IP e por e-mail.
 export class LoginLimiter {
   private failures = new Map<string, { count: number; firstAt: number }>();
+  /** Teto de chaves em memória: tentativas com e-mails sempre novos não crescem sem limite. */
+  static readonly MAX_KEYS = 10_000;
   constructor(private max = 10, private windowMs = 15 * 60_000, private now = () => Date.now()) {}
+  get size() { return this.failures.size; }
+  private prune() {
+    if (this.failures.size < LoginLimiter.MAX_KEYS) return;
+    for (const [key, entry] of this.failures) if (this.now() - entry.firstAt >= this.windowMs) this.failures.delete(key);
+    // Ainda cheio: descarta as mais antigas (o Map guarda a ordem de inserção) até sobrar
+    // folga de 10%, para a varredura não se repetir a cada tentativa.
+    const target = Math.floor(LoginLimiter.MAX_KEYS * 0.9);
+    for (const key of this.failures.keys()) {
+      if (this.failures.size <= target) break;
+      this.failures.delete(key);
+    }
+  }
   /** Minutos até liberar, ou 0 se pode tentar. */
   blockedFor(keys: string[]) {
     let wait = 0;
@@ -70,6 +84,7 @@ export class LoginLimiter {
     return wait;
   }
   fail(keys: string[]) {
+    this.prune();
     for (const key of keys) {
       const entry = this.failures.get(key);
       if (!entry || this.now() - entry.firstAt >= this.windowMs) this.failures.set(key, { count: 1, firstAt: this.now() });
@@ -81,6 +96,10 @@ export class LoginLimiter {
 
 // ─── Sessões ────────────────────────────────────────────────────────────────────
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+
+// Prazo ABSOLUTO de uma sessão, contado do login. A validade deslizante renova com o uso; sem
+// este teto, um cookie roubado e usado todo dia valeria para sempre.
+export const SESSION_MAX_AGE_MS = 30 * 24 * 3_600_000;
 
 function readCookie(request: FastifyRequest, name: string) {
   for (const part of (request.headers.cookie ?? '').split(';')) {
@@ -114,9 +133,16 @@ async function resolveSession(request: FastifyRequest, reply: FastifyReply, conf
   const session = await prisma.authSession.findUnique({ where: { tokenHash: tokenHash(token) }, include: { user: true } });
   const now = Date.now();
   if (!session || session.expiresAt.getTime() <= now || session.user.disabledAt) return null;
+  const hardLimit = session.createdAt.getTime() + SESSION_MAX_AGE_MS;
+  if (hardLimit <= now) {
+    await prisma.authSession.deleteMany({ where: { id: session.id } });
+    return null;
+  }
   if (session.expiresAt.getTime() - now < config.sessionTtlMs / 2) {
-    await prisma.authSession.update({ where: { id: session.id }, data: { expiresAt: new Date(now + config.sessionTtlMs), lastSeenAt: new Date(now) } });
-    setSessionCookie(reply, config, token, config.sessionTtlMs);
+    // Renova, mas nunca além do prazo absoluto.
+    const expiresAt = Math.min(now + config.sessionTtlMs, hardLimit);
+    await prisma.authSession.update({ where: { id: session.id }, data: { expiresAt: new Date(expiresAt), lastSeenAt: new Date(now) } });
+    setSessionCookie(reply, config, token, expiresAt - now);
   } else if (now - session.lastSeenAt.getTime() > 5 * 60_000) {
     await prisma.authSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date(now) } });
   }
@@ -135,6 +161,14 @@ export async function requireSuperAdmin(request: FastifyRequest, reply: FastifyR
 // ─── Rotas e proteção ───────────────────────────────────────────────────────────
 export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = new LoginLimiter()) {
   app.decorateRequest('user', null);
+
+  // Sessões vencidas (ou além do prazo absoluto) saem do banco a cada 6 horas.
+  const sweep = setInterval(() => {
+    const now = new Date();
+    void prisma.authSession.deleteMany({ where: { OR: [{ expiresAt: { lt: now } }, { createdAt: { lt: new Date(now.getTime() - SESSION_MAX_AGE_MS) } }] } }).catch(() => undefined);
+  }, 6 * 3_600_000);
+  sweep.unref();
+  app.addHook('onClose', async () => clearInterval(sweep));
 
   app.addHook('preHandler', async (request, reply) => {
     const url = request.url.split('?')[0];

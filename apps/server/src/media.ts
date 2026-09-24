@@ -16,7 +16,12 @@ async function inspectVideo(data: Buffer): Promise<{ streams: { codec_type: stri
     let output = ''; let settled = false;
     const finish = (error?: Error) => {
       if (settled) return; settled = true; clearTimeout(timer);
-      if (error) { child.kill(); reject(error); }
+      if (error) {
+        child.kill();
+        // Processo que ignora o SIGTERM não pode ficar preso ocupando memória.
+        setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 2000).unref();
+        reject(error);
+      }
       else { try { resolve(JSON.parse(output)); } catch { reject(Error('Vídeo inválido.')); } }
     };
     const timer = setTimeout(() => finish(Error('Não foi possível validar o vídeo a tempo.')), 15000);

@@ -2,11 +2,11 @@ import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
-import { hashPassword, requireSuperAdmin, bootstrapAdmin } from './auth';
+import { hashPassword, requireSuperAdmin, bootstrapAdmin, SESSION_MAX_AGE_MS } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
 import { staticRouter, createSendingRouter } from './sending-router';
 import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
-import { loadConfig } from './config';
+import { loadConfig, TRUSTED_PROXIES } from './config';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -493,7 +493,7 @@ test('login sets a hardened cookie, logout and expiry end the session, wrong pas
 test('published URL: secure cookie, only its host and origin accepted, security headers on every response', async () => {
   const config = loadConfig({ PUBLIC_URL: 'https://campanhas.exemplo.com.br', PORT: '8080' });
   assert.equal(config.host, '0.0.0.0');
-  assert.equal(config.trustProxy, true);
+  assert.equal(config.trustProxy, TRUSTED_PROXIES, 'só proxies da rede interna, nunca o cabeçalho do cliente');
   const probe = buildApp(fakeProvider, config);
   const site = { host: 'campanhas.exemplo.com.br', origin: 'https://campanhas.exemplo.com.br' };
   try {
@@ -2044,6 +2044,34 @@ test('groups (4D): sending for one owner updates only that owner group row', asy
     const depoisB = await prisma.group.findUniqueOrThrow({ where: { id: grupoB.id } });
     assert.deepEqual(depoisB, antesB, 'o grupo de B ficou idêntico');
   } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+// ─── Endurecimento de segurança (ADR-023) ───────────────────────────────────────
+test('sessions: an absolute 30-day limit applies even to a session used every day', async () => {
+  const email = 'sessao-antiga@teste.local';
+  await prisma.user.upsert({ where: { email }, update: { disabledAt: null }, create: { email, name: 'Antiga', passwordHash: await hashPassword('senha-de-teste-123') } });
+  const login = await loginAs(app, email);
+  const headers = { host: 'localhost', origin: PANEL, cookie: login.cookie };
+  const session = await prisma.authSession.findFirstOrThrow({ where: { user: { email } }, orderBy: { createdAt: 'desc' } });
+  // Quase no limite: a renovação deslizante nunca passa do prazo absoluto.
+  const nearLimit = new Date(Date.now() - SESSION_MAX_AGE_MS + 3_600_000);
+  await prisma.authSession.update({ where: { id: session.id }, data: { createdAt: nearLimit, expiresAt: new Date(Date.now() + 60_000) } });
+  assert.equal((await app.inject({ method: 'GET', url: '/api/auth/me', headers })).statusCode, 200);
+  const renewed = await prisma.authSession.findUniqueOrThrow({ where: { id: session.id } });
+  assert.ok(renewed.expiresAt.getTime() <= nearLimit.getTime() + SESSION_MAX_AGE_MS, 'renovação limitada ao prazo absoluto');
+  // Além do prazo: sessão recusada e apagada, mesmo com expiresAt no futuro.
+  await prisma.authSession.update({ where: { id: session.id }, data: { createdAt: new Date(Date.now() - SESSION_MAX_AGE_MS - 1000), expiresAt: new Date(Date.now() + 86_400_000) } });
+  assert.equal((await app.inject({ method: 'GET', url: '/api/auth/me', headers })).statusCode, 401);
+  assert.equal(await prisma.authSession.count({ where: { id: session.id } }), 0, 'a sessão vencida sai do banco');
+});
+
+test('headers: responses carry the isolation headers', async () => {
+  const r = await app.inject({ method: 'GET', url: '/api/health', headers: { host: 'localhost' } });
+  assert.equal(r.headers['cross-origin-opener-policy'], 'same-origin');
+  assert.equal(r.headers['cross-origin-resource-policy'], 'same-origin');
+  assert.equal(r.headers['x-content-type-options'], 'nosniff');
+  assert.equal(r.headers['x-frame-options'], 'DENY');
+  assert.match(String(r.headers['content-security-policy']), /frame-ancestors 'none'/);
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.

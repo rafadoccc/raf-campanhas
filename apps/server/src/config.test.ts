@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig } from './config';
+import { loadConfig, TRUSTED_PROXIES } from './config';
 
 test('local (sem variáveis): porta 3000, só 127.0.0.1, endereço localhost', () => {
   const config = loadConfig({});
@@ -25,7 +25,7 @@ test('Railway: escuta em 0.0.0.0 na PORT dada e usa o domínio público como PUB
   assert.ok(config.allowedOrigins.includes('https://campanhas-production.up.railway.app'));
   assert.equal(config.allowedHosts, null, 'Host do proxy não é barrado');
   assert.equal(config.secureCookies, true);
-  assert.equal(config.trustProxy, true);
+  assert.equal(config.trustProxy, TRUSTED_PROXIES, 'só proxies da rede interna');
 });
 
 test('Railway sem domínio público ainda escuta em 0.0.0.0; PUBLIC_URL e HOST têm prioridade', () => {
