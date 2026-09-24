@@ -134,6 +134,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-112  Select e Checkbox próprios; visual sem bordas decorativas  owner: —        since: —
 [x] T-113  Docs, STATE e junção dev → main                            owner: —        since: —
 [x] T-114  Login da dev com a conta da produção; olhinho na senha     owner: —        since: —
+[x] T-115  Previsão usava a conexão legada: falso "desconectado"     owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

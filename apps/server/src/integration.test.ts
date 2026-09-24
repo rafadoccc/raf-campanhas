@@ -2591,6 +2591,26 @@ test('mention all (029): saved with the campaign, copied on reuse and passed to 
   assert.deepEqual(options, [{ mentionAll: true }]);
 });
 
+// Bug de 2026-09-24: depois da migração da sessão, a previsão perguntava à conexão global
+// legada (sempre desligada) e mostrava "WhatsApp desconectado" com o dono enviando normalmente.
+test('forecast: "connected" is the campaign owner\'s connection, never the legacy global one', async () => {
+  const world = whatsappApp({ legacyState: 'disconnected', legacyPaired: false });
+  try {
+    const owner = await sessionFor(world.app, 'previsao-dono@teste.local');
+    const { cookie } = await loginAs(world.app, 'previsao-dono@teste.local');
+    const group = await prisma.group.create({ data: { name: 'Previsão', userId: owner.user.id, externalId: `120355${Date.now()}@g.us` } });
+    const later = new Date(Date.now() + 3_600_000);
+    const campaign = await prisma.campaign.create({ data: { name: 'Previsão', userId: owner.user.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', provider: 'baileys', accountJid: '5511900000001@s.whatsapp.net', mode: 'SCHEDULED',
+      groups: { create: [{ groupId: group.id, position: 0 }] }, deliveries: { create: [{ groupId: group.id, messageBody: 'oi', provider: 'baileys', sequence: 0, scheduledAt: later }] } } });
+    const reason = async () => (await world.app.inject({ method: 'GET', url: `/api/deliveries?campaignId=${campaign.id}`, headers: as(cookie) })).json()[0].wait?.reason ?? '';
+    world.manager.for(owner.user.id);
+    world.perUser.get(owner.user.id)!.state = { state: 'connected', accountJid: '5511900000001@s.whatsapp.net' };
+    assert.doesNotMatch(await reason(), /desconectado/, 'dono conectado: nada de "desconectado", mesmo com a global desligada');
+    world.perUser.get(owner.user.id)!.state = { state: 'disconnected' };
+    assert.match(await reason(), /desconectado/, 'dono desconectado: aí sim avisa');
+  } finally { await world.cleanup(); }
+});
+
 // ─── Tentar de novo (ADR-030) ────────────────────────────────────────────────────
 test('retry (030): a safe failure retries straight away; an uncertain one needs confirmation first', async () => {
   const { rows: [certain, uncertain] } = await realCampaign(2);

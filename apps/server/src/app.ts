@@ -142,7 +142,9 @@ app.get('/api/deliveries', async (request) => {
   const account = accountId ? await prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : null;
   const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + effectiveInterval(campaign?.intervalSeconds ?? 0) * 1000 : 0);
   const paced = campaign ? { ...campaign, nextAvailableAt: new Date(Math.max(campaign.nextAvailableAt?.getTime() ?? 0, numberFreeAt)) } : null;
-  const forecast = paced ? forecastQueue(deliveries, paced, await currentTime(), provider.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
+  // Conectado = a conexão DO DONO da campanha (a mesma que envia, ADR-022), nunca a global legada.
+  const ownerConnection = campaign ? await sending.forOwner(campaign.userId) : null;
+  const forecast = paced ? forecastQueue(deliveries, paced, await currentTime(), ownerConnection?.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
   return deliveries.map(delivery => ({ ...delivery, wait: forecast?.get(delivery.id) ?? null }));
 });
 

@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-09-24T19:30Z · claude
+
+**Fiz:** (1) corrigido o falso "WhatsApp desconectado · envia assim que reconectar" na previsão
+dos envios: `GET /api/deliveries` perguntava à conexão global legada (`provider.status()`),
+que fica sempre desligada depois da migração da sessão (4E); agora usa a conexão do dono da
+campanha (`sending.forOwner`), a mesma que envia. Teste de integração novo (falha no código
+antigo, passa no novo). (2) Produção local em branco em "WhatsApp"/"Administração": eu tinha
+recompilado `apps/web/dist` do main com o servidor da produção rodando; ele serve só os
+arquivos que existiam na partida (`wildcard: false`) e os novos voltavam como HTML. Resolvido
+SEM reiniciar (campanha real em andamento): recompilei a versão c58b7f7 do painel numa pasta
+temporária (mesmos hashes) e devolvi os arquivos + o index.html correspondente ao dist.
+**Arquivos:** apps/server/src/app.ts, apps/server/src/integration.test.ts
+**Tarefas:** T-115 (concluída)
+**Estado:** compila · lint ok · npm test 62/62 · integração 110/110 · produção local: todos os
+arquivos do painel respondem como JS/CSS, health 200, nenhum processo reiniciado
+**Armadilhas:** NUNCA rode `npm run build` na pasta do main com a produção ligada — o painel
+fica em branco até reiniciar. A produção local ainda roda o código de antes desta correção; o
+falso "desconectado" some quando o sistema for reiniciado (o launcher recompila sozinho,
+comparando o conteúdo dos fontes com `.runtime/build-stamp`). Fazer isso sem campanha rodando.
+**Próximo passo sugerido:** reiniciar a produção quando a campanha "Arraxta pra cima OFICIAL"
+não estiver no meio de uma rodada.
+
 ## 2026-09-24T19:10Z · claude
 
 **Fiz:** corrigido o "erro de senha" na dev: a conta do dono só existia no banco de produção
