@@ -4,6 +4,7 @@ import { hashPassword, normalizeEmail, requireSuperAdmin, validateNewPassword, t
 import { publicMessage } from './security';
 import type { WhatsAppManager } from './whatsapp-manager';
 import { legacySessionOwnerId, type LegacyBridgeDeps } from './legacy-session';
+import { adminOverview } from './admin-overview';
 
 // Painel do SUPER_ADMIN (ADR-027, Fase 6). Visão OPERACIONAL das contas: status, número
 // conectado e contagens. Nunca o conteúdo das campanhas ou mensagens, nunca QR nem senha.
@@ -18,13 +19,16 @@ class AdminError extends Error {
 }
 
 type Deps = {
-  manager: Pick<WhatsAppManager, 'peek' | 'stop'>;
+  manager: Pick<WhatsAppManager, 'peek' | 'stop' | 'owners'>;
   /** Para mostrar o status da sessão global legada do dono dela (até a migração). */
   legacy: LegacyBridgeDeps & { legacyProvider: { status(): { state: string; accountJid?: string; error?: string } } };
 };
 
 export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: Deps) {
   const guard = { preHandler: requireSuperAdmin };
+
+  // Métricas agregadas do sistema inteiro (ADR-031): nunca conteúdo de campanha ou mensagem.
+  app.get('/api/admin/overview', guard, async () => adminOverview(manager));
 
   app.get('/api/admin/users', guard, async () => {
     const [users, active, results, legacyOwner] = await Promise.all([
@@ -132,6 +136,24 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
     const updated = await prisma.user.updateMany({ where: { id }, data: { passwordHash: await hashPassword(password as string) } });
     if (!updated.count) return reply.code(404).send({ error: 'Usuário não encontrado.' });
     await prisma.authSession.deleteMany({ where: { userId: id } });
+    return { ok: true };
+  });
+
+  // Encerra as sessões web da conta sem desativá-la nem mexer nas campanhas ou no WhatsApp.
+  app.post('/api/admin/users/:id/logout', guard, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!await prisma.user.findUnique({ where: { id }, select: { id: true } })) return reply.code(404).send({ error: 'Usuário não encontrado.' });
+    const { count } = await prisma.authSession.deleteMany({ where: { userId: id } });
+    return { ok: true, sessionsEnded: count };
+  });
+
+  // Derruba a conexão do WhatsApp da conta PRESERVANDO a autenticação (reconecta sozinha ao
+  // voltar, como no desligamento do sistema) — sem desativar a conta nem pausar campanhas.
+  // A sessão legada (ainda não migrada, ADR-021/4E) não passa por aqui: só a migração a move.
+  app.post('/api/admin/users/:id/whatsapp/stop', guard, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!await prisma.user.findUnique({ where: { id }, select: { id: true } })) return reply.code(404).send({ error: 'Usuário não encontrado.' });
+    await manager.stop(id);
     return { ok: true };
   });
 }

@@ -2467,6 +2467,65 @@ test('admin (6): create, disable, enable, reset password and change role — wit
   } finally { await world.cleanup(); }
 });
 
+// ─── Painel do administrador (ADR-031) ──────────────────────────────────────────
+test('admin (031): the overview reports system-wide numbers, never a campaign or message', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'visao-admin@teste.local', 'SUPER_ADMIN');
+    const user = await sessionFor(world.app, 'visao-user@teste.local');
+    const asAdmin = await loginAs(world.app, 'visao-admin@teste.local');
+    const asUser = await loginAs(world.app, 'visao-user@teste.local');
+    const h = { host: 'localhost', origin: PANEL, cookie: asAdmin.cookie };
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/admin/overview', headers: { host: 'localhost', origin: PANEL, cookie: asUser.cookie } })).statusCode, 403, 'USER não entra');
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/admin/overview', headers: { host: 'localhost', origin: PANEL } })).statusCode, 401);
+
+    const group = await prisma.group.create({ data: { name: 'Segredo da campanha', userId: user.user.id } });
+    const campaign = await prisma.campaign.create({ data: { name: 'Nome sigiloso', userId: user.user.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', provider: 'baileys',
+      groups: { create: [{ groupId: group.id, position: 0 }] }, messages: { create: [{ content: 'conteúdo sigiloso', position: 0 }] },
+      deliveries: { create: [{ groupId: group.id, messageBody: 'conteúdo sigiloso', sequence: 0, scheduledAt: new Date(), provider: 'baileys', status: 'SENT', sentAt: new Date() }] } } });
+    world.manager.for(user.user.id);
+    world.perUser.get(user.user.id)!.state = { state: 'connected', accountJid: '5511999999999@s.whatsapp.net' };
+
+    const overview = await world.app.inject({ method: 'GET', url: '/api/admin/overview', headers: h });
+    assert.equal(overview.statusCode, 200, overview.body);
+    for (const segredo of [group.name, campaign.name, 'conteúdo sigiloso', 'messageBody']) assert.ok(!overview.body.includes(segredo), `não expõe ${segredo}`);
+    const body = overview.json();
+    assert.ok(body.users.total >= 2 && body.users.active >= 2);
+    assert.ok(body.campaigns.total >= 1 && body.campaigns.active >= 1);
+    assert.ok(body.today.sent >= 1, 'o envio de hoje entra na contagem');
+    assert.equal(body.last7Days.length, 7);
+    assert.ok(body.whatsapp.connectedNow >= 1, 'a conexão simulada como conectada conta');
+    assert.ok('dispatcher' in body && 'process' in body && typeof body.process.uptimeSeconds === 'number');
+  } finally { await world.cleanup(); }
+});
+
+test('admin (031): force-logout and stop-WhatsApp act on the account without touching its campaigns', async () => {
+  const world = whatsappApp();
+  try {
+    const admin = await sessionFor(world.app, 'acao-admin@teste.local', 'SUPER_ADMIN');
+    const asAdmin = await loginAs(world.app, 'acao-admin@teste.local');
+    const h = { host: 'localhost', origin: PANEL, cookie: asAdmin.cookie };
+    const alvo = await sessionFor(world.app, 'acao-alvo@teste.local');
+    const logged = await loginAs(world.app, 'acao-alvo@teste.local');
+    world.manager.for(alvo.user.id);
+    const group = await prisma.group.create({ data: { name: 'Do alvo', userId: alvo.user.id } });
+    const campaign = await prisma.campaign.create({ data: { name: 'Ativa do alvo', userId: alvo.user.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', groups: { create: [{ groupId: group.id, position: 0 }] } } });
+
+    const out = await world.app.inject({ method: 'POST', url: `/api/admin/users/${alvo.user.id}/logout`, headers: h });
+    assert.equal(out.statusCode, 200, out.body);
+    assert.ok(out.json().sessionsEnded >= 1);
+    assert.equal((await world.app.inject({ method: 'GET', url: '/api/auth/me', headers: { host: 'localhost', cookie: logged.cookie } })).statusCode, 401, 'sessão derrubada');
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE', 'campanha não é pausada por um logout forçado');
+
+    const stopped = await world.app.inject({ method: 'POST', url: `/api/admin/users/${alvo.user.id}/whatsapp/stop`, headers: h });
+    assert.equal(stopped.statusCode, 200, stopped.body);
+    assert.deepEqual(world.perUser.get(alvo.user.id)!.calls, ['stop']);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE', 'campanha não é pausada ao derrubar só o WhatsApp');
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users/nao-existe/logout', headers: h })).statusCode, 404);
+    assert.equal((await world.app.inject({ method: 'POST', url: '/api/admin/users/nao-existe/whatsapp/stop', headers: h })).statusCode, 404);
+  } finally { await world.cleanup(); }
+});
+
 // ─── Intervalo mínimo de 3 minutos (ADR-028) ────────────────────────────────────
 test('minimum interval (028): the API refuses less than 3 minutes and the queue never paces faster', async () => {
   const group = await prisma.group.create({ data: { name: 'Piso', userId: ownerId } });

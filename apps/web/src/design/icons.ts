@@ -44,4 +44,7 @@ export {
   ChevronDown as IconChevron,
   Check as IconCheck,
   AtSign as IconMention,
+  PowerOff as IconDisconnect,
+  Cpu as IconSystem,
+  Cable as IconDispatcher,
 } from 'lucide-react';
