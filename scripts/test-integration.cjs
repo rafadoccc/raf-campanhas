@@ -20,7 +20,9 @@ async function main() {
     await db.$executeRawUnsafe(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     const migration = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--schema=packages/database/prisma/schema.prisma'], { env, encoding: 'utf8' });
     if (migration.status !== 0) throw Error('Migração isolada falhou. ' + redact(migration.stderr || migration.stdout));
-    const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', 'apps/server/dist/integration.test.js'], { env, stdio: 'inherit' });
+    // TEST_NAME_PATTERN="parallel" roda só os testes cujo nome casa (útil para investigar).
+    const filter = process.env.TEST_NAME_PATTERN ? [`--test-name-pattern=${process.env.TEST_NAME_PATTERN}`] : [];
+    const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...filter, 'apps/server/dist/integration.test.js'], { env, stdio: 'inherit' });
     process.exitCode = result.status ?? 1;
   } finally {
     // Somente o banco aleatório criado acima entra aqui.

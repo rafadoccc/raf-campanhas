@@ -31,9 +31,17 @@ export function errorCodeOf(error: unknown): string | undefined {
 const LEASE_TTL_MS = 30_000;
 const LEASE_RENEW_MS = 10_000;
 const SCAN_INTERVAL_MS = 5_000;
-// Folga mínima entre dois envios quaisquer, em memória. NÃO é o que garante o intervalo: isso
-// é o relógio persistido de cada número (WhatsAppAccount, ADR-006), conferido em claimDelivery.
+// Folga mínima entre dois envios do MESMO número, em memória. NÃO é o que garante o intervalo:
+// isso é o relógio persistido de cada número (WhatsAppAccount, ADR-015), conferido em
+// claimDelivery. Números diferentes não esperam um pelo outro (Fase 5, ADR-025).
 const SEND_SPACING_MS = 1_500;
+
+/**
+ * Faixa de envio: um número de WhatsApp (ou a simulação). Dentro de uma faixa, um envio por
+ * vez; faixas diferentes andam em paralelo.
+ */
+export const laneOf = (delivery: { provider: string }, campaign: { accountJid: string | null; userId: string }) =>
+  delivery.provider === 'baileys' ? `numero:${campaign.accountJid ?? `sem-numero:${campaign.userId}`}` : 'simulacao';
 
 export type Dispatcher = {
   isActive(): boolean;
@@ -49,12 +57,14 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
   const owner = randomUUID();
   let stopping = false;
   let working = false;
-  let lastSendAt = 0;
+  const lastSendAt = new Map<string, number>();
   let scanTimer: NodeJS.Timeout | undefined;
   let leaseTimer: NodeJS.Timeout | undefined;
-  let activeSend: Promise<void> | undefined;
+  // Faixas trabalhando agora (uma por número). Uma faixa ocupada não recebe outro lote.
+  const busyLanes = new Set<string>();
+  const activeLanes = new Set<Promise<void>>();
 
-  async function send(id: string) {
+  async function send(id: string, lane: string) {
     if (stopping) return;
     // Quem envia é sempre a conexão do dono da campanha deste envio.
     const pending = await prisma.delivery.findUnique({ where: { id }, select: { provider: true, campaign: { select: { userId: true } } } });
@@ -63,7 +73,7 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     if (pending.provider === 'baileys' && provider?.status().state !== 'connected') return; // espera o dono conectar
     const delivery = await claimDelivery(prisma, id);
     if (!delivery) return;
-    lastSendAt = Date.now();
+    lastSendAt.set(lane, Date.now());
     try {
       if (!delivery.group.active) throw notSent(new Error('Grupo inativo. Sincronize os grupos.'));
       let providerId: string;
@@ -134,22 +144,38 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
         },
       });
       const due = campaigns
-        .flatMap(campaign => campaign.deliveries.map(delivery => ({ delivery, ownerId: campaign.userId })))
+        .flatMap(campaign => campaign.deliveries.map(delivery => ({ delivery, ownerId: campaign.userId, lane: laneOf(delivery, campaign) })))
         .filter(({ delivery }) => delivery.status === 'PENDING' && delivery.scheduledAt <= now);
-      for (const { delivery, ownerId } of due) {
-        if (stopping) break;
-        // Sem conexão do dono, este envio espera; os das outras campanhas seguem.
-        if (delivery.provider === 'baileys' && (await router.forOwner(ownerId))?.status().state !== 'connected') continue;
-        const wait = SEND_SPACING_MS - (Date.now() - lastSendAt);
-        if (wait > 0) await delay(wait);
-        activeSend = send(delivery.id);
-        await activeSend;
-        activeSend = undefined;
+      // Uma fila por número; os números andam em paralelo (Fase 5). A ordem dentro de cada
+      // faixa é a do scan: quem espera há mais tempo primeiro.
+      const lanes = new Map<string, typeof due>();
+      for (const item of due) lanes.set(item.lane, [...(lanes.get(item.lane) ?? []), item]);
+      // A rodada só entrega trabalho às faixas livres e NÃO espera por elas: um número lento
+      // não segura os outros (cada faixa é independente).
+      for (const [lane, items] of lanes) {
+        if (stopping || busyLanes.has(lane)) continue;
+        busyLanes.add(lane);
+        const running = runLane(lane, items)
+          .catch(error => console.error('Falha na fila do número:', error instanceof Error ? error.message : 'erro'))
+          .finally(() => { busyLanes.delete(lane); activeLanes.delete(running); });
+        activeLanes.add(running);
       }
     } catch (error) {
       console.error('Falha ao reconciliar fila:', error instanceof Error ? error.message : 'erro');
     } finally {
       working = false;
+    }
+  }
+
+  async function runLane(lane: string, items: { delivery: { id: string; provider: string }; ownerId: string }[]) {
+    for (const { delivery, ownerId } of items) {
+      if (stopping) break;
+      // Sem conexão do dono, este envio espera; os das outras campanhas seguem.
+      if (delivery.provider === 'baileys' && (await router.forOwner(ownerId))?.status().state !== 'connected') continue;
+      const wait = SEND_SPACING_MS - (Date.now() - (lastSendAt.get(lane) ?? 0));
+      if (wait > 0) await delay(wait);
+      if (stopping) break;
+      await send(delivery.id, lane);
     }
   }
 
@@ -192,7 +218,9 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     stopping = true;
     if (scanTimer) clearInterval(scanTimer);
     if (leaseTimer) clearInterval(leaseTimer);
-    if (activeSend) await Promise.race([activeSend, delay(30_000)]);
+    // Espera os envios em andamento de TODOS os números (até 30 s). Cada faixa confere
+    // `stopping` antes de enviar, então nenhuma começa um envio novo.
+    if (activeLanes.size) await Promise.race([Promise.allSettled([...activeLanes]), delay(30_000)]);
     await releaseLease(prisma, owner).catch(() => {});
   }
 

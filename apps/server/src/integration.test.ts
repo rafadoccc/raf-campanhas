@@ -2200,6 +2200,63 @@ test('end to end (4F): after migration the owner reconnects by himself and sends
   } finally { await prisma.whatsAppSession.deleteMany({ where: { userId: owner.id } }); await restore(); session.cleanup(); }
 });
 
+// ─── Envios em paralelo entre números (ADR-025, Fase 5) ─────────────────────────
+test('parallel (5): different numbers send at the same time; a slow number does not hold the others', async () => {
+  const { a, b } = await owners();
+  await pauseEverything();
+  // O relógio de cada número é persistido: sem zerar, o intervalo do teste anterior interfere.
+  await prisma.whatsAppAccount.deleteMany({ where: { id: { in: [JID_A, JID_B] } } });
+  const world = sendingWorld();
+  try {
+    const slow = world.connect(a.id, JID_A);
+    world.connect(b.id, JID_B);
+    const original = slow.provider.send;
+    // O número de A está lento: cada envio leva 2,5 s.
+    slow.provider.send = async (...args: Parameters<typeof original>) => { await sleep(2500); return original(...args); };
+    const campaignA = await ownedCampaign(a.id, JID_A, 1);
+    const campaignB = await ownedCampaign(b.id, JID_B, 2, 1);
+    const dispatcher = await startDispatcher(world.router, { scanIntervalMs: 50 });
+    try {
+      // B termina os DOIS envios enquanto o primeiro de A ainda está em andamento.
+      await waitFor(async () => (await prisma.delivery.findMany({ where: { campaignId: campaignB.campaign.id } })).every(d => d.status === 'SENT'), 'B terminou', 15_000);
+      assert.equal((await fresh(campaignA.rows[0].id)).status, 'PROCESSING', 'A ainda está enviando: B não esperou por ele');
+      await waitFor(async () => (await fresh(campaignA.rows[0].id)).status === 'SENT', 'A terminou', 15_000);
+      const [aRow] = await prisma.delivery.findMany({ where: { campaignId: campaignA.campaign.id } });
+      const [bFirst] = await prisma.delivery.findMany({ where: { campaignId: campaignB.campaign.id }, orderBy: { sequence: 'asc' } });
+      assert.ok(bFirst.attemptedAt! < aRow.sendReturnedAt!, 'os dois números enviaram ao mesmo tempo');
+      // Cada número por si: nenhum grupo trocado de número.
+      assert.deepEqual(slow.sent.map(s => s.jid), campaignA.groups.map(g => g.externalId));
+      assert.deepEqual(world.fakes.get(b.id)!.sent.map(s => s.jid), campaignB.groups.map(g => g.externalId));
+    } finally { await dispatcher.stop(); }
+    world.legacyIntact();
+  } finally { world.cleanup(); }
+});
+
+test('parallel (5): stopping waits for the sends in progress on every number', async () => {
+  const { a, b } = await owners();
+  await pauseEverything();
+  // O relógio de cada número é persistido: sem zerar, o intervalo do teste anterior interfere.
+  await prisma.whatsAppAccount.deleteMany({ where: { id: { in: [JID_A, JID_B] } } });
+  const world = sendingWorld();
+  try {
+    for (const [user, jid] of [[a, JID_A], [b, JID_B]] as const) {
+      const fake = world.connect(user.id, jid);
+      const original = fake.provider.send;
+      fake.provider.send = async (...args: Parameters<typeof original>) => { await sleep(800); return original(...args); };
+    }
+    const campaignA = await ownedCampaign(a.id, JID_A);
+    const campaignB = await ownedCampaign(b.id, JID_B);
+    const dispatcher = await startDispatcher(world.router, { scanIntervalMs: 50 });
+    try {
+      await waitFor(async () => (await prisma.delivery.count({ where: { id: { in: [campaignA.rows[0].id, campaignB.rows[0].id] }, status: 'PROCESSING' } })) === 2, 'os dois números enviando');
+    } finally { await dispatcher.stop(); }
+    // Nada fica pendurado em "enviando": os dois terminaram antes do stop voltar.
+    assert.equal((await fresh(campaignA.rows[0].id)).status, 'SENT');
+    assert.equal((await fresh(campaignB.rows[0].id)).status, 'SENT');
+    world.legacyIntact();
+  } finally { world.cleanup(); }
+});
+
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.

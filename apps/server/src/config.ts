@@ -22,10 +22,12 @@ export type AppConfig = {
 const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
 
 // Proxies em quem o servidor confia para informar o IP real: só os da rede interna (a borda
-// da hospedagem chega por endereço privado ou pelo próprio computador). NUNCA `true`: com
+// da hospedagem chega por endereço privado, pela faixa interna de operadora 100.64.0.0/10 —
+// usada pela borda do Railway — ou pelo próprio computador). Nenhum cliente da internet chega
+// por essas faixas. NUNCA `true`: com
 // `true` o Fastify aceita o X-Forwarded-For que o próprio cliente manda, e qualquer um
 // contorna o limite de tentativas de login trocando de "IP" a cada pedido.
-export const TRUSTED_PROXIES = 'loopback, uniquelocal';
+export const TRUSTED_PROXIES = 'loopback, uniquelocal, 100.64.0.0/10';
 
 function trustProxyFrom(value: string | undefined, deployed: boolean): boolean | string {
   if (value === undefined || value === '') return deployed ? TRUSTED_PROXIES : false;

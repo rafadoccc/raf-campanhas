@@ -46,5 +46,8 @@ test('proxy trust: the client can never choose its own IP through X-Forwarded-Fo
   // Direto da internet, forjando o cabeçalho: vale o IP verdadeiro da conexão.
   const forjado = await app.inject({ url: '/ip', remoteAddress: '200.9.9.9', headers: { 'x-forwarded-for': '6.6.6.6' } });
   assert.equal(forjado.json().ip, '200.9.9.9');
+  // Borda do Railway (faixa interna de operadora): também é proxy confiável.
+  const railway = await app.inject({ url: '/ip', remoteAddress: '100.64.0.7', headers: { 'x-forwarded-for': '201.2.3.4' } });
+  assert.equal(railway.json().ip, '201.2.3.4');
   await app.close();
 });
