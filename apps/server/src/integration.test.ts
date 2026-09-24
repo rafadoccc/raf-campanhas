@@ -157,11 +157,11 @@ test('dashboard orders campaign heads by effective time and omits paused campaig
 
 test('draft editing preserves ID, replaces configuration, and rejects editing after activation', async () => {
   const { id, groups } = await create(2);
-  const payload = { name: 'Editada', mode: 'IMMEDIATE', intervalSeconds: 60, messages: ['novo texto', 'segunda'], groupIds: groups.map(g => g.id).reverse() };
+  const payload = { name: 'Editada', mode: 'IMMEDIATE', intervalSeconds: 240, messages: ['novo texto', 'segunda'], groupIds: groups.map(g => g.id).reverse() };
   const result = await request('PATCH', `/campaigns/${id}`, payload);
   assert.equal(result.statusCode, 200, result.body); assert.equal(result.json().id, id);
   const detail = (await request('GET', `/campaigns/${id}`)).json();
-  assert.equal(detail.name, 'Editada'); assert.equal(detail.intervalSeconds, 60);
+  assert.equal(detail.name, 'Editada'); assert.equal(detail.intervalSeconds, 240);
   assert.deepEqual(detail.groups.map((g: { groupId: string }) => g.groupId), payload.groupIds);
   assert.deepEqual(detail.messages.map((m: { content: string }) => m.content), payload.messages);
   assert.equal((await deliveries(id)).length, 0);
@@ -238,7 +238,7 @@ test('restart preserves durable claim and pending order with a fresh database cl
   } finally { await fresh.$disconnect(); }
 });
 test('invalid intervals rejected; 100 groups persist in selection order', async () => {
-  for (const intervalSeconds of [0, -1, 59, 3601, 90.5, '180']) assert.equal((await request('POST', '/campaigns', { name: 'Invalid', intervalSeconds })).statusCode, 400);
+  for (const intervalSeconds of [0, -1, 59, 60, 179, 3601, 90.5, '180']) assert.equal((await request('POST', '/campaigns', { name: 'Invalid', intervalSeconds })).statusCode, 400);
   const { id, groups } = await create(100); await activate(id);
   assert.deepEqual((await deliveries(id)).map(r => r.groupId), groups.map(g => g.id));
 });
@@ -427,7 +427,7 @@ test('health reports the database, text columns keep long content and accents in
 
   const longMessage = 'Olá, ação! 🎉 ' + 'x'.repeat(9_980);
   const group = await prisma.group.create({ data: { name: 'São João — Coração 💚', userId: ownerId } });
-  const r = await request('POST', '/campaigns', { name: 'Ç'.repeat(200), mode: 'IMMEDIATE', intervalSeconds: 60, messages: [longMessage], groupIds: [group.id] });
+  const r = await request('POST', '/campaigns', { name: 'Ç'.repeat(200), mode: 'IMMEDIATE', intervalSeconds: 180, messages: [longMessage], groupIds: [group.id] });
   assert.equal(r.statusCode, 201, r.body);
   const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: r.json().id }, include: { messages: true } });
   assert.equal(saved.name, 'Ç'.repeat(200));
@@ -2465,6 +2465,129 @@ test('admin (6): create, disable, enable, reset password and change role — wit
     } finally { await restore(); }
     assert.equal((await world.app.inject({ method: 'PATCH', url: '/api/admin/users/nao-existe', headers: h, payload: { disabled: true } })).statusCode, 404);
   } finally { await world.cleanup(); }
+});
+
+// ─── Intervalo mínimo de 3 minutos (ADR-028) ────────────────────────────────────
+test('minimum interval (028): the API refuses less than 3 minutes and the queue never paces faster', async () => {
+  const group = await prisma.group.create({ data: { name: 'Piso', userId: ownerId } });
+  const base = { name: 'Piso', mode: 'IMMEDIATE', messages: ['oi'], groupIds: [group.id] };
+  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 179 })).statusCode, 400, '179 s: recusado');
+  assert.match((await request('POST', '/campaigns', { ...base, intervalSeconds: 60 })).json().error, /mínimo de 3 minutos/);
+  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 180 })).statusCode, 201, '180 s: aceito');
+  // Campanha com intervalo antigo de 60 s gravada direto no banco: a fila aplica o piso.
+  const previous = process.env.SEND_INTERVAL_FLOOR_SECONDS;
+  process.env.SEND_INTERVAL_FLOOR_SECONDS = '180';
+  try {
+    const { campaign, rows: [row] } = await realCampaign(1, 60);
+    const at = new Date();
+    assert.ok(await claimDelivery(prisma, row.id, at));
+    const reserved = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+    assert.equal(reserved.nextAvailableAt!.getTime(), at.getTime() + 180_000, 'reserva ocupa o número por 3 min, não 60 s');
+    await finishDelivery(prisma, row.id, { providerId: '3EB0PISO', context: '' }, at);
+    const number = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: ACCOUNT } });
+    assert.equal(number.nextAvailableAt!.getTime(), at.getTime() + 180_000, 'o número fica livre só 3 min depois');
+    assert.equal(number.lastIntervalSeconds, 180);
+    // Previsão do painel usa o mesmo piso.
+    const { forecastQueue } = await import('./queue-forecast.js');
+    const plan = forecastQueue([{ id: 'a', status: 'PENDING', sequence: 0, provider: 'baileys', scheduledAt: at, attemptedAt: null, attempts: 0 }, { id: 'b', status: 'PENDING', sequence: 1, provider: 'baileys', scheduledAt: at, attemptedAt: null, attempts: 0 }], { status: 'ACTIVE', nextAvailableAt: null, intervalSeconds: 60 }, at, true, 3);
+    assert.equal(plan.get('b')!.expectedAt.getTime() - plan.get('a')!.expectedAt.getTime(), 180_000);
+  } finally {
+    if (previous === undefined) delete process.env.SEND_INTERVAL_FLOOR_SECONDS; else process.env.SEND_INTERVAL_FLOOR_SECONDS = previous;
+  }
+});
+
+test('migration (real MySQL): campaigns below 3 minutes are raised to 3 minutes, nothing else changes', async () => {
+  await withLegacyDatabase(async (db, apply, names) => {
+    const target = '20260924180000_min_interval';
+    for (const name of names.slice(0, names.indexOf(target))) await apply(name);
+    await db.$executeRawUnsafe("INSERT INTO \`User\` (id, email, name, passwordHash, role, updatedAt) VALUES ('u1', 'u1@x', 'U', 'h', 'SUPER_ADMIN', NOW(3))");
+    await db.$executeRawUnsafe("INSERT INTO \`Campaign\` (id, userId, name, startsAt, endsAt, intervalSeconds, updatedAt) VALUES ('rapida', 'u1', 'R', NOW(3), NOW(3), 60, NOW(3)), ('normal', 'u1', 'N', NOW(3), NOW(3), 300, NOW(3))");
+    await apply(target);
+    const rows = await db.$queryRawUnsafe<{ id: string; intervalSeconds: number }[]>('SELECT id, intervalSeconds FROM \`Campaign\` ORDER BY id');
+    assert.deepEqual(rows.map(r => [r.id, Number(r.intervalSeconds)]), [['normal', 300], ['rapida', 180]]);
+  });
+});
+
+// ─── Marcar todos (ADR-029) ─────────────────────────────────────────────────────
+test('mention all (029): saved with the campaign, copied on reuse and passed to every send', async () => {
+  const group = await prisma.group.create({ data: { name: 'Marcar', userId: ownerId } });
+  const base = { name: 'Com todos', mode: 'IMMEDIATE', intervalSeconds: 180, messages: ['oi'], groupIds: [group.id] };
+  assert.equal((await request('POST', '/campaigns', { ...base, mentionAll: 'sim' })).statusCode, 400, 'só booleano');
+  const created = await request('POST', '/campaigns', { ...base, mentionAll: true });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.equal((await request('GET', `/campaigns/${created.json().id}`)).json().mentionAll, true);
+  assert.equal((await request('POST', '/campaigns', base)).json().mentionAll, false, 'padrão: desligado');
+  const copy = await request('POST', `/campaigns/${created.json().id}/duplicate`, {});
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: copy.json().id } })).mentionAll, true, 'usar de novo mantém a opção');
+  // O despachante repassa a opção ao conector.
+  const { campaign, rows: [row] } = await realCampaign(1);
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { mentionAll: true } });
+  const options: unknown[] = [];
+  const wa = fakeWhatsApp(async () => ({ messageId: '3EB0TODOS', context: 'x' }));
+  const originalSend = (wa.provider as unknown as { send: (...args: unknown[]) => unknown }).send;
+  (wa.provider as unknown as { send: (...args: unknown[]) => unknown }).send = (...args: unknown[]) => { options.push(args[5]); return originalSend(...args); };
+  const dispatcher = await startDispatcher(wa.router, { scanIntervalMs: 50 });
+  try { await waitFor(async () => (await fresh(row.id)).status === 'SENT', 'envio'); }
+  finally { await dispatcher.stop(); }
+  assert.deepEqual(options, [{ mentionAll: true }]);
+});
+
+// ─── Tentar de novo (ADR-030) ────────────────────────────────────────────────────
+test('retry (030): a safe failure retries straight away; an uncertain one needs confirmation first', async () => {
+  const { rows: [certain, uncertain] } = await realCampaign(2);
+  await prisma.delivery.update({ where: { id: certain.id }, data: { status: 'FAILED', error: 'Só administradores podem enviar neste grupo.', errorCode: 'grupo:so-admins' } });
+  await prisma.delivery.update({ where: { id: uncertain.id }, data: { status: 'FAILED', error: 'Timed Out. Resultado incerto: confira no celular. Sem reenvio automático para não duplicar.', errorCode: 'ETIMEDOUT' } });
+
+  // Falha certa: tenta de novo direto, sem precisar confirmar nada.
+  const safe = await request('POST', `/deliveries/${certain.id}/retry`, {});
+  assert.equal(safe.statusCode, 200, safe.body);
+  assert.deepEqual(safe.json(), { retried: true });
+  const requeued = await fresh(certain.id);
+  assert.equal(requeued.status, 'PENDING'); assert.equal(requeued.error, null); assert.equal(requeued.errorCode, null);
+
+  // Falha incerta: primeiro pedido volta 409 pedindo confirmação; nada muda ainda.
+  const blocked = await request('POST', `/deliveries/${uncertain.id}/retry`, {});
+  assert.equal(blocked.statusCode, 409); assert.equal(blocked.json().uncertain, true);
+  assert.equal((await fresh(uncertain.id)).status, 'FAILED', 'sem confirmação, nada muda');
+  const confirmed = await request('POST', `/deliveries/${uncertain.id}/retry`, { confirmUncertain: true });
+  assert.equal(confirmed.statusCode, 200, confirmed.body);
+  assert.equal((await fresh(uncertain.id)).status, 'PENDING');
+
+  // Só FAILED pode ser tentado de novo.
+  await prisma.delivery.update({ where: { id: certain.id }, data: { status: 'SENT' } });
+  assert.equal((await request('POST', `/deliveries/${certain.id}/retry`, {})).statusCode, 400);
+});
+
+test('retry (030): blocked for another user\'s delivery or a cancelled campaign; a completed campaign reactivates', async () => {
+  const other = await prisma.user.create({ data: { email: `outro-retry-${Date.now()}@teste.local`, name: 'Outro', passwordHash: 'x' } });
+  const group = await prisma.group.create({ data: { name: 'De outro', userId: other.id } });
+  const foreignCampaign = await prisma.campaign.create({ data: { name: 'De outro', userId: other.id, startsAt: new Date(), endsAt: new Date(), status: 'ACTIVE', mode: 'IMMEDIATE',
+    groups: { create: [{ groupId: group.id, position: 0 }] }, deliveries: { create: [{ groupId: group.id, messageBody: 'oi', sequence: 0, scheduledAt: new Date(), status: 'FAILED', error: 'x' }] } } });
+  const foreignDelivery = await prisma.delivery.findFirstOrThrow({ where: { campaignId: foreignCampaign.id } });
+  assert.equal((await request('POST', `/deliveries/${foreignDelivery.id}/retry`, {})).statusCode, 404, 'entrega de outro dono não existe para mim');
+
+  const { campaign, rows: [row] } = await realCampaign(1);
+  await prisma.delivery.update({ where: { id: row.id }, data: { status: 'FAILED', error: 'Recusado.' } });
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'CANCELLED' } });
+  assert.equal((await request('POST', `/deliveries/${row.id}/retry`, {})).statusCode, 400, 'campanha encerrada não reabre por aqui');
+  assert.equal((await request('POST', `/campaigns/${campaign.id}/retry-failed`, {})).statusCode, 400);
+
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'COMPLETED' } });
+  assert.equal((await request('POST', `/deliveries/${row.id}/retry`, {})).statusCode, 200);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE', 'volta a ativa para o despachante olhar de novo');
+});
+
+test('retry (030): retrying all failures in a campaign skips the uncertain ones and reports both counts', async () => {
+  const { campaign, rows: [a, b, c] } = await realCampaign(3);
+  await prisma.delivery.update({ where: { id: a.id }, data: { status: 'FAILED', error: 'Recusado.' } });
+  await prisma.delivery.update({ where: { id: b.id }, data: { status: 'FAILED', error: 'Resultado incerto: confira no celular.' } });
+  await prisma.delivery.update({ where: { id: c.id }, data: { status: 'SENT' } });
+  const result = await request('POST', `/campaigns/${campaign.id}/retry-failed`, {});
+  assert.equal(result.statusCode, 200, result.body);
+  assert.deepEqual(result.json(), { retried: 1, uncertainSkipped: 1 });
+  assert.equal((await fresh(a.id)).status, 'PENDING');
+  assert.equal((await fresh(b.id)).status, 'FAILED', 'incerta não entra no lote');
+  assert.equal((await fresh(c.id)).status, 'SENT');
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.

@@ -1,6 +1,6 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey } from '@campaign/database';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey, MIN_INTERVAL_SECONDS, effectiveInterval } from '@campaign/database';
 import { forecastQueue } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
@@ -103,7 +103,7 @@ app.get('/api/campaigns', async request => {
     take: take + 1,
     ...(typeof query.cursor === 'string' && query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     select: {
-      id: true, name: true, startsAt: true, endsAt: true, status: true, provider: true, intervalSeconds: true, mode: true, createdAt: true,
+      id: true, name: true, startsAt: true, endsAt: true, status: true, provider: true, intervalSeconds: true, mode: true, mentionAll: true, createdAt: true,
       schedules: { orderBy: { time: 'asc' }, select: { time: true } },
       media: { select: { id: true, kind: true, color: true } },
       _count: { select: { groups: true } },
@@ -140,19 +140,21 @@ app.get('/api/deliveries', async (request) => {
   // O número pode estar ocupado por outra campanha (ADR-006): a previsão parte do mais tarde dos dois relógios.
   const accountId = campaign ? paceKey(campaign.provider, campaign.accountJid) : null;
   const account = accountId ? await prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : null;
-  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + (campaign?.intervalSeconds ?? 0) * 1000 : 0);
+  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + effectiveInterval(campaign?.intervalSeconds ?? 0) * 1000 : 0);
   const paced = campaign ? { ...campaign, nextAvailableAt: new Date(Math.max(campaign.nextAvailableAt?.getTime() ?? 0, numberFreeAt)) } : null;
   const forecast = paced ? forecastQueue(deliveries, paced, await currentTime(), provider.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
   return deliveries.map(delivery => ({ ...delivery, wait: forecast?.get(delivery.id) ?? null }));
 });
 
 for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/api/campaigns' : '/api/campaigns/:id', handler: async (request, reply) => {
-  const body = request.body as { name?: unknown; startsAt?: unknown; endsAt?: unknown; groupIds?: unknown; messages?: unknown; times?: unknown; mode?: unknown; intervalSeconds?: unknown; mediaId?: unknown };
+  const body = request.body as { name?: unknown; startsAt?: unknown; endsAt?: unknown; groupIds?: unknown; messages?: unknown; times?: unknown; mode?: unknown; intervalSeconds?: unknown; mediaId?: unknown; mentionAll?: unknown };
   if (body?.mediaId !== undefined && body.mediaId !== null && (typeof body.mediaId !== 'string' || !await prisma.campaignMedia.count({ where: { id: body.mediaId, userId: request.user!.id } }))) return reply.code(400).send({ error: 'Mídia inválida. Selecione um arquivo novamente.' });
   const mediaId = typeof body?.mediaId === 'string' ? body.mediaId : body?.mediaId === null ? null : undefined;
   const mode = body?.mode ?? 'SCHEDULED';
   const intervalSeconds = body?.intervalSeconds ?? 180;
-  if (!['IMMEDIATE', 'SCHEDULED'].includes(String(mode)) || typeof intervalSeconds !== 'number' || !Number.isInteger(intervalSeconds) || intervalSeconds < 60 || intervalSeconds > 3600) return reply.code(400).send({ error: 'Modo inválido ou intervalo fora de 1 a 60 minutos.' });
+  if (body?.mentionAll !== undefined && typeof body.mentionAll !== 'boolean') return reply.code(400).send({ error: 'Opção "marcar todos" inválida.' });
+  const mentionAll = body?.mentionAll === true;
+  if (!['IMMEDIATE', 'SCHEDULED'].includes(String(mode)) || typeof intervalSeconds !== 'number' || !Number.isInteger(intervalSeconds) || intervalSeconds < MIN_INTERVAL_SECONDS || intervalSeconds > 3600) return reply.code(400).send({ error: 'Modo inválido ou intervalo fora de 3 a 60 minutos (mínimo de 3 minutos entre grupos).' });
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const now = await currentTime();
   const startsAt = mode === 'IMMEDIATE' ? now : new Date(String(body?.startsAt ?? ''));
@@ -186,7 +188,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
         if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
         if (campaign.status !== 'DRAFT') throw new Error('Somente rascunhos podem ser editados.');
         return tx.campaign.update({ where: { id }, data: {
-          name, startsAt, endsAt, mode: String(mode), intervalSeconds, updatedAt: now, mediaId,
+          name, startsAt, endsAt, mode: String(mode), intervalSeconds, mentionAll, updatedAt: now, mediaId,
           groups: { deleteMany: {}, create: groupIds.map((groupId, position) => ({ groupId, position })) },
           messages: { deleteMany: {}, create: messages.map((content, position) => ({ content, position })) },
           schedules: { deleteMany: {}, create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }
@@ -201,7 +203,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   return reply.status(201).send(await prisma.campaign.create({
     data: {
       userId: request.user!.id, // dono = sessão; body.userId é ignorado (ADR-017)
-      name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, createdAt: now, updatedAt: now, mediaId,
+      name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, mentionAll, createdAt: now, updatedAt: now, mediaId,
       groups: { create: [...new Set(groupIds)].map((groupId, position) => ({ groupId, position })) },
       messages: { create: messages.map((content, position) => ({ content, position })) },
       schedules: { create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }

@@ -92,6 +92,7 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
           delivery.campaign.accountJid,
           media,
           delivery.groupId, // selo/metadata só deste grupo (ADR-022)
+          { mentionAll: delivery.campaign.mentionAll },
         );
         providerId = sent.messageId;
         context = sent.context;

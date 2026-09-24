@@ -25,6 +25,20 @@ export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
   await tx.$queryRaw`SELECT id FROM \`Campaign\` WHERE id = ${id} FOR UPDATE`;
 }
 
+// ─── Intervalo mínimo (ADR-028) ─────────────────────────────────────────────────
+// Nenhum número envia mais rápido que 1 mensagem a cada 3 minutos, qualquer que seja o valor
+// gravado na campanha. A API já recusa menos que isso; este piso protege também dados antigos
+// e qualquer caminho que escreva no banco direto. Só o banco de teste descartável pode baixar o
+// piso (os testes de ritmo medem em segundos).
+export const MIN_INTERVAL_SECONDS = 180;
+export function intervalFloorSeconds() {
+  const override = process.env.SEND_INTERVAL_FLOOR_SECONDS;
+  if (process.env.CAMPAIGN_TEST_DATABASE && override !== undefined && Number.isFinite(Number(override))) return Number(override);
+  return MIN_INTERVAL_SECONDS;
+}
+/** Intervalo efetivo de uma campanha: o configurado, nunca abaixo do piso. */
+export const effectiveInterval = (intervalSeconds: number) => Math.max(intervalSeconds, intervalFloorSeconds());
+
 // ─── Ritmo por número (ADR-006) ─────────────────────────────────────────────────
 // O intervalo protege o NÚMERO: campanhas diferentes no mesmo número dividem um único relógio
 // (WhatsAppAccount), persistido para valer entre processos e após reinício. Ordem de locks
@@ -85,10 +99,11 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
     if (paceKey(candidate.provider, campaign.accountJid) !== account) return null;
     const head = await tx.delivery.findFirst({ where: { campaignId: campaign.id, ...dueOrRunning(at) }, orderBy: { sequence: 'asc' }, include: { group: true } });
     if (!head || head.id !== id || head.status !== 'PENDING' || head.scheduledAt > at) return null;
-    if (account && !await accountAllows(tx, account, campaign.intervalSeconds, at)) return null;
+    const interval = effectiveInterval(campaign.intervalSeconds);
+    if (account && !await accountAllows(tx, account, interval, at)) return null;
     const claimed = await tx.delivery.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'PROCESSING', attemptedAt: at, updatedAt: at, error: null, attempts: { increment: 1 } } });
     if (!claimed.count) return null;
-    const next = new Date(at.getTime() + campaign.intervalSeconds * 1000);
+    const next = new Date(at.getTime() + interval * 1000);
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: next, updatedAt: at } });
     // Número ocupado enquanto este envio está em andamento (e se o processo cair no meio).
     if (account) await tx.whatsAppAccount.update({ where: { id: account }, data: { nextAvailableAt: next } });
@@ -126,10 +141,11 @@ export async function finishDelivery(db: PrismaClient, id: string, outcome: Send
     const changed = await tx.delivery.updateMany({ where: { id, status: 'PROCESSING' }, data });
     if (!changed.count) return;
     // Full interval after completion, even after a slow send or a restart.
-    const next = new Date(at.getTime() + campaign.intervalSeconds * 1000);
+    const interval = effectiveInterval(campaign.intervalSeconds);
+    const next = new Date(at.getTime() + interval * 1000);
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: next, updatedAt: at, ...(campaign.status === 'PAUSED' ? { pausedAt: at } : {}) } });
     // O número também conta o intervalo a partir do fim desta tentativa (sucesso ou falha).
-    if (account) await tx.whatsAppAccount.update({ where: { id: account }, data: { nextAvailableAt: next, lastSendEndedAt: at, lastIntervalSeconds: campaign.intervalSeconds } });
+    if (account) await tx.whatsAppAccount.update({ where: { id: account }, data: { nextAvailableAt: next, lastSendEndedAt: at, lastIntervalSeconds: interval } });
     const remaining = await tx.delivery.count({ where: { campaignId: campaign.id, status: { in: ['PENDING', 'PROCESSING'] } } });
     if (!remaining && ['ACTIVE', 'PAUSED'].includes(campaign.status)) await tx.campaign.update({ where: { id: campaign.id }, data: { status: 'COMPLETED', pausedAt: null, updatedAt: at } });
   }, LOCKING_TRANSACTION);
@@ -149,11 +165,11 @@ export async function holdInterruptedAccounts(db: PrismaClient, now: Date) {
     await db.$transaction(async tx => {
       await lockAccount(tx, account);
       const current = await tx.whatsAppAccount.findUniqueOrThrow({ where: { id: account } });
-      const until = new Date(now.getTime() + campaign.intervalSeconds * 1000);
+      const until = new Date(now.getTime() + effectiveInterval(campaign.intervalSeconds) * 1000);
       await tx.whatsAppAccount.update({ where: { id: account }, data: {
         nextAvailableAt: current.nextAvailableAt && current.nextAvailableAt > until ? current.nextAvailableAt : until,
         lastSendEndedAt: now,
-        lastIntervalSeconds: campaign.intervalSeconds,
+        lastIntervalSeconds: effectiveInterval(campaign.intervalSeconds),
       } });
     }, LOCKING_TRANSACTION);
   }

@@ -12,7 +12,9 @@ async function main() {
   const url = new URL(process.env.DATABASE_URL);
   if (url.protocol !== 'mysql:') throw Error('DATABASE_URL precisa ser mysql://');
   url.pathname = `/${database}`;
-  const env = { ...process.env, DATABASE_URL: url.toString(), CAMPAIGN_TEST_DATABASE: database };
+  // Piso de intervalo reduzido SÓ neste banco descartável: os testes de ritmo medem em segundos
+  // (ADR-028). A fila só aceita esta variável quando CAMPAIGN_TEST_DATABASE está definida.
+  const env = { ...process.env, DATABASE_URL: url.toString(), CAMPAIGN_TEST_DATABASE: database, SEND_INTERVAL_FLOOR_SECONDS: '0' };
   const redact = text => String(text).replaceAll(process.env.DATABASE_URL, '[DATABASE_URL]').replaceAll(url.toString(), '[DATABASE_URL]');
 
   const db = new PrismaClient();

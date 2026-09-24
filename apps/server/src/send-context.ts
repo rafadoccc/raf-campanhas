@@ -28,6 +28,19 @@ export function describeGroupForSend(group: GroupInfo, me: { id?: string; lid?: 
   return { context, onlyAdmins, isAdmin, participants, adminOnlyWithoutPermission: onlyAdmins && isAdmin === false };
 }
 
+/**
+ * Membros a marcar no "marcar todos" (ADR-029): todos os participantes do grupo, exceto a
+ * própria conta. Usa o id que o WhatsApp informa (número ou LID), sem converter.
+ */
+export function mentionTargets(group: GroupInfo, me: { id?: string; lid?: string }) {
+  const mine = new Set([userOf(me.id), userOf(me.lid)].filter(Boolean));
+  const ids = (group.participants ?? [])
+    .filter(p => ![p.id, p.lid, p.phoneNumber].some(jid => mine.has(userOf(jid))))
+    .map(p => p.id)
+    .filter((id): id is string => typeof id === 'string' && id.includes('@'));
+  return [...new Set(ids)];
+}
+
 // Falha antes de o sendMessage ser chamado: nada saiu, então o envio pode ser tentado de novo
 // (ADR-014). Qualquer falha sem esta marca é tratada como resultado incerto.
 export function notSent(error: unknown): Error {
@@ -35,3 +48,13 @@ export function notSent(error: unknown): Error {
   return Object.assign(e, { notSent: true });
 }
 export const isNotSent = (error: unknown) => (error as { notSent?: unknown } | null)?.notSent === true;
+
+/**
+ * Um FAILED é "incerto" quando não se sabe se a mensagem chegou (ADR-014/030): a palavra
+ * "incerto" na mensagem de erro é a única marca (posta pelo despachante e pela recuperação na
+ * partida) — assim não existe uma segunda fonte de verdade para esta classificação, que teria
+ * que ser mantida em sincronia com o texto do erro. Falhas certas (nada saiu, ou reenvio
+ * automático esgotado) nunca levam a palavra. Usado para decidir se "tentar de novo" pode
+ * seguir direto ou precisa de confirmação explícita (risco de duplicar o envio).
+ */
+export const isUncertainFailure = (error?: string | null) => Boolean(error?.toLowerCase().includes('incerto'));

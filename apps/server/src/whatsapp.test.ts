@@ -49,6 +49,27 @@ test('admin-only group without admin rights fails before anything is sent', asyn
   assert.equal((await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net')).messageId, 'fake-id');
   assert.equal(sent.length, 1);
 });
+test('mention all (029): every member except the account itself is mentioned, in text and media', async () => {
+  const { provider, sent } = fake();
+  const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;
+  Object.assign(socket, {
+    user: { id: '5511000000000:3@s.whatsapp.net', lid: '999@lid' },
+    groupMetadata: async () => ({ size: 4, participants: [
+      { id: '5511000000000@s.whatsapp.net', admin: 'admin' },   // a própria conta (por número)
+      { id: '999@lid' },                                        // a própria conta (por LID)
+      { id: '5511111111111@s.whatsapp.net' },
+      { id: '123456@lid' },
+    ] }),
+  });
+  const result = await provider.send('a@g.us', 'Olá!', '5511000000000@s.whatsapp.net', null, undefined, { mentionAll: true });
+  assert.deepEqual(sent[0], ['a@g.us', { text: 'Olá!', mentions: ['5511111111111@s.whatsapp.net', '123456@lid'] }], 'texto intacto, todos marcados menos a própria conta');
+  assert.match(result.context, /mencoes=2$/);
+  const data = Buffer.from('img');
+  await provider.send('a@g.us', 'Legenda', '5511000000000@s.whatsapp.net', { kind: 'image', mimeType: 'image/png', data }, undefined, { mentionAll: true });
+  assert.deepEqual(sent[1], ['a@g.us', { image: data, mimetype: 'image/png', caption: 'Legenda', mentions: ['5511111111111@s.whatsapp.net', '123456@lid'] }], 'marcação junto da legenda');
+  await provider.send('a@g.us', 'Sem marcar', '5511000000000@s.whatsapp.net');
+  assert.deepEqual(sent[2], ['a@g.us', { text: 'Sem marcar' }], 'desligado: mensagem sem menções');
+});
 test('provider errors propagate instead of recording success', async () => {
   const { provider } = fake();
   Object.assign(provider, { socket: { groupMetadata: async () => { throw new Error('No permission'); } } });
