@@ -12,6 +12,7 @@ import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
 import { loadConfig, TRUSTED_PROXIES } from './config';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
@@ -534,6 +535,17 @@ test('panel is served on the same port with SPA fallback, and API 404s stay JSON
     const missing = await probe.inject({ method: 'GET', url: '/api/nao-existe', headers: auth() });
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json().error, 'Rota não encontrada.');
+    // Recompilar com o sistema ligado (bug de 2026-09-24): o arquivo novo é servido na hora…
+    writeFileSync(join(dist, 'assets', 'app-novo456.js'), 'console.log(2)');
+    const fresh = await probe.inject({ method: 'GET', url: '/assets/app-novo456.js', headers: { host: 'localhost' } });
+    assert.equal(fresh.statusCode, 200, 'arquivo criado depois da partida');
+    assert.match(String(fresh.headers['content-type']), /javascript/);
+    // …e um arquivo que não existe é 404 de verdade, nunca o index.html fingindo ser o .js.
+    const gone = await probe.inject({ method: 'GET', url: '/assets/app-sumiu.js', headers: { host: 'localhost' } });
+    assert.equal(gone.statusCode, 404);
+    assert.doesNotMatch(gone.body, /id="root"/);
+    writeFileSync(join(dist, '.env'), 'SEGREDO=1');
+    assert.notEqual((await probe.inject({ method: 'GET', url: '/.env', headers: { host: 'localhost' } })).body, 'SEGREDO=1', 'arquivo oculto nunca é servido');
   } finally { await probe.close(); rmSync(dist, { recursive: true, force: true }); }
 });
 
@@ -1567,6 +1579,45 @@ test('startup (4B): skips disabled users, autoConnect=false and WHATSAPP_AUTO_CO
   } finally { await manager.stopAll(); cleanup(); }
 });
 
+// Bug de 2026-09-24: o estado só era gravado no pedido de conectar; a produção ficou com
+// "connecting" e sem número desde a partida, e a trava de número único nunca valia.
+test('lifecycle: every state change is saved on its own, and a number already owned by another account is refused', async () => {
+  const dono = await startupUser('estado-dono@teste.local');
+  const intruso = await startupUser('estado-intruso@teste.local');
+  const numero = `5511${Date.now().toString().slice(-8)}@s.whatsapp.net`;
+  const hooks = new Map<string, { state: { state: string; accountJid?: string }; change(next: { state: string; accountJid?: string }): void; calls: string[] }>();
+  const sessionsBase = mkdtempSync(join(tmpdir(), 'wa-estado-'));
+  const manager = new WhatsAppManager({ sessionsBase, createProvider: (ownerId, sessionDir, onStateChange) => {
+    const entry = { state: { state: 'disconnected' } as { state: string; accountJid?: string }, calls: [] as string[], change(next: { state: string; accountJid?: string }) { entry.state = next; onStateChange(); } };
+    hooks.set(ownerId, entry);
+    return { ownerId, sessionDir, status: () => ({ ...entry.state }), hasPairedSession: async () => true,
+      connect: async () => ({ ...entry.state }), disconnect: async () => ({ state: 'disconnected' }),
+      stop: async () => { entry.calls.push('stop'); entry.change({ state: 'disconnected' }); },
+      sync: async () => ({ count: 0 }), send: async () => ({ messageId: 'x', context: '' }), flushReads: async () => undefined, flushDeliveryEvents: async () => undefined };
+  } });
+  const row = (id: string) => prisma.whatsAppSession.findUnique({ where: { userId: id } });
+  try {
+    manager.for(dono.id);
+    hooks.get(dono.id)!.change({ state: 'connecting' });
+    hooks.get(dono.id)!.change({ state: 'connected', accountJid: numero });
+    await waitFor(async () => (await row(dono.id))?.state === 'connected', 'estado conectado gravado sozinho');
+    assert.equal((await row(dono.id))!.accountJid, numero, 'o número pareado fica registrado');
+    assert.ok((await row(dono.id))!.lastConnectedAt);
+    // Outra conta pareia o MESMO número: é recusada e a conexão dela cai.
+    manager.for(intruso.id);
+    hooks.get(intruso.id)!.change({ state: 'connected', accountJid: numero });
+    await waitFor(async () => (await row(intruso.id))?.state === 'error', 'conflito gravado');
+    assert.match((await row(intruso.id))!.lastError ?? '', /outra conta/);
+    assert.equal(manager.peek(intruso.id), undefined);
+    assert.deepEqual(hooks.get(intruso.id)!.calls, ['stop']);
+    assert.equal((await row(dono.id))!.accountJid, numero, 'o dono continua com o número');
+    // Queda: o estado muda, o número continua reservado para o dono.
+    hooks.get(dono.id)!.change({ state: 'reconnecting' });
+    await waitFor(async () => (await row(dono.id))?.state === 'reconnecting', 'queda gravada');
+    assert.equal((await row(dono.id))!.accountJid, numero);
+  } finally { rmSync(sessionsBase, { recursive: true, force: true }); }
+});
+
 test('lifecycle (4B): session row keeps only lifecycle data; disconnect clears the paired number', async () => {
   const user = await startupUser('start-ciclo@teste.local');
   const outro = await startupUser('start-ciclo-2@teste.local');
@@ -1583,10 +1634,14 @@ test('lifecycle (4B): session row keeps only lifecycle data; disconnect clears t
     // Número já pareado em outra conta: registra o motivo, sem quebrar a partida.
     await prisma.whatsAppSession.update({ where: { userId: user.id }, data: { accountJid: null } });
     await prisma.whatsAppSession.update({ where: { userId: outro.id }, data: { accountJid: row.accountJid } });
-    await manager.persistState(user.id); // a conexão segue com o mesmo número
+    await manager.persistState(user.id);
     const conflito = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } });
     assert.equal(conflito.accountJid, null, 'não rouba o número do outro');
     assert.match(conflito.lastError ?? '', /já está conectado em outra conta/);
+    // Um número, uma conta (ADR-019): a conexão duplicada é encerrada (sem logout).
+    assert.equal(conflito.state, 'error');
+    assert.equal(manager.peek(user.id), undefined, 'a duplicada sai do mapa');
+    assert.deepEqual(calls.get(user.id), ['connect', 'stop'], 'stop, nunca disconnect');
     // Desconectar de verdade limpa o número e sai do mapa.
     await manager.disconnect(user.id);
     assert.ok(calls.get(user.id)!.includes('disconnect'));
@@ -2280,6 +2335,73 @@ test('media (026): images get a dominant color and a small thumbnail; only the o
   await backfillMediaPreviews();
   const preenchida = await prisma.campaignMedia.findUniqueOrThrow({ where: { id: outra.id } });
   assert.ok(preenchida.color && preenchida.thumbnail, 'preenchimento em segundo plano');
+});
+
+// ─── Conversão automática de vídeo (ADR-032) ────────────────────────────────────
+// Vídeos gerados na hora pelo próprio ffmpeg: MOV (como o do iPhone), MP4 fora do padrão.
+function makeVideo(name: string, args: string[]) {
+  const ffmpeg = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path;
+  const dir = mkdtempSync(join(tmpdir(), 'video-teste-'));
+  const file = join(dir, name);
+  const run = spawnSync(ffmpeg, ['-hide_banner', '-y', ...args, file]);
+  assert.equal(run.status, 0, String(run.stderr).slice(-500));
+  const data = readFileSync(file);
+  rmSync(dir, { recursive: true, force: true });
+  return data;
+}
+function probe(data: Buffer) {
+  const dir = mkdtempSync(join(tmpdir(), 'video-probe-'));
+  const file = join(dir, 'v.mp4');
+  writeFileSync(file, data);
+  const out = spawnSync((require('ffprobe-static') as { path: string }).path, ['-v', 'error', '-show_streams', '-of', 'json', file]);
+  rmSync(dir, { recursive: true, force: true });
+  return JSON.parse(String(out.stdout)).streams as { codec_type: string; codec_name: string; width?: number; height?: number; pix_fmt?: string }[];
+}
+const upload = (name: string, type: string, payload: Buffer) => app.inject({ method: 'POST', url: `/api/media?name=${encodeURIComponent(name)}`, headers: auth({ 'content-type': type }), payload });
+
+test('video (032): a MOV with sound is converted to MP4 H.264 + AAC, ready for WhatsApp', { timeout: 120_000 }, async () => {
+  const mov = makeVideo('iphone.mov', ['-f', 'lavfi', '-i', 'testsrc=duration=1:size=320x240:rate=15', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'mpeg4', '-c:a', 'pcm_s16le']);
+  const r = await upload('IMG_8114.MOV', 'video/quicktime', mov);
+  assert.equal(r.statusCode, 201, r.body);
+  const body = r.json();
+  assert.equal(body.converted, true);
+  assert.equal(body.mimeType, 'video/mp4');
+  assert.equal(body.kind, 'video');
+  assert.equal(body.name, 'IMG_8114.mp4');
+  const saved = await prisma.campaignMedia.findUniqueOrThrow({ where: { id: body.id } });
+  const streams = probe(Buffer.from(saved.data));
+  assert.deepEqual(streams.map(s => `${s.codec_type}:${s.codec_name}`).sort(), ['audio:aac', 'video:h264']);
+  assert.equal(streams.find(s => s.codec_type === 'video')!.pix_fmt, 'yuv420p');
+  assert.equal(await validateMedia(Buffer.from(saved.data), 'video/mp4'), 'video', 'o resultado passa na mesma validação de sempre');
+});
+
+test('video (032): an iPhone "high efficiency" video (HEVC, 10-bit, portrait) becomes MP4 H.264', { timeout: 120_000 }, async () => {
+  const hevc = makeVideo('iphone-hevc.mov', ['-f', 'lavfi', '-i', 'testsrc=duration=1:size=1080x1920:rate=10', '-f', 'lavfi', '-i', 'sine=duration=1', '-c:v', 'libx265', '-pix_fmt', 'yuv420p10le', '-tag:v', 'hvc1', '-c:a', 'aac']);
+  // Antes desta mudança, o mesmo tipo de arquivo como MP4 era recusado: HEVC não é H.264.
+  await assert.rejects(validateMedia(makeVideo('hevc.mp4', ['-f', 'lavfi', '-i', 'testsrc=duration=1:size=320x240:rate=10', '-c:v', 'libx265']), 'video/mp4'), /H\.264/);
+  const r = await upload('IMG_0042.MOV', 'video/quicktime', hevc);
+  assert.equal(r.statusCode, 201, r.body);
+  const video = probe(Buffer.from((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: r.json().id } })).data)).find(s => s.codec_type === 'video')!;
+  assert.deepEqual([video.codec_name, video.pix_fmt, video.width, video.height], ['h264', 'yuv420p', 720, 1280], 'vertical: lado maior 1280, 8 bits');
+});
+
+test('video (032): an MP4 out of standard is converted and shrunk; a ready MP4 H.264 goes untouched', { timeout: 120_000 }, async () => {
+  const wide = makeVideo('grande.mp4', ['-f', 'lavfi', '-i', 'testsrc=duration=1:size=2000x1000:rate=10', '-c:v', 'mpeg4']);
+  const converted = await upload('grande.mp4', 'video/mp4', wide);
+  assert.equal(converted.statusCode, 201, converted.body);
+  assert.equal(converted.json().converted, true);
+  const video = probe(Buffer.from((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: converted.json().id } })).data)).find(s => s.codec_type === 'video')!;
+  assert.deepEqual([video.codec_name, video.width, video.height], ['h264', 1280, 640], 'lado maior limitado a 1280 px, proporção mantida');
+  // MP4 H.264 já no padrão: vai como veio, byte a byte (sem perder qualidade).
+  const ready = await upload('pronto.mp4', 'video/mp4', videoFixture);
+  assert.equal(ready.statusCode, 201, ready.body);
+  assert.equal(ready.json().converted, false);
+  assert.equal(ready.json().name, 'pronto.mp4');
+  assert.ok(Buffer.from((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: ready.json().id } })).data).equals(videoFixture));
+  // Arquivo que não é vídeo de verdade: recusa com mensagem clara, nada é gravado.
+  const broken = await upload('quebrado.mov', 'video/quicktime', Buffer.from('isto não é um vídeo'));
+  assert.equal(broken.statusCode, 400);
+  assert.match(broken.json().error, /converter este vídeo/);
 });
 
 test('media (026): video ranges are read from the database in pieces, never the whole file', async () => {

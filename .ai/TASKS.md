@@ -135,6 +135,10 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-113  Docs, STATE e junção dev → main                            owner: —        since: —
 [x] T-114  Login da dev com a conta da produção; olhinho na senha     owner: —        since: —
 [x] T-115  Previsão usava a conexão legada: falso "desconectado"     owner: —        since: —
+[x] T-116  Estado do WhatsApp gravado a cada troca; número único      owner: —        since: —
+[x] T-117  Painel sem tela branca após recompilar; rolagem das telas  owner: —        since: —
+[x] T-118  Conversão automática de vídeo (MOV/HEVC/WebM → MP4 H.264)  owner: —        since: —
+[ ] T-119  @todos oficial do WhatsApp: capturar o formato real na dev  owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

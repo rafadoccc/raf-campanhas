@@ -150,4 +150,4 @@ Envio real e recibos de leitura só são validados com celular; os testes usam s
 
 ## Mídia opcional
 
-Na criação/edição de rascunhos, use **Adicionar mídia** para escolher uma imagem JPEG/PNG ou vídeo MP4 H.264/AAC. É possível visualizar, trocar e remover antes de salvar. A mídia fica no MySQL e acompanha o backup do banco. Aplique migrations com `npm run db:deploy` após atualizar. Consulte [formatos, limites e validação](docs/campaign-media.md).
+Na criação/edição de rascunhos, use **Adicionar mídia** para escolher uma imagem JPEG/PNG (até 16 MB) ou um vídeo de até 200 MB em MP4, MOV (inclusive o HEVC "Alta eficiência" do iPhone), WebM, MKV, 3GP ou AVI. Vídeo fora do padrão do WhatsApp é convertido automaticamente para MP4 H.264/AAC (até 1280 px, resultado de até 64 MB) ao salvar; MP4 H.264 já no padrão vai intacto. É possível visualizar, trocar e remover antes de salvar. A mídia fica no MySQL e acompanha o backup do banco. Aplique migrations com `npm run db:deploy` após atualizar. Consulte [formatos, limites e validação](docs/campaign-media.md).

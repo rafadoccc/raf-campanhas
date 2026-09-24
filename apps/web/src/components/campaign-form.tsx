@@ -155,7 +155,8 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" variant="primary" loading={saving} disabled={saving || !selected.length}>{saving ? 'Salvando…' : 'Salvar campanha'}</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={saving || !selected.length}>{saving ? (media?.file && media.kind === 'video' ? 'Enviando e preparando o vídeo…' : 'Salvando…') : 'Salvar campanha'}</Button>
+          {saving && media?.file && media.kind === 'video' && <span className="text-xs text-muted">Vídeo fora do padrão do WhatsApp é convertido agora; pode levar até alguns minutos.</span>}
           {!!selected.length && <span className="text-xs text-muted">{selected.length} grupos · ~{Math.max(0, selected.length - 1) * interval} min por rodada</span>}
         </div>
       </>}

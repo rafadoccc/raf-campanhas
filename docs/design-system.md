@@ -15,13 +15,14 @@ fica só para o ponto de status (`Dot`). Uma ação primária por área; o resto
 | `Badge` | Selo de estado (`Tone`: `neutral`, `brand`, `info`, `warning`, `danger`, `muted`). |
 | `Dot` | Ponto de status (`ok`/`warn`/`busy`/`off`). Único elemento redondo do sistema. |
 | `Field` / `inputClass` | Rótulo + dica para campos de texto/número/data nativos (esses continuam nativos: só select e checkbox têm peça própria). |
+| `PasswordInput` | Campo de senha com o botão de mostrar/esconder. Use sempre no lugar de `<input type="password">`. |
 | `Select` | Ver abaixo. |
 | `Checkbox` | Ver abaixo. |
 | `Alert` | Aviso inline (`tone`: `danger`/`warning`/`info`/`brand`). |
 | `EmptyState` / `Skeleton` | Lista vazia e carregamento. |
 | `ScrollArea` | `overflow-y: auto` com barra invisível (`.scroll-area` em `styles.css`); a rolagem por roda/toque/teclado continua funcionando. Use dentro de um contêiner de altura definida — é assim que cada tela rola por partes em vez do documento inteiro (`Page` ocupa `h-full`, sem rolagem própria). |
 | `Stat` | Número grande com rótulo e ícone, usado nas faixas de métricas (Início, Administração). |
-| `PageHeader` / `Page` | Cabeçalho de página e wrapper de layout. |
+| `PageHeader` / `Page` | Cabeçalho e moldura da página. `Page` sem opção: altura da tela no desktop, listas rolando por dentro (Início, Campanhas, detalhe). `<Page scroll>`: a página cresce e rola inteira (telas de seções empilhadas, como Administração). No celular toda página rola inteira. Grades com colunas que rolam por dentro precisam de `lg:grid-rows-[minmax(0,1fr)]`, senão a coluna cresce e a parte de baixo é cortada. |
 
 ## `Select` — sem o menu nativo do sistema operacional
 

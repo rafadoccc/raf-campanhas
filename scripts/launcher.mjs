@@ -42,7 +42,22 @@ if (major < 22) parar(`Node.js ${process.versions.node} é antigo demais.`, ['In
 ok(`Node.js ${process.versions.node}`);
 
 if (!existsSync('node_modules')) parar('Dependências não instaladas.', ['Rode uma vez: npm.cmd install']);
-ok('Dependências instaladas');
+// Uma atualização do código pode trazer pacote novo (ex.: o conversor de vídeo). Instala só
+// quando o package-lock.json mudou desde a última instalação. Se falhar (sem internet), avisa e
+// segue: o sistema funciona sem o pacote novo, só o recurso dele fica indisponível.
+const lock = existsSync('package-lock.json') ? createHash('sha1').update(readFileSync('package-lock.json')).digest('hex') : '';
+const lockAnterior = existsSync('.runtime/deps-stamp') ? readFileSync('.runtime/deps-stamp', 'utf8').trim() : '';
+if (lock && lock !== lockAnterior) {
+  aviso('Dependências novas no código. Instalando (pode levar alguns minutos)…');
+  const r = spawnSync(`${npm} install --no-audit --no-fund`, { stdio: 'inherit', shell: true });
+  if (r.status === 0) {
+    mkdirSync('.runtime', { recursive: true });
+    writeFileSync('.runtime/deps-stamp', lock);
+    ok('Dependências atualizadas');
+  } else {
+    aviso('Não foi possível instalar as dependências novas agora. O sistema abre assim mesmo; a instalação é tentada de novo na próxima vez.');
+  }
+} else ok('Dependências instaladas');
 
 // 2 ─ .env ----------------------------------------------------------------
 if (!existsSync('.env')) parar('Arquivo .env não encontrado.', ['Copie .env.example para .env e coloque a senha do MySQL.']);

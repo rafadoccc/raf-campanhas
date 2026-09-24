@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { spawn } from 'node:child_process';
 import { prisma } from '@campaign/database';
 import { publicMessage } from './security';
+import { prepareVideo, VIDEO_UPLOAD_LIMIT, VIDEO_UPLOAD_TYPES } from './video-convert';
 
 // Compatibility policy, NOT claimed as universal Baileys protocol limits.
 export const IMAGE_LIMIT = 16_000_000;
@@ -86,18 +87,27 @@ export function registerMediaRoutes(app: FastifyInstance) {
   // Limite por tipo já na leitura do corpo: uma imagem acima de 16 MB é recusada antes de
   // ocupar 64 MB de memória.
   app.addContentTypeParser(['image/jpeg', 'image/png'], { parseAs: 'buffer', bodyLimit: IMAGE_LIMIT }, (_request, body, done) => done(null, body));
-  app.addContentTypeParser('video/mp4', { parseAs: 'buffer', bodyLimit: VIDEO_LIMIT }, (_request, body, done) => done(null, body));
+  // Vídeo em qualquer formato comum (MOV do iPhone, HEVC, WebM…) até 200 MB: vira MP4 H.264
+  // de até 64 MB antes de ser guardado (ADR-032).
+  app.addContentTypeParser(VIDEO_UPLOAD_TYPES, { parseAs: 'buffer', bodyLimit: VIDEO_UPLOAD_LIMIT }, (_request, body, done) => done(null, body));
   // Sem bodyLimit na rota: ele venceria o limite de cada tipo definido nos parsers acima.
   app.post('/api/media', async (request, reply) => {
     try {
-      const data = request.body;
-      if (!Buffer.isBuffer(data)) throw Error('Envie exatamente um arquivo.');
-      const mimeType = String(request.headers['content-type']).split(';')[0];
-      const kind = await validateMedia(data, mimeType);
+      if (!Buffer.isBuffer(request.body)) throw Error('Envie exatamente um arquivo.');
+      let data: Buffer = request.body;
+      let mimeType = String(request.headers['content-type']).split(';')[0];
       const rawName = (request.query as { name?: string }).name;
-      const name = (typeof rawName === 'string' ? rawName.split(/[\\/]/).pop()! : 'mídia').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 180) || 'mídia';
+      let name = (typeof rawName === 'string' ? rawName.split(/[\\/]/).pop()! : 'mídia').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 180) || 'mídia';
+      let converted = false;
+      if (VIDEO_UPLOAD_TYPES.includes(mimeType)) {
+        ({ data, converted } = await prepareVideo(data, mimeType, { limit: VIDEO_LIMIT, validateMp4: mp4 => validateMedia(mp4, 'video/mp4') }));
+        mimeType = 'video/mp4';
+        if (converted) name = `${name.replace(/\.[^.]{1,5}$/, '')}.mp4`.slice(0, 180);
+      }
+      const kind = await validateMedia(data, mimeType);
       const preview = kind === 'image' ? await imagePreview(data) : {};
-      return reply.code(201).send(await prisma.campaignMedia.create({ data: { userId: request.user!.id, name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer>, ...preview }, select: mediaMetadata }));
+      const media = await prisma.campaignMedia.create({ data: { userId: request.user!.id, name, mimeType, kind, size: data.length, data: data as Uint8Array<ArrayBuffer>, ...preview }, select: mediaMetadata });
+      return reply.code(201).send({ ...media, converted });
     } catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Arquivo inválido.') }); }
   });
   app.get('/api/media/:id', async (request, reply) => {

@@ -757,3 +757,48 @@ correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atua
   pessoa reconecta sem escanear o QR de novo).
 - Tela redesenhada: cartões de métrica, gráfico dos últimos 7 dias, status do despachante e do
   processo, badges de erro, busca por nome/e-mail e filtro por situação/papel na lista de contas.
+
+
+## ADR-032 · Conversão automática de vídeo para MP4 H.264
+
+**Data:** 2026-09-24 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- O WhatsApp só toca bem MP4 com vídeo H.264 e áudio AAC. O celular grava em MOV e, no
+  iPhone, em HEVC ("Alta eficiência") — antes o sistema só recusava ("Use MP4 com vídeo H.264").
+- `apps/server/src/video-convert.ts`: aceita MP4, MOV, WebM, MKV, 3GP, M4V, AVI e MPEG até
+  **200 MB**. MP4 H.264/AAC que já passa na validação vai **intacto**, byte a byte. Todo o resto
+  é convertido pelo ffmpeg (`@ffmpeg-installer/ffmpeg`: binário pronto, sem script de
+  instalação, que o npm 11 bloquearia): H.264 high, `yuv420p` (8 bits), lado maior até 1280 px,
+  AAC 128 kbps estéreo, `+faststart`. O resultado ainda precisa caber em 64 MB e passa pela
+  mesma validação de sempre (`validateMedia`). Nome vira `.mp4`; a resposta de `POST /api/media`
+  ganhou o campo `converted` (aditivo).
+- Uma conversão por vez (fila em memória): converter usa a CPU inteira e o despachante não pode
+  ficar sem fôlego no meio de uma campanha. Limite de 10 min por conversão.
+- O pacote é carregado sob demanda: sem ele instalado, o sistema liga normalmente, MP4 H.264
+  segue aceito e só a conversão responde com o aviso para rodar `npm install`.
+- O inicializador (`scripts/launcher.mjs`) agora roda `npm install` quando o
+  `package-lock.json` mudou desde a última instalação (`.runtime/deps-stamp`). Falhou (sem
+  internet)? Avisa e liga o sistema mesmo assim; tenta de novo na próxima partida.
+
+
+## ADR-033 · Estado do WhatsApp gravado a cada troca; painel servido sem reiniciar; rolagem
+
+**Data:** 2026-09-24 · **Status:** aceita (bugs achados na revisão) · **Autor:** claude · **Branch:** dev
+
+- **Estado do WhatsApp:** só era gravado no pedido de conectar. A produção ficou com
+  "connecting" e sem número desde a partida, e a trava "um número pertence a uma única conta"
+  (ADR-019, `accountJid` único) nunca era conferida. Agora o provider avisa a cada troca de
+  estado (`onStateChange`) e o `WhatsAppManager` grava em fila (`queuePersist`, uma gravação
+  por vez por usuário, sempre com o estado mais recente). Número já de outra conta: a conexão
+  duplicada é **encerrada sem logout** e a conta fica com o aviso (antes só era registrado).
+  `stop()` também passa a marcar "desconectado" em memória.
+- **Painel:** `@fastify/static` com `wildcard: true` (procura o arquivo a cada pedido); antes a
+  lista era lida na partida e recompilar com o sistema ligado deixava o painel em branco até
+  reiniciar. `/assets/*` inexistente responde 404 (antes, o index.html fingindo ser o .js). Aba
+  aberta durante uma atualização recarrega sozinha uma vez (`main.tsx`, `vite:preloadError` e
+  falha de `lazy`), com trava de 30 s contra laço.
+- **Rolagem:** telas com colunas (Início, detalhe da campanha) limitam a linha da grade à altura
+  da tela (`lg:grid-rows-[minmax(0,1fr)]`) para cada coluna rolar por dentro — antes a coluna
+  crescia e a parte de baixo (ex.: a imagem da campanha) era cortada. `Page scroll` para telas
+  de seções empilhadas (Administração). No celular toda página cresce e rola inteira
+  (`min-h-full lg:h-full`). A rolagem infinita observa a área que de fato rola.

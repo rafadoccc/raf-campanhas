@@ -26,6 +26,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 3 | Uma sessão de WhatsApp por usuário | ✅ concluída (ADR-019/020/021/022/024) |
 | 4 | Envios em paralelo entre números, design system, painel do admin | ✅ concluída (ADR-025/026) |
 | 5 | Piso de intervalo no banco, @todos, tentar de novo, métricas do admin | ✅ concluída (ADR-028/029/030/031) |
+| 5b | Conversão de vídeo, estado do WhatsApp gravado, painel sem tela branca, rolagem | ✅ concluída (ADR-032/033) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---
@@ -114,6 +115,15 @@ Um único processo Node. Toda rota `/api` exige sessão (negar por padrão). Pub
   barra do topo do detalhe), logo "CC" removida do topo e do login.
 
 ---
+
+## Operação da produção local (importante)
+
+- NUNCA rode `npm run build` nem `npm install` na pasta do main com a produção ligada. Desde a
+  ADR-033 o painel não fica mais em branco por isso, mas o servidor em execução continua com o
+  código antigo até reiniciar, e o Prisma trava o próprio arquivo (EPERM).
+- Atualizar a produção = fechar o sistema (fora de uma rodada de campanha) e abrir de novo: o
+  inicializador instala dependências novas (se o package-lock mudou) e recompila (se o código
+  mudou) sozinho.
 
 ## O que está ausente (não é mais auditoria de segurança — ver ADR-023 para o que já foi corrigido)
 

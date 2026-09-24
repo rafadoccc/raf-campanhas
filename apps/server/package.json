@@ -10,6 +10,7 @@
   "dependencies": {
     "@campaign/database": "*",
     "@fastify/static": "^10.1.4",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@prisma/client": "^6.0.0",
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "fastify": "^5.0.0",

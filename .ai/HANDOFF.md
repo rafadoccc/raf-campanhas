@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-09-24T19:40Z · claude
+
+**Fiz:** revisão pedida pelo dono e correções (ADR-032/033). (1) Estado do WhatsApp agora é
+gravado a cada troca (antes só no "conectar": a produção ficou em "connecting", sem número) e a
+trava de número único passa a valer: conexão duplicada é encerrada sem logout. (2) Painel
+servido a cada pedido (`wildcard: true`): recompilar com o sistema ligado não deixa mais tela
+branca (verificado ao vivo na dev: build novo apareceu sem reiniciar); `/assets` inexistente é
+404; aba aberta numa atualização recarrega sozinha uma vez. (3) Rolagem: detalhe da campanha e
+Início limitam a grade à tela (a imagem da campanha era cortada); Administração rola inteira
+(`Page scroll`); no celular toda página rola (antes o detalhe espremia a imagem a 0 px); rolagem
+infinita observa a área que de fato rola. (4) Conversão automática de vídeo: MOV/HEVC do
+iPhone, WebM, MKV, AVI… até 200 MB viram MP4 H.264/AAC (≤1280 px, ≤64 MB); MP4 H.264 no padrão
+vai intacto. Inicializador instala dependências quando o package-lock muda.
+**Arquivos:** apps/server/src/{whatsapp,whatsapp-manager,security,media,video-convert(novo),integration.test}.ts, apps/server/package.json, package-lock.json, apps/web/src/{main.tsx,design/primitives.tsx,design/infinite.tsx,pages/{admin,campaign-detail,dashboard}.tsx,components/{campaign-media,campaign-form}.tsx}, scripts/launcher.mjs, docs/{campaign-media,design-system}.md, README.md, .ai/*
+**Tarefas:** T-116, T-117, T-118 (concluídas); T-119 aberta (@todos oficial — precisa do dono
+parear a dev e mandar um @todos pelo celular num grupo de teste para capturar o formato real)
+**Estado:** compila · lint ok · testes (ver commit) · verificado no navegador da dev em 1366×700 e
+375×812: detalhe rola até a imagem, Administração rola com o formulário aberto, rolagem
+infinita no celular chega às 31 campanhas, sem rolagem lateral. Produção NÃO tocada (campanha
+ativa): o main recebeu só o código.
+**Armadilhas:** a produção só ganha isso ao reiniciar; na primeira partida o inicializador roda
+`npm install` (package-lock mudou: `@ffmpeg-installer/ffmpeg`, ~65 MB) — precisa de internet;
+sem ela o sistema abre igual e só a conversão avisa. O teste "requireSuperAdmin" falha se rodado
+isolado (depende de usuários criados por testes anteriores); na suíte completa passa. Uma
+sessão temporária foi criada no banco da DEV (user agent "verificacao-claude") para testar o
+layout e apagada no fim.
+**Próximo passo sugerido:** reiniciar a produção fora de uma rodada; depois, T-119 na dev.
+
 ## 2026-09-24T19:30Z · claude
 
 **Fiz:** (1) corrigido o falso "WhatsApp desconectado · envia assim que reconectar" na previsão
