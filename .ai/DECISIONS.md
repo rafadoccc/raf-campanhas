@@ -636,3 +636,20 @@ correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atua
   fechado), outro rename.
 - Após a migração a ponte se desliga sozinha; o dono reconecta pelo `WhatsAppManager` sem QR e
   envia pela própria conexão (teste de ponta a ponta).
+
+
+## ADR-025 · Envios em paralelo entre números (Fase 5)
+
+**Data:** 2026-09-24 · **Status:** aceita (decisão do dono) · **Autor:** claude · **Branch:** dev
+
+- O despachante agrupa os envios vencidos em **faixas** (`laneOf`): uma por número de WhatsApp
+  (`numero:<accountJid>`) e uma para a simulação. Dentro de uma faixa: um envio por vez, com a
+  folga `SEND_SPACING_MS` daquela faixa. Faixas diferentes andam em paralelo.
+- A rodada (scan) só entrega lotes às faixas LIVRES e não espera por elas (`busyLanes`): um
+  número lento nunca segura os outros. Uma faixa ocupada não recebe outro lote.
+- O intervalo continua garantido pelo banco (ADR-015): trava do número antes da campanha na
+  reserva e na conclusão. Faixas diferentes nunca disputam a mesma trava de número.
+- `stop()` espera os envios em andamento de todas as faixas (até 30 s); cada faixa confere
+  `stopping` antes de iniciar um envio.
+- `TRUSTED_PROXIES` inclui `100.64.0.0/10` (borda do Railway); nenhum cliente da internet chega
+  por essa faixa.
