@@ -20,8 +20,14 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
   const app = Fastify({
     trustProxy: config.trustProxy,
     // Cookie de sessão nunca vai para o log.
-    logger: { level: process.env.LOG_LEVEL ?? 'warn', redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'] }
+    logger: { level: process.env.LOG_LEVEL ?? 'warn', redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'] },
+    // Pedido que não termina de chegar (conexão lenta de propósito) não segura uma conexão para
+    // sempre. 15 min cobre o upload de um vídeo de 200 MB numa conexão ruim.
+    requestTimeout: 15 * 60_000,
   });
+  // Conexões abertas ao mesmo tempo: bem acima do uso de um painel pequeno, abaixo do que
+  // esgotaria os descritores e a memória de uma VPS fraca.
+  app.server.maxConnections = 1000;
   // Ordem importa: Host/Origem, depois sessão; só então as rotas.
   registerSecurity(app, config);
   registerAuth(app, config);

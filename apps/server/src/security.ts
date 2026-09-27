@@ -2,6 +2,8 @@ import type { FastifyError, FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import type { AppConfig } from './config';
+import { ServerBusyError } from './auth';
+import { RateLimiter } from './rate-limit';
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -13,7 +15,7 @@ const CSP = [
   "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'"
 ].join('; ');
 
-export function registerSecurity(app: FastifyInstance, config: AppConfig) {
+export function registerSecurity(app: FastifyInstance, config: AppConfig, limiter = new RateLimiter()) {
   app.addHook('onRequest', async (request, reply) => {
     // Host desconhecido: DNS rebinding ou acesso por um endereço não configurado.
     if (config.allowedHosts && !config.allowedHosts.includes(request.hostname)) return reply.code(403).send({ error: 'Endereço não permitido. Confira PUBLIC_URL.' });
@@ -23,6 +25,11 @@ export function registerSecurity(app: FastifyInstance, config: AppConfig) {
     // Origin nelas; sem Origin é um cliente fora do painel (ou um formulário forjado).
     if (UNSAFE_METHODS.has(request.method) && request.url.startsWith('/api/') && !origin) {
       return reply.code(403).send({ error: 'Requisição sem origem. Use o painel.' });
+    }
+    // Limite geral por IP, antes do login e da leitura do corpo. /api/health fica de fora: é o
+    // que a hospedagem consulta para saber se o sistema está no ar.
+    if (request.url.startsWith('/api/') && !request.url.startsWith('/api/health') && !limiter.take(request.ip)) {
+      return reply.code(429).header('Retry-After', String(limiter.retryAfter(request.ip))).send({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns segundos.' });
     }
   });
 
@@ -45,6 +52,7 @@ export function registerSecurity(app: FastifyInstance, config: AppConfig) {
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return reply.code(413).send({ error: 'Arquivo acima do limite permitido.' });
     if (error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return reply.code(415).send({ error: 'Tipo de arquivo não suportado.' });
+    if (error instanceof ServerBusyError) return reply.code(503).send({ error: error.message });
     const status = error.statusCode ?? 500;
     if (status < 500) return reply.code(status).send({ error: 'Requisição inválida.' });
     request.log.error({ err: error, requestId: request.id }, 'erro inesperado');
@@ -64,6 +72,9 @@ export function registerWeb(app: FastifyInstance, config: AppConfig) {
       // Raiz (/) abre o painel; com false, a raiz virava 403 (pasta sem índice).
       index: ['index.html'],
       dotfiles: 'deny',
+      // Serve o .br/.gz gerado na compilação (scripts/compress-dist.mjs) quando o navegador
+      // aceita: ~70% menos para baixar e nenhum custo de CPU por pedido numa VPS fraca.
+      preCompressed: true,
       setHeaders(reply, filePath) {
         // Arquivos em assets/ têm hash no nome: podem ficar em cache para sempre.
         reply.header('Cache-Control', filePath.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache');

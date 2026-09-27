@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { publicMessage } from './security';
-import { LoginLimiter } from './auth';
+import { Gate, LoginLimiter, ServerBusyError } from './auth';
+import { RateLimiter } from './rate-limit';
 import { loadConfig, TRUSTED_PROXIES } from './config';
 
 test('publicMessage: business messages go to the screen; system details never do', () => {
@@ -30,6 +31,41 @@ test('login limiter: blocks after repeated failures and never grows without boun
   // Um atacante trocando de e-mail a cada tentativa: a memória tem teto.
   for (let i = 0; i < LoginLimiter.MAX_KEYS * 2; i++) limiter.fail([`email:${i}@spam`]);
   assert.ok(limiter.size <= LoginLimiter.MAX_KEYS, `chaves em memória: ${limiter.size}`);
+});
+
+test('rate limiter: allows bursts, refills over time, blocks floods and caps memory', () => {
+  let now = 0;
+  const limiter = new RateLimiter(10, 2, () => now);
+  for (let i = 0; i < 10; i++) assert.ok(limiter.take('1.1.1.1'), `rajada ${i}`);
+  assert.equal(limiter.take('1.1.1.1'), false, 'estourou o balde');
+  assert.ok(limiter.take('2.2.2.2'), 'outro IP não é afetado');
+  assert.ok(limiter.retryAfter('1.1.1.1') >= 1);
+  now = 1_000; // 1 s depois: +2 fichas
+  assert.ok(limiter.take('1.1.1.1'));
+  assert.ok(limiter.take('1.1.1.1'));
+  assert.equal(limiter.take('1.1.1.1'), false);
+  for (let i = 0; i < RateLimiter.MAX_KEYS * 2; i++) limiter.take(`ip-${i}`);
+  assert.ok(limiter.size <= RateLimiter.MAX_KEYS, `IPs em memória: ${limiter.size}`);
+});
+
+test('gate: never runs more than the limit at once and refuses beyond the queue', async () => {
+  const gate = new Gate(2, 1);
+  let running = 0, peak = 0;
+  const releases: (() => void)[] = [];
+  const task = () => gate.run(async () => {
+    running++; peak = Math.max(peak, running);
+    await new Promise<void>(resolve => releases.push(resolve));
+    running--;
+    return 'ok';
+  });
+  const first = [task(), task(), task()]; // 2 rodando, 1 na fila
+  await assert.rejects(task(), ServerBusyError, 'fila cheia recusa na hora');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gate.load.running, 2); assert.equal(gate.load.waiting, 1);
+  while (releases.length || gate.load.running) { releases.shift()?.(); await new Promise(resolve => setImmediate(resolve)); }
+  assert.deepEqual(await Promise.all(first), ['ok', 'ok', 'ok']);
+  assert.equal(peak, 2, 'nunca mais de 2 ao mesmo tempo');
+  assert.deepEqual(gate.load, { running: 0, waiting: 0 }, 'libera tudo no fim');
 });
 
 test('proxy trust: the client can never choose its own IP through X-Forwarded-For', async () => {

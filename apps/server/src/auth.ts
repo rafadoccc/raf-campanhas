@@ -24,9 +24,40 @@ declare module 'fastify' {
 const KDF = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 export const MIN_PASSWORD = 10;
 
+/** Servidor no limite de trabalho simultâneo: o pedido é recusado em vez de enfileirado sem fim. */
+export class ServerBusyError extends Error {
+  constructor() { super('Servidor ocupado. Tente de novo em alguns segundos.'); }
+}
+
+/**
+ * Limita quantas tarefas pesadas rodam ao mesmo tempo. Até `max` rodando e `queue` esperando;
+ * além disso recusa na hora (ServerBusyError).
+ */
+export class Gate {
+  private running = 0;
+  private waiting: (() => void)[] = [];
+  constructor(private max: number, private queue: number) {}
+  get load() { return { running: this.running, waiting: this.waiting.length }; }
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.running < this.max) this.running++;
+    else if (this.waiting.length >= this.queue) throw new ServerBusyError();
+    else await new Promise<void>(resolve => this.waiting.push(resolve)); // a vaga vem de quem terminou
+    try { return await task(); }
+    finally {
+      const next = this.waiting.shift();
+      if (next) next(); // passa a vaga adiante sem liberar
+      else this.running--;
+    }
+  }
+}
+
+// Cada scrypt ocupa ~32 MB. Sem limite, uma rajada de logins (de muitos IPs, que o limite por IP
+// não segura) esgotaria a memória de uma VPS pequena. Dois ao mesmo tempo, até 32 na fila.
+export const passwordGate = new Gate(2, 32);
+
 export async function hashPassword(password: string) {
   const salt = randomBytes(16);
-  const hash = await scrypt(password, salt, 64, KDF);
+  const hash = await passwordGate.run(() => scrypt(password, salt, 64, KDF));
   return `scrypt$${KDF.N}$${KDF.r}$${KDF.p}$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
 
@@ -34,7 +65,7 @@ export async function verifyPassword(password: string, stored: string) {
   const [scheme, n, r, p, salt, hash] = stored.split('$');
   if (scheme !== 'scrypt' || !salt || !hash) return false;
   const expected = Buffer.from(hash, 'base64');
-  const actual = await scrypt(password, Buffer.from(salt, 'base64'), expected.length, { N: Number(n), r: Number(r), p: Number(p), maxmem: KDF.maxmem });
+  const actual = await passwordGate.run(() => scrypt(password, Buffer.from(salt, 'base64'), expected.length, { N: Number(n), r: Number(r), p: Number(p), maxmem: KDF.maxmem }));
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
@@ -170,12 +201,16 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
   sweep.unref();
   app.addHook('onClose', async () => clearInterval(sweep));
 
-  app.addHook('preHandler', async (request, reply) => {
+  // onRequest, ANTES de ler o corpo: sem login, um upload de 200 MB é recusado sem ocupar memória.
+  app.addHook('onRequest', async (request, reply) => {
     const url = request.url.split('?')[0];
     if (!url.startsWith('/api/') || PUBLIC_API.has(url)) return;
     request.user = await resolveSession(request, reply, config);
     if (!request.user) return reply.code(401).send({ error: 'Faça login para continuar.' });
   });
+  // Troca de senha com a senha atual errada: mesmo limite do login, por conta. Uma sessão
+  // roubada não vira um jeito de adivinhar a senha atual sem limite.
+  const passwordLimiter = new LoginLimiter(5, 15 * 60_000);
 
   // Público: a tela de login precisa saber se já existe alguém cadastrado.
   app.get('/api/auth/setup', async () => ({ hasUsers: (await prisma.user.count()) > 0 }));
@@ -192,7 +227,13 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
       return reply.code(400).send({ error: 'Informe e-mail e senha.' });
     }
     const user = await prisma.user.findUnique({ where: { email } });
-    const valid = user && !user.disabledAt ? await verifyPassword(password, user.passwordHash) : (await burnTime(password), false);
+    let valid: boolean;
+    try {
+      valid = user && !user.disabledAt ? await verifyPassword(password, user.passwordHash) : (await burnTime(password), false);
+    } catch (error) {
+      if (error instanceof ServerBusyError) return reply.code(503).send({ error: error.message });
+      throw error;
+    }
     if (!user || !valid) {
       limiter.fail(keys);
       return reply.code(401).send({ error: 'E-mail ou senha incorretos.' });
@@ -216,9 +257,21 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
     const body = request.body as { current?: unknown; next?: unknown } | null;
     const problem = validateNewPassword(body?.next);
     if (problem) return reply.code(400).send({ error: problem });
+    const keys = [`user:${request.user!.id}`];
+    const wait = passwordLimiter.blockedFor(keys);
+    if (wait) return reply.code(429).send({ error: `Muitas tentativas com a senha atual errada. Aguarde ${wait} minuto${wait > 1 ? 's' : ''}.` });
     const user = await prisma.user.findUniqueOrThrow({ where: { id: request.user!.id } });
-    if (typeof body?.current !== 'string' || !await verifyPassword(body.current, user.passwordHash)) return reply.code(400).send({ error: 'A senha atual está incorreta.' });
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(body.next as string) } });
+    try {
+      if (typeof body?.current !== 'string' || body.current.length > 200 || !await verifyPassword(body.current, user.passwordHash)) {
+        passwordLimiter.fail(keys);
+        return reply.code(400).send({ error: 'A senha atual está incorreta.' });
+      }
+      passwordLimiter.succeed(keys);
+      await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(body.next as string) } });
+    } catch (error) {
+      if (error instanceof ServerBusyError) return reply.code(503).send({ error: error.message });
+      throw error;
+    }
     // Encerra as outras sessões: quem trocou a senha por suspeita não fica com intrusos logados.
     const current = readCookie(request, SESSION_COOKIE);
     await prisma.authSession.deleteMany({ where: { userId: user.id, NOT: { tokenHash: tokenHash(current ?? '') } } });

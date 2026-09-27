@@ -10,6 +10,18 @@ export const IMAGE_LIMIT = 16_000_000;
 export const VIDEO_LIMIT = 64_000_000;
 const ffprobe = require('ffprobe-static') as { path: string };
 export const mediaMetadata = { id: true, name: true, mimeType: true, kind: true, size: true, color: true } as const;
+// Sem cache de imagens decodificadas no sharp: cada imagem é processada uma vez só, e o cache
+// (até ~50 MB) só ocuparia memória de uma VPS pequena.
+sharp.cache(false);
+
+// Uploads recebidos ao mesmo tempo. O corpo inteiro fica em memória (até 200 MB num vídeo), então
+// poucos simultâneos bastam para esgotar uma VPS fraca: acima do limite, recusa ANTES de ler.
+export const MAX_CONCURRENT_UPLOADS = 2;
+let uploadsInFlight = 0;
+const holdsUploadSlot = new WeakSet<object>();
+function releaseUploadSlot(request: object) {
+  if (holdsUploadSlot.delete(request)) uploadsInFlight--;
+}
 
 // Cor predominante e miniatura (ADR-026). A lista de campanhas usa só isto: nunca a mídia
 // inteira, que pode ter 16 MB.
@@ -91,7 +103,18 @@ export function registerMediaRoutes(app: FastifyInstance) {
   // de até 64 MB antes de ser guardado (ADR-032).
   app.addContentTypeParser(VIDEO_UPLOAD_TYPES, { parseAs: 'buffer', bodyLimit: VIDEO_UPLOAD_LIMIT }, (_request, body, done) => done(null, body));
   // Sem bodyLimit na rota: ele venceria o limite de cada tipo definido nos parsers acima.
-  app.post('/api/media', async (request, reply) => {
+  app.post('/api/media', {
+    // Roda depois do login (hook global) e antes de ler o corpo.
+    onRequest: async (request, reply) => {
+      if (uploadsInFlight >= MAX_CONCURRENT_UPLOADS) {
+        return reply.code(503).header('Retry-After', '10').send({ error: 'Outro arquivo está sendo enviado agora. Tente de novo em alguns segundos.' });
+      }
+      uploadsInFlight++;
+      holdsUploadSlot.add(request);
+    },
+    onResponse: async request => releaseUploadSlot(request),
+    onRequestAbort: async request => releaseUploadSlot(request),
+  }, async (request, reply) => {
     try {
       if (!Buffer.isBuffer(request.body)) throw Error('Envie exatamente um arquivo.');
       let data: Buffer = request.body;
