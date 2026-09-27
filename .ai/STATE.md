@@ -3,7 +3,7 @@
 > Atualize este arquivo sempre que a arquitetura, a fase ou o conjunto de serviços mudar.
 > Ele responde a uma pergunta: *se eu chegasse agora, o que eu precisaria saber?*
 
-**Última atualização:** 2026-09-24 · por `claude`
+**Última atualização:** 2026-09-27 · por `claude`
 
 ---
 
@@ -113,6 +113,9 @@ Um único processo Node. Toda rota `/api` exige sessão (negar por padrão). Pub
 - Design system: `Select` e `Checkbox` próprios (sem visual nativo do sistema operacional,
   `docs/design-system.md`), bordas decorativas removidas (faixa/borda colorida do cartão,
   barra do topo do detalhe), logo "CC" removida do topo e do login.
+- Administração (T-120): seções separadas (Visão geral, Envios em 7 dias + erros, Saúde do
+  sistema, Contas); "Nova conta" dentro do bloco Contas; ações de cada conta num menu "⋯"
+  (`Menu`), filtros em `Segmented`. Só interface: nenhuma rota ou contrato mudou.
 
 ---
 

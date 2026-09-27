@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-09-27T23:05Z · claude
+
+**Fiz:** tela de Administração reestruturada a pedido do dono (T-120): blocos separados — Visão
+geral (6 números), Envios nos últimos 7 dias com legenda e erros mais comuns, Saúde do sistema
+(despachante, WhatsApp, campanhas, servidor) e Contas. "Nova conta" saiu do topo da página e foi
+para o cabeçalho do bloco Contas (formulário abre dentro do bloco, com aviso de conta criada).
+Cada conta: iniciais, selos Você/Admin/Desativada, WhatsApp, colunas alinhadas com cabeçalho e as
+ações num menu "⋯". Duas peças novas no design system: `Menu` e `Segmented`.
+**Arquivos:** apps/web/src/pages/admin.tsx, apps/web/src/design/primitives.tsx, apps/web/src/design/icons.ts, docs/design-system.md
+**Tarefas:** T-120 (concluída)
+**Estado:** compila · lint ok · testes unitários ok. Conferido no navegador (dev, 1024 px e 375 px):
+menu de ações, formulário de nova conta e filtros.
+**Armadilhas:** só interface — rotas /api/admin/* e respostas não mudaram. A produção local só
+recebe isto ao reabrir pelo atalho da área de trabalho (o dono vinha abrindo por
+`npm run start:local` no terminal do VS Code, que não recompila nem instala dependências). O
+Railway estava rodando um commit antigo (4 migrations) porque perdeu o vínculo com o GitHub
+("Could not load branches"); o dono precisa reconectar a fonte em Settings → Source.
+**Próximo passo sugerido:** T-119 (@todos oficial) quando o dono puder mandar um @todos de teste.
+
+---
+
 ## 2026-09-24T19:40Z · claude
 
 **Fiz:** revisão pedida pelo dono e correções (ADR-032/033). (1) Estado do WhatsApp agora é

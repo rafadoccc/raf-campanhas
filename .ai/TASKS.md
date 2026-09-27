@@ -139,6 +139,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-117  Painel sem tela branca após recompilar; rolagem das telas  owner: —        since: —
 [x] T-118  Conversão automática de vídeo (MOV/HEVC/WebM → MP4 H.264)  owner: —        since: —
 [ ] T-119  @todos oficial do WhatsApp: capturar o formato real na dev  owner: —        since: —
+[x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS
