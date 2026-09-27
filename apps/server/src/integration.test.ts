@@ -2401,7 +2401,35 @@ test('video (032): an MP4 out of standard is converted and shrunk; a ready MP4 H
   // Arquivo que não é vídeo de verdade: recusa com mensagem clara, nada é gravado.
   const broken = await upload('quebrado.mov', 'video/quicktime', Buffer.from('isto não é um vídeo'));
   assert.equal(broken.statusCode, 400);
-  assert.match(broken.json().error, /converter este vídeo/);
+  assert.match(broken.json().error, /não reconhecido/);
+});
+
+test('video (034): MKV and AVI are recognized by their signature and converted', { timeout: 120_000 }, async () => {
+  for (const [name, type] of [['clipe.mkv', 'video/x-matroska'], ['clipe.avi', 'video/x-msvideo']]) {
+    const data = makeVideo(name, ['-f', 'lavfi', '-i', 'testsrc=duration=1:size=320x240:rate=10', '-c:v', 'mpeg4']);
+    const r = await upload(name, type, data);
+    assert.equal(r.statusCode, 201, `${name}: ${r.body}`);
+    assert.equal(r.json().converted, true);
+  }
+});
+
+test('video (034): a playlist disguised as video never makes ffmpeg read server files or the network', { timeout: 60_000 }, async () => {
+  // Ataque clássico: HLS/concat apontando para arquivos locais (o .env) ou para a rede.
+  const secret = join(mkdtempSync(join(tmpdir(), 'segredo-')), 'segredo.txt');
+  writeFileSync(secret, 'SENHA_DO_BANCO=nao-pode-vazar');
+  const attacks = [
+    `#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:10.0,\nfile://${secret.replace(/\\/g, '/')}\n#EXT-X-ENDLIST\n`,
+    `ffconcat version 1.0\nfile '${secret.replace(/\\/g, '/')}'\n`,
+    '#EXTM3U\n#EXTINF:10.0,\nhttp://127.0.0.1:9/segredo\n#EXT-X-ENDLIST\n',
+  ];
+  for (const payload of attacks) {
+    for (const type of ['video/quicktime', 'video/mp4', 'video/x-matroska']) {
+      const r = await upload('ataque.mov', type, Buffer.from(payload));
+      assert.equal(r.statusCode, 400, `${type}: ${r.body}`);
+      assert.match(r.json().error, /não reconhecido|Use vídeo MP4|H\.264/);
+    }
+  }
+  assert.equal(await prisma.campaignMedia.count({ where: { name: { startsWith: 'ataque' } } }), 0, 'nada foi gravado');
 });
 
 test('media (026): video ranges are read from the database in pieces, never the whole file', async () => {

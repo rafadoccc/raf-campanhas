@@ -52,17 +52,37 @@ function runFfmpeg(binary: string, args: string[]) {
   });
 }
 
+/**
+ * Contêiner do arquivo pela assinatura dos primeiros bytes, só entre os que aceitamos.
+ * SEGURANÇA: o ffmpeg nunca escolhe sozinho como ler o arquivo. Deixado adivinhar, um "vídeo"
+ * que na verdade é uma playlist (HLS, concat) faria o ffmpeg abrir outros arquivos do servidor
+ * (o .env, as sessões do WhatsApp) ou endereços da rede, e devolver o conteúdo no vídeo gerado.
+ */
+export function containerOf(data: Buffer): 'mov' | 'matroska' | 'avi' | 'mpeg' | null {
+  if (data.length < 16) return null;
+  if (data.readUInt32BE(0) === 0x1a45dfa3) return 'matroska'; // MKV e WebM
+  if (data.toString('latin1', 0, 4) === 'RIFF' && data.toString('latin1', 8, 12) === 'AVI ') return 'avi';
+  if (data.readUInt32BE(0) === 0x000001ba) return 'mpeg'; // MPEG-PS (.mpg)
+  // MP4, MOV, 3GP, M4V: começam por uma "caixa" com tamanho (4 bytes) e tipo conhecido.
+  if (['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip'].includes(data.toString('latin1', 4, 8))) return 'mov';
+  return null;
+}
+
 /** Converte para MP4 H.264 + AAC, no máximo 1280 px no lado maior, pronto para o WhatsApp. */
 async function convert(data: Buffer) {
   const binary = ffmpegPath();
   if (!binary) throw Error('Este vídeo precisa ser convertido, e o conversor não está instalado neste computador. Rode npm install com o sistema fechado, ou envie um MP4 (H.264).');
+  const format = containerOf(data);
+  if (!format) throw Error('Arquivo de vídeo não reconhecido. Envie MP4, MOV, WebM, MKV, 3GP, AVI ou MPG.');
   const base = path.join(tmpdir(), `campanhas-video-${randomUUID()}`);
   const input = `${base}-entrada`;
   const output = `${base}-saida.mp4`;
   try {
     await writeFile(input, data);
     await runFfmpeg(binary, [
-      '-hide_banner', '-nostdin', '-y', '-i', input,
+      '-hide_banner', '-nostdin', '-y',
+      // Só arquivo local (nada de http, tcp, concat, subfile…) e o leitor do contêiner detectado.
+      '-protocol_whitelist', 'file', '-f', format, '-i', input,
       '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn', '-map_metadata', '-1',
       // Lado maior até 1280 px, sem aumentar vídeo pequeno; dimensões pares (exigência do H.264).
       '-vf', "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))',scale=trunc(iw/2)*2:trunc(ih/2)*2",
