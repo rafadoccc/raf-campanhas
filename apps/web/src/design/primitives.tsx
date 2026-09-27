@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type ComponentType, type ReactNode } from 'react';
 import { Link, type LinkProps } from 'react-router-dom';
-import { IconCheck, IconChevron, IconEmpty, IconHide, IconLoading, IconShow } from './icons';
+import { IconCheck, IconChevron, IconEmpty, IconHide, IconLoading, IconMore, IconShow } from './icons';
 
 // Peças básicas do design system (docs/design-system.md). Cantos de 5–6 px, borda fina,
 // sombra quase nula. Uma ação principal por área; o resto é secundário ou discreto.
@@ -139,6 +139,65 @@ export function Select({ value, onChange, options, label, name, disabled, classN
         {option.value === value && <IconCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />}
       </li>)}
     </ul>}
+  </div>;
+}
+
+export type MenuItem = { label: string; icon?: Icon; onSelect: () => void; danger?: boolean; disabled?: boolean };
+/**
+ * Menu de ações ("⋯"): agrupa as ações secundárias de uma linha para ela não virar uma fileira
+ * de botões. Mesmo comportamento do `Select`: setas, Home/End, Enter/Espaço, Esc, clique fora.
+ */
+export function Menu({ items, label, disabled }: { items: MenuItem[]; label: string; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setActive(0);
+    list.current?.focus();
+    const onPointerDown = (event: MouseEvent) => { if (root.current && !root.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
+  function choose(index: number) {
+    const item = items[index];
+    if (!item || item.disabled) return;
+    setOpen(false);
+    item.onSelect();
+  }
+  function onKeyDown(event: KeyboardEvent<HTMLUListElement>) {
+    if (event.key === 'ArrowDown') { event.preventDefault(); setActive(i => Math.min(items.length - 1, i + 1)); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(i => Math.max(0, i - 1)); }
+    else if (event.key === 'Home') { event.preventDefault(); setActive(0); }
+    else if (event.key === 'End') { event.preventDefault(); setActive(items.length - 1); }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(active); }
+    else if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); setOpen(false); root.current?.querySelector('button')?.focus(); }
+  }
+
+  return <div ref={root} className="relative">
+    <IconButton icon={IconMore} label={label} variant="secondary" disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} />
+    {open && <ul ref={list} role="menu" tabIndex={-1} aria-label={label} onKeyDown={onKeyDown}
+      className="absolute right-0 z-20 mt-1 min-w-[13rem] rounded border border-line bg-white py-1 text-sm shadow-pop focus:outline-none">
+      {items.map((item, index) => {
+        const ItemIcon = item.icon;
+        return <li key={item.label} role="menuitem" aria-disabled={item.disabled || undefined}
+          onMouseEnter={() => setActive(index)} onClick={() => choose(index)}
+          className={`flex items-center gap-2 px-3 py-1.5 ${item.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${item.danger ? 'text-red-700' : ''} ${index === active ? (item.danger ? 'bg-red-50' : 'bg-slate-100') : ''}`}>
+          {ItemIcon && <ItemIcon className="h-4 w-4 shrink-0" aria-hidden />}{item.label}
+        </li>;
+      })}
+    </ul>}
+  </div>;
+}
+
+/** Filtro de opções mutuamente exclusivas, lado a lado (Todas / Ativas / Desativadas). */
+export function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (value: T) => void; options: readonly { value: T; label: string }[]; label: string }) {
+  return <div role="group" aria-label={label} className="inline-flex rounded border border-line bg-white p-0.5">
+    {options.map(option => <button key={option.value} type="button" aria-pressed={option.value === value} onClick={() => onChange(option.value)}
+      className={`h-7 rounded-sm px-2.5 text-xs transition-colors ${option.value === value ? 'bg-slate-100 font-medium text-ink' : 'text-muted hover:text-ink'}`}>{option.label}</button>)}
   </div>;
 }
 

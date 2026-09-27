@@ -18,6 +18,8 @@ fica só para o ponto de status (`Dot`). Uma ação primária por área; o resto
 | `PasswordInput` | Campo de senha com o botão de mostrar/esconder. Use sempre no lugar de `<input type="password">`. |
 | `Select` | Ver abaixo. |
 | `Checkbox` | Ver abaixo. |
+| `Menu` | Botão "⋯" com a lista de ações secundárias de uma linha (`items`: `label`, `icon`, `onSelect`, `danger`, `disabled`). Mesmo teclado do `Select`. Use quando uma linha teria mais de dois botões — ex.: ações de cada conta na Administração. |
+| `Segmented` | Filtro de opções exclusivas lado a lado (`aria-pressed`), ex.: Todas / Ativas / Desativadas. |
 | `Alert` | Aviso inline (`tone`: `danger`/`warning`/`info`/`brand`). |
 | `EmptyState` / `Skeleton` | Lista vazia e carregamento. |
 | `ScrollArea` | `overflow-y: auto` com barra invisível (`.scroll-area` em `styles.css`); a rolagem por roda/toque/teclado continua funcionando. Use dentro de um contêiner de altura definida — é assim que cada tela rola por partes em vez do documento inteiro (`Page` ocupa `h-full`, sem rolagem própria). |

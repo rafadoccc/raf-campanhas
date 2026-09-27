@@ -49,4 +49,8 @@ export {
   EyeOff as IconHide,
   Cpu as IconSystem,
   Cable as IconDispatcher,
+  Ellipsis as IconMore,
+  UserPlus as IconAddUser,
+  Activity as IconActivity,
+  Server as IconServer,
 } from 'lucide-react';
