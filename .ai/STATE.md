@@ -27,6 +27,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 4 | Envios em paralelo entre números, design system, painel do admin | ✅ concluída (ADR-025/026) |
 | 5 | Piso de intervalo no banco, @todos, tentar de novo, métricas do admin | ✅ concluída (ADR-028/029/030/031) |
 | 5b | Conversão de vídeo, estado do WhatsApp gravado, painel sem tela branca, rolagem | ✅ concluída (ADR-032/033) |
+| 5c | Troca de tela instantânea, limites contra abuso, VPS pequena, ffmpeg seguro | ✅ concluída (ADR-034) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---
@@ -41,9 +42,11 @@ packages/database  Prisma 6 + MySQL 8 (nativo no Windows, banco `campanhas`)
 infra         nenhuma. Sem Docker, sem Redis. Ver ADR-008 e ADR-010.
 ```
 
-Um único processo Node. Toda rota `/api` exige sessão (negar por padrão). Publicado no
-**Railway** (`docs/deploy-railway.md`, `railway.json`) — alvo de deploy atual; a Hostinger
-(`docs/deploy-hostinger.md`) foi o deploy anterior.
+Um único processo Node. Toda rota `/api` exige sessão (negar por padrão), conferida no
+`onRequest`, antes de ler o corpo. Alvos de deploy: VPS própria (`docs/deploy-vps.md`, pensada
+para 1 vCPU e 1 GB) e **Railway** (`docs/deploy-railway.md`, `railway.json`); a Hostinger
+(`docs/deploy-hostinger.md`) foi o deploy anterior. Limites em memória (ADR-034): API por IP,
+verificações de senha, uploads simultâneos.
 
 ### Ambientes de trabalho (Git)
 
@@ -113,6 +116,11 @@ Um único processo Node. Toda rota `/api` exige sessão (negar por padrão). Pub
 - Design system: `Select` e `Checkbox` próprios (sem visual nativo do sistema operacional,
   `docs/design-system.md`), bordas decorativas removidas (faixa/borda colorida do cartão,
   barra do topo do detalhe), logo "CC" removida do topo e do login.
+- Desempenho e segurança (T-121, ADR-034): telas pré-carregadas e com cache (troca de tela de
+  1 a 90 ms), painel pré-comprimido (376 KB para 108 KB), login antes de ler o corpo, limites
+  por IP/senha/upload, ffmpeg só com o contêiner detectado (fecha a leitura de arquivos do
+  servidor por playlist disfarçada), cache de participantes no Baileys, botão "Alterar senha"
+  visível em cada conta na Administração.
 - Administração (T-120): seções separadas (Visão geral, Envios em 7 dias + erros, Saúde do
   sistema, Contas); "Nova conta" dentro do bloco Contas; ações de cada conta num menu "⋯"
   (`Menu`), filtros em `Segmented`. Só interface: nenhuma rota ou contrato mudou.

@@ -5,6 +5,50 @@
 
 ---
 
+## 2026-09-27T23:45Z · claude
+
+**Fiz:** revisão de desempenho e segurança pedida pelo dono (T-121, ADR-034).
+- **Telas:** pré-carregadas depois do login e com cache da última resposta. A troca de tela
+  medida caiu para 1–90 ms, e a revisita é instantânea.
+- **Painel pré-comprimido:** br/gz na compilação, de 376 KB para 108 KB.
+- **Proteções:** login conferido antes de ler o corpo; limites por IP na API, nas verificações
+  de senha, na troca da própria senha e em uploads simultâneos; `requestTimeout`.
+- **ffmpeg:** só com o contêiner detectado pela assinatura e só arquivo local. Uma playlist
+  disfarçada lia arquivos do servidor.
+- **Baileys:** sem histórico ao conectar, e cache de participantes no envio.
+- **Interface:**
+  - Início sem o bloco duplicado "Próximo envio".
+  - Administração: botão "Alterar senha" visível em cada conta e saúde do sistema sem as
+    linhas duplicadas.
+  - O menu do topo sumia ao rolar: o documento rolava por causa de `sr-only` absoluto.
+  - No celular, os ícones de WhatsApp e Administração ficavam escondidos.
+  - A tela do WhatsApp mostrava "Desconectado" antes de conferir.
+- **Guia:** `docs/deploy-vps.md` para uma VPS de 1 vCPU e 1 GB.
+
+**Arquivos:**
+- Servidor: apps/server/src/{auth,security,rate-limit,app,media,video-convert,whatsapp,dashboard,campaign-routes}.ts, security.test.ts, integration.test.ts
+- Painel: apps/web/src/{main.tsx,styles.css,lib/cache.ts,lib/use-polling.ts,lib/auth.tsx,design/infinite.tsx,pages/*,components/navigation.tsx,components/campaign-form.tsx}
+- Build e docs: apps/web/package.json, scripts/compress-dist.mjs, docs/deploy-vps.md, .env.example, README, docs/design-system.md, docs/campaign-media.md
+
+**Tarefas:** T-121 (concluída); T-049 marcada como bloqueada (o fix rebaixaria o Prisma CLI).
+**Estado:** compila · lint ok · unitários 64/64 · integração 116/116 (2 testes novos: ataque de
+playlist ao ffmpeg, e MKV/AVI). Conferido no navegador (dev, desktop e 375 px): pré-carga, troca
+de tela, cache, Alterar senha, menu fixo e ícones no celular.
+**Armadilhas:**
+- O limite da API é por IP e fica em memória. Atrás de um proxy que não esteja nas faixas
+  confiáveis (`TRUSTED_PROXIES`), todos os pedidos aparecem com o IP do proxy e dividem o mesmo
+  balde; nesse caso ajuste `TRUST_PROXY`.
+- Uma tela nova que busca dados deve passar `cacheKey` a `usePolling`/`useInfiniteList`, senão
+  volta a piscar o esqueleto.
+- `npm run build` na dev com o servidor da dev ligado falha com EPERM (o Prisma trava a DLL):
+  pare a dev antes.
+- A produção só recebe tudo isso reabrindo pelo atalho da área de trabalho, não por
+  `npm run start:local`.
+**Próximo passo sugerido:** T-119 (@todos oficial) quando o dono puder mandar um @todos de teste;
+depois T-052 (exclusão de mídia órfã, para o disco da VPS não crescer sem limite).
+
+---
+
 ## 2026-09-27T23:05Z · claude
 
 **Fiz:** tela de Administração reestruturada a pedido do dono (T-120): blocos separados — Visão

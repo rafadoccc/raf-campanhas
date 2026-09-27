@@ -24,7 +24,9 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-046  (A) requirepass no Redis — resolvido: Redis removido     owner: —        since: —
 [x] T-047  (A) select explícito em /deliveries (vaza messageBody)  owner: —        since: —      
 [ ] T-048  (A) bodyLimit por tipo e streaming de mídia           owner: —        since: —
-[ ] T-049  (A) npm audit fix para deepmerge-ts via prisma        owner: —        since: —
+[!] T-049  (A) npm audit fix para deepmerge-ts via prisma        owner: —        since: —
+           Bloqueada: o fix rebaixa o Prisma CLI para 6.12 (client 6.19). Só afeta o CLI lendo
+           config confiável (ADR-034). Desbloqueia quando o Prisma 6.x trouxer deepmerge-ts 8.
 [x] T-050  (M) Mapear erros internos antes de responder          owner: —        since: —      
 [x] T-051  (M) rate limiting na API                              owner: —        since: —      
 [ ] T-052  (M) Rotina de exclusão de mídia órfã e cota           owner: —        since: —
@@ -140,6 +142,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-118  Conversão automática de vídeo (MOV/HEVC/WebM → MP4 H.264)  owner: —        since: —
 [ ] T-119  @todos oficial do WhatsApp: capturar o formato real na dev  owner: —        since: —
 [x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
+[x] T-121  Desempenho, limites contra abuso, VPS pequena (ADR-034)      owner: —        since: —
 ```
 
 ## Fase 5 — Deploy em VPS

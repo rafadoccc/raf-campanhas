@@ -5,8 +5,9 @@ painel (React + Vite) e a API (Fastify) na mesma porta, roda a fila de envios e 
 conexão com o WhatsApp (Baileys). Os dados ficam no **MySQL 8**, que também é a fila: não há
 Docker nem Redis.
 
-Para publicar no Railway (alvo de deploy atual), veja
-**[docs/deploy-railway.md](docs/deploy-railway.md)**; para a Hostinger (deploy anterior),
+Para publicar: numa VPS própria (mesmo pequena, 1 vCPU e 1 GB), veja
+**[docs/deploy-vps.md](docs/deploy-vps.md)**; no Railway,
+**[docs/deploy-railway.md](docs/deploy-railway.md)**; na Hostinger (deploy anterior),
 **[docs/deploy-hostinger.md](docs/deploy-hostinger.md)**.
 
 ## Iniciar no Windows
@@ -29,7 +30,10 @@ No PowerShell use `npm.cmd`; o `npm` puro é bloqueado pela política de scripts
 
 ### Login
 
-Todo o painel e toda a API exigem login. Não há cadastro público. Papéis: `SUPER_ADMIN`
+Todo o painel e toda a API exigem login, conferido antes de ler o corpo do pedido. Não há
+cadastro público. Limites contra abuso: 10 tentativas de login erradas por IP ou e-mail a cada
+15 min; 300 pedidos à API por IP de uma vez (repondo 5 por segundo); no máximo 2 verificações de
+senha e 2 uploads ao mesmo tempo. Papéis: `SUPER_ADMIN`
 (administra o sistema) e `USER`. A primeira conta — criada pelo inicializador, por
 `npm run user:create` com o banco vazio ou, num servidor, por `ADMIN_EMAIL`/`ADMIN_PASSWORD` —
 é `SUPER_ADMIN`. Depois, `npm run user:create` cria `USER`; um novo `SUPER_ADMIN` exige
@@ -43,7 +47,9 @@ Cada conta é independente: campanhas, grupos, mídia e histórico de um usuári
 para outro. Todas as telas são as mesmas para todo mundo; a única diferença de quem é
 `SUPER_ADMIN` é a tela extra **Administração**, com métricas do sistema inteiro (contas,
 envios/falhas de hoje, fila, últimos 7 dias, erros mais comuns, WhatsApp conectados,
-despachante) e a gestão de contas — nunca o conteúdo de campanhas ou mensagens de ninguém.
+despachante) e a gestão de contas: criar, **alterar a senha** (botão em cada conta), encerrar
+sessões, desconectar o WhatsApp, trocar o papel e desativar. Nunca o conteúdo de campanhas ou
+mensagens de ninguém.
 
 ## Conectar WhatsApp
 

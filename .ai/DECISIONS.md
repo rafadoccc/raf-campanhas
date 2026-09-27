@@ -802,3 +802,52 @@ correção automática rebaixaria o Prisma para 6.12. Rever quando o Prisma atua
   crescia e a parte de baixo (ex.: a imagem da campanha) era cortada. `Page scroll` para telas
   de seções empilhadas (Administração). No celular toda página cresce e rola inteira
   (`min-h-full lg:h-full`). A rolagem infinita observa a área que de fato rola.
+
+---
+
+## ADR-034 · Desempenho e proteções para VPS pequena; troca de tela instantânea
+
+**Data:** 2026-09-27 · **Status:** aceita (pedido do dono: sistema rápido e pronto para uma VPS fraca) · **Autor:** claude · **Branch:** dev
+
+Medição: a API responde em 2–20 ms mesmo com dados. A lentidão ao trocar de tela era do painel:
+cada tela era baixada só no clique (React.lazy), e depois esperava os dados com esqueleto.
+
+- **Painel:** `page()` em `main.tsx` ganhou `preload()`. Depois do login, com o navegador
+  ocioso, todas as telas são baixadas; uma tela já baixada abre direto, sem Suspense. O
+  "Carregando…" só aparece se demorar mais de 300 ms. `lib/cache.ts` (`screenCache`) guarda a
+  última resposta de cada tela (`usePolling` e `useInfiniteList` com `cacheKey`): voltar a uma
+  tela mostra o que ela tinha na hora e atualiza por trás. O cache é apagado ao sair ou trocar
+  de conta (dados de um usuário nunca aparecem para outro). Resultado medido: troca de tela de
+  1 a 90 ms, e revisita instantânea.
+- **Estáticos pré-comprimidos:** `scripts/compress-dist.mjs` roda no build do web e grava
+  `.br`/`.gz` com compressão máxima; `@fastify/static` com `preCompressed: true` entrega o
+  arquivo pronto (`Vary: Accept-Encoding`). Assim o painel cai de 376 KB para 108 KB, sem custo
+  de CPU por pedido. Não ligar compressão no proxy (Caddy).
+- **Login antes do corpo:** a sessão agora é conferida no `onRequest`, antes de ler o corpo.
+  Antes era `preHandler`: um POST de 200 MB sem login era lido inteiro na memória antes do 401.
+- **Limites (em memória, processo único):**
+  - API por IP: 300 pedidos de uma vez, repondo 5 por segundo (`rate-limit.ts`, 429 com
+    `Retry-After`); `/api/health` fica de fora.
+  - Senha (scrypt, ~32 MB cada): no máximo 2 ao mesmo tempo e 32 na fila, depois 503
+    (`Gate`/`passwordGate` em `auth.ts`).
+  - Troca da própria senha: 5 erros da senha atual a cada 15 min por conta.
+  - Uploads: no máximo 2 ao mesmo tempo, recusados antes de ler o corpo.
+  - `requestTimeout` de 15 min e `maxConnections` de 1000.
+- **Vídeo (segurança):** o ffmpeg não adivinha mais o formato. O contêiner é detectado pela
+  assinatura dos bytes (`containerOf`: mov, matroska, avi, mpeg; qualquer outro é recusado),
+  passado com `-f`, e com `-protocol_whitelist file`. Antes, uma playlist HLS ou concat
+  disfarçada de vídeo fazia o ffmpeg ler arquivos do servidor (.env, sessões) ou a rede.
+- **Baileys:** `shouldSyncHistoryMessage: () => false` (não processa o histórico ao conectar) e
+  `cachedGroupMetadata` com os participantes que `prepareSend` acabou de buscar (60 s). Antes
+  eram duas consultas iguais por envio; o cache é a recomendação do próprio Baileys.
+- **Início:** saíram três contagens que nenhuma tela usava (`sent`, `failed`, `readsPrevious`).
+  O detalhe da campanha faz as consultas em paralelo. sharp sem cache de imagens.
+- **Moldura do painel:** `.scroll-area` com `position: relative` e a moldura com
+  `overflow-hidden`. Rótulos `sr-only` (absolutos) escapavam da área de rolagem, esticavam o
+  documento, e o menu do topo sumia ao rolar a Administração.
+- **Não feito, de propósito:** `npm audit fix` para `deepmerge-ts` rebaixaria o Prisma CLI para
+  6.12 (o client é 6.19). A falha é de estouro de pilha ao mesclar objetos recursivos, só no
+  carregamento de configuração do CLI, que lê arquivo confiável. Fica registrado em T-049.
+
+Guia de instalação: `docs/deploy-vps.md` (MySQL com 128 MB de buffer, swap, systemd,
+Caddy, firewall, backup).

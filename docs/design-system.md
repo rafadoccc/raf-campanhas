@@ -89,12 +89,20 @@ e `campaign-detail.tsx` já fazem.
   um diálogo próprio (mesmo visual em todo o sistema, foco no botão seguro, `Esc` cancela).
   Toda ação irreversível ou de risco passa por aqui — nunca `window.confirm`.
 - **`useInfiniteList`/`LoadMoreSentinel`** (`infinite.tsx`): rolagem infinita por cursor
-  (`IntersectionObserver` no sentinela no fim da lista). Usado em Campanhas e nos Envios do
-  detalhe da campanha.
+  (`IntersectionObserver` no sentinela no fim da lista). Usado em Campanhas, Histórico e nos
+  Envios do detalhe da campanha.
+- **Cache de tela** (`lib/cache.ts`): `usePolling` e `useInfiniteList` aceitam uma `cacheKey`
+  (ex.: `campanha:<id>`). A tela abre com a última resposta e atualiza por trás, então voltar a
+  uma tela não mostra esqueleto de novo. Toda tela nova que busca dados deve passar uma chave. O
+  cache é apagado ao sair ou trocar de conta.
 
 ## Layout de app
 
 `main.tsx`: shell `h-dvh` (a altura da viewport, não a do documento — evita o salto do
 teclado virtual no celular), menu fixo no topo, conteúdo abaixo ocupa o resto e cada tela
 decide o que rola dentro de si (`ScrollArea`), nunca o documento inteiro. Rotas menos usadas
-carregam sob demanda (`React.lazy`). `ConfirmProvider` envolve a árvore inteira, uma vez.
+carregam à parte e são **pré-carregadas** depois do login, com o navegador ocioso (`page()` com
+`preload()`), então trocar de tela não espera download. O "Carregando…" só aparece depois de
+300 ms. `ConfirmProvider` envolve a árvore inteira, uma vez. A moldura tem `overflow-hidden` e
+toda `.scroll-area` é `position: relative`: um elemento absoluto (ex.: `sr-only`) nunca estica o
+documento, e o menu do topo nunca sai da tela.
