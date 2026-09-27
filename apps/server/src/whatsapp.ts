@@ -46,8 +46,13 @@ export function defaultSessionsDir() {
   return path.join(stateHome, 'raf-campanhas', 'sessions');
 }
 
+// Participantes buscados no preparo de um envio valem para o próprio envio logo em seguida.
+const GROUP_CACHE_MS = 60_000;
+type GroupMetadata = Awaited<ReturnType<WASocket['groupMetadata']>>;
+
 export class WhatsAppProvider {
   private socket?: WASocket;
+  private groupCache = new Map<string, { metadata: GroupMetadata; at: number }>();
   private timer?: NodeJS.Timeout;
   private generation = 0;
   private retries = 0;
@@ -116,7 +121,19 @@ export class WhatsAppProvider {
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
       if (!this.wanted || generation !== this.generation) return;
-      const sock = makeWASocket({ version: this.version, auth: state, logger: pino({ level: 'silent' }), syncFullHistory: false, markOnlineOnConnect: false });
+      const sock = makeWASocket({
+        version: this.version, auth: state, logger: pino({ level: 'silent' }), syncFullHistory: false, markOnlineOnConnect: false,
+        // O sistema não lê conversas: não processa o histórico que o WhatsApp manda ao conectar
+        // (economiza memória e CPU numa VPS pequena, sobretudo em contas com muitos grupos).
+        shouldSyncHistoryMessage: () => false,
+        // O envio para grupo consulta os participantes; prepareSend acabou de buscá-los. Sem
+        // este cache, cada envio faria duas consultas iguais (o Baileys recomenda o cache para
+        // não ser limitado pelo WhatsApp).
+        cachedGroupMetadata: async jid => {
+          const cached = this.groupCache.get(jid);
+          return cached && Date.now() - cached.at < GROUP_CACHE_MS ? cached.metadata : undefined;
+        },
+      });
       console.info('[WhatsApp] Iniciando protocolo', this.version.join('.'));
       this.socket = sock;
       // Gravações de credenciais em andamento. A reconexão pedida logo após o pareamento
@@ -292,6 +309,8 @@ export class WhatsAppProvider {
     // Registra a situação do grupo (membro, admin, só admins enviam) para explicar uma
     // eventual recusa do servidor.
     const metadata = await sock.groupMetadata(groupJid);
+    for (const [jid, entry] of this.groupCache) if (Date.now() - entry.at > GROUP_CACHE_MS) this.groupCache.delete(jid);
+    this.groupCache.set(groupJid, { metadata, at: Date.now() });
     const me = { id: sock.user?.id, lid: sock.user?.lid };
     const group = describeGroupForSend(metadata, me);
     // Mantém selo (só admins / você é admin) e membros atualizados. Atinge SOMENTE o grupo

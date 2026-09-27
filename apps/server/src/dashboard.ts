@@ -13,13 +13,10 @@ export async function dashboardSummary(userId: string) {
   const offset = today.toFormat('ZZ');
   // A dashboard is read-only. No completion, scheduling or delivery mutations.
   return prisma.$transaction(async tx => {
-    const [sentTodayCount, failedToday, sent, failed, readsToday, readsPrevious, candidates, counts, recentSent, recentFailed, deliveredToday, reachedToday, byDay] = await Promise.all([
+    const [sentTodayCount, failedToday, readsToday, candidates, counts, recentSent, recentFailed, deliveredToday, reachedToday, byDay] = await Promise.all([
       tx.delivery.count({ where: sentToday }),
       tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'FAILED', updatedAt: period } }),
-      tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'SENT' } }),
-      tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'FAILED' } }),
       tx.deliveryRead.count({ where: { readAt: period, delivery: { campaign: mine, provider: 'baileys', status: 'SENT' } } }),
-      tx.deliveryRead.count({ where: { readAt: { gte: today.minus({ days: 1 }).toJSDate(), lt: period.gte }, delivery: { campaign: mine, provider: 'baileys', status: 'SENT' } } }),
       tx.campaign.findMany({ where: { userId, status: 'ACTIVE', deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, name: true, provider: true, nextAvailableAt: true, deliveries: { where: { status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }], take: 1, select: { id: true, campaignId: true, provider: true, status: true, scheduledAt: true, group: { select: { name: true } } } } } }),
       tx.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaign: { userId, status: 'ACTIVE', deletedAt: null } }, _count: { _all: true } }),
       tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'SENT', sentAt: { not: null } }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 20, select: { id: true, campaignId: true, sentAt: true, deliveredAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } }),
@@ -52,7 +49,7 @@ export async function dashboardSummary(userId: string) {
     });
     const pendingNow = counts.filter(row => row.status === 'PENDING' || row.status === 'PROCESSING').reduce((sum, row) => sum + row._count._all, 0);
     return {
-      serverNow, activeCampaigns: candidates.length, sentToday: sentTodayCount, failedToday, sent, failed, readsToday, readsPrevious,
+      serverNow, activeCampaigns: candidates.length, sentToday: sentTodayCount, failedToday, readsToday,
       successRate: sentTodayCount + failedToday ? Math.round(100 * sentTodayCount / (sentTodayCount + failedToday)) : null,
       deliveredToday, deliveryRate: sentTodayCount ? Math.round(100 * deliveredToday / sentTodayCount) : null,
       groupsReachedToday: reachedToday.length, membersReachedToday: reachedToday.reduce((sum, row) => sum + (row.group.participants ?? 0), 0),

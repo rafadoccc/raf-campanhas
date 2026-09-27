@@ -21,16 +21,20 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     // Só campanha própria; de outro usuário responde igual a inexistente (ADR-018).
     const campaign = await prisma.campaign.findFirst({ where: { id, deletedAt: null, userId: request.user!.id }, include: { media: { select: mediaMetadata }, groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
     if (!campaign) return reply.code(404).send({ error: 'Campanha não encontrada.' });
-    const counts = await prisma.delivery.groupBy({ by: ['status'], where: { campaignId: id }, _count: { _all: true } });
-    // Próximo a sair: a cabeça já vencida; senão, o pendente de horário mais cedo (ADR-014).
     const now = await currentTime();
-    const next = await prisma.delivery.findFirst({ where: { campaignId: id, ...dueOrRunning(now) }, orderBy: { sequence: 'asc' } })
-      ?? await prisma.delivery.findFirst({ where: { campaignId: id, status: 'PENDING' }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }] });
+    // Consultas independentes em paralelo: a tela abre no tempo da mais lenta, não da soma.
+    const [counts, due, earliest, delivered, reads] = await Promise.all([
+      prisma.delivery.groupBy({ by: ['status'], where: { campaignId: id }, _count: { _all: true } }),
+      // Próximo a sair: a cabeça já vencida; senão, o pendente de horário mais cedo (ADR-014).
+      prisma.delivery.findFirst({ where: { campaignId: id, ...dueOrRunning(now) }, orderBy: { sequence: 'asc' }, select: { scheduledAt: true } }),
+      prisma.delivery.findFirst({ where: { campaignId: id, status: 'PENDING' }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }], select: { scheduledAt: true } }),
+      prisma.delivery.count({ where: { campaignId: id, status: 'SENT', deliveredAt: { not: null } } }),
+      campaignReads(prisma, id),
+    ]);
+    const next = due ?? earliest;
     const nextAt = next && campaign.status === 'ACTIVE' ? new Date(Math.max(next.scheduledAt.getTime(), campaign.nextAvailableAt?.getTime() ?? 0)) : null;
-    const delivered = await prisma.delivery.count({ where: { campaignId: id, status: 'SENT', deliveredAt: { not: null } } });
-    const reads = await campaignReads(prisma, id);
     const readsByGroup = campaign.groups.map(({ group }) => ({ groupId: group.id, name: group.name, participants: group.participants, count: reads.find(r => r.groupId === group.id)?.count ?? 0 }));
-    const serverNow = await currentTime();
+    const serverNow = now;
     return { ...campaign, serverNow, delivered, readsTotal: reads.reduce((sum, r) => sum + r.count, 0), readsByGroup, progress: Object.fromEntries(counts.map(r => [r.status, r._count._all])), nextAt };
   });
   app.delete('/api/campaigns/:id', async (request, reply) => {
