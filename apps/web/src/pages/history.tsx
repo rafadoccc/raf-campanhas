@@ -13,7 +13,7 @@ export default function HistoryPage() {
     const page = cursor ? Number(cursor) : 0;
     const items = await api<Delivery[]>(`/deliveries?page=${page}`, { signal });
     return { items, next: items.length === 100 ? String(page + 1) : null };
-  }, []);
+  }, [], 15_000, 'historico');
 
   return <Page className="overflow-hidden">
     <PageHeader title="Histórico" subtitle="Todos os envios, mais recentes primeiro · horário de Brasília" />

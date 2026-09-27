@@ -3,7 +3,7 @@ import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
 import {
-  Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, Field, Menu, Page, PageHeader, PasswordInput, Segmented, Select, Skeleton, Stat,
+  Alert, Badge, Button, ButtonLink, Card, CardHeader, Dot, EmptyState, Field, Menu, Page, PageHeader, PasswordInput, Segmented, Select, Skeleton, Stat,
   IconActivity, IconAddUser, IconAdmin, IconCampaigns, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
   IconLogout, IconPassword, IconQueue, IconSearch, IconSent, IconServer, IconSystem, IconWhatsApp,
   dataHora, horaSeg, inputClass, numero, useConfirm, type MenuItem,
@@ -107,14 +107,11 @@ function Health({ overview: o }: { overview: Overview | null }) {
     <CardHeader title={<span className="flex items-center gap-1.5"><IconServer className="h-4 w-4 text-muted" aria-hidden />Saúde do sistema</span>} />
     {!o ? <div className="space-y-2 p-4"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
       : <ul className="divide-y divide-line">
-        <HealthRow icon={IconDispatcher} label="Despachante" detail={o.dispatcher.expiresAt ? `posse renovada até ${horaSeg(o.dispatcher.expiresAt)}` : 'sem posse registrada'}>
-          <Dot tone={o.dispatcher.active ? 'ok' : 'warn'} />{o.dispatcher.active ? 'Enviando normalmente' : 'Parado'}
+        <HealthRow icon={IconDispatcher} label="Fila de envios" detail={o.dispatcher.active ? 'confere a fila a cada 5 s' : 'reinicie o sistema se continuar assim'}>
+          <Dot tone={o.dispatcher.active ? 'ok' : 'warn'} />{o.dispatcher.active ? 'Funcionando' : 'Parada'}
         </HealthRow>
-        <HealthRow icon={IconWhatsApp} label="WhatsApp" detail={paired(o.whatsapp.paired)}>
-          <Dot tone={o.whatsapp.connectedNow > 0 ? 'ok' : 'off'} />{plural(o.whatsapp.connectedNow, 'conectado', 'conectados')}
-        </HealthRow>
-        <HealthRow icon={IconCampaigns} label="Campanhas" detail={`${plural(o.campaigns.draft, 'rascunho', 'rascunhos')} · ${plural(o.campaigns.completed + o.campaigns.cancelled, 'encerrada', 'encerradas')}`}>
-          {plural(o.campaigns.active, 'ativa', 'ativas')} · {plural(o.campaigns.paused, 'pausada', 'pausadas')}
+        <HealthRow icon={IconCampaigns} label="Outras campanhas" detail={plural(o.campaigns.completed + o.campaigns.cancelled, 'encerrada', 'encerradas')}>
+          {plural(o.campaigns.paused, 'pausada', 'pausadas')} · {plural(o.campaigns.draft, 'rascunho', 'rascunhos')}
         </HealthRow>
         <HealthRow icon={IconSystem} label="Servidor" detail={`${o.process.memoryMb.rss} MB de memória`}>
           no ar há {uptime(o.process.uptimeSeconds)}
@@ -159,6 +156,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const [resetting, setResetting] = useState(false);
+  const [notice, setNotice] = useState('');
   const disabled = Boolean(user.disabledAt);
   const wa = user.whatsapp;
   async function run(action: () => Promise<unknown>) {
@@ -191,10 +189,13 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
   const resetPassword = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const password = new FormData(event.currentTarget).get('password');
-    void run(async () => { await api(`/admin/users/${user.id}/password`, { method: 'POST', json: { password } }); setResetting(false); });
+    void run(async () => {
+      await api(`/admin/users/${user.id}/password`, { method: 'POST', json: { password } });
+      setResetting(false);
+      setNotice(`Senha de ${user.name} alterada. A pessoa entra de novo com a senha nova.`);
+    });
   };
   const actions: MenuItem[] = [
-    { label: 'Redefinir senha', icon: IconPassword, onSelect: () => setResetting(true) },
     { label: 'Encerrar sessões', icon: IconLogout, onSelect: () => void forceLogout() },
     ...(wa.state === 'connected' ? [{ label: 'Desconectar WhatsApp', icon: IconDisconnect, onSelect: () => void stopWhatsApp() }] : []),
     { label: user.role === 'SUPER_ADMIN' ? 'Tornar usuário' : 'Tornar administrador', icon: IconAdmin, onSelect: () => void changeRole() },
@@ -230,8 +231,13 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
           <dd className={`font-semibold ${label === 'Falhas' && value ? 'text-red-700' : ''}`}>{numero(value)}{hint && <span className="block text-2xs font-normal text-slate-400">{hint}</span>}</dd>
         </div>)}
       </dl>
-      <div className="flex justify-end">
-        {self ? <span className="sr-only">Sua conta: altere em Minha conta</span> : <Menu label={`Ações para ${user.name}`} items={actions} disabled={busy} />}
+      <div className="flex items-center justify-end gap-1.5">
+        {self
+          ? <ButtonLink to="/conta" size="sm" icon={IconPassword} title="A sua senha é trocada em Minha conta">Minha senha</ButtonLink>
+          : <>
+            <Button size="sm" icon={IconPassword} disabled={busy} aria-expanded={resetting} onClick={() => { setResetting(v => !v); setNotice(''); }}>Alterar senha</Button>
+            <Menu label={`Mais ações para ${user.name}`} items={actions} disabled={busy} />
+          </>}
       </div>
     </div>
     {resetting && <form onSubmit={resetPassword} className="mt-3 flex flex-wrap items-end gap-2 rounded border border-line bg-slate-50 p-3">
@@ -243,12 +249,13 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
         <Button type="submit" variant="primary" loading={busy} disabled={busy}>Salvar senha</Button>
       </div>
     </form>}
+    {notice && <div className="mt-2"><Alert tone="brand">{notice}</Alert></div>}
     {error && <div className="mt-2"><Alert>{error}</Alert></div>}
   </li>;
 }
 
 // Mesma grade no cabeçalho da lista e em cada linha: as colunas ficam alinhadas.
-const rowGrid = 'grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_20rem_2.5rem]';
+const rowGrid = 'grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_20rem_11rem]';
 
 function Accounts({ users, meId, onChanged }: { users: AdminUser[] | null; meId?: string; onChanged: () => void }) {
   const [creating, setCreating] = useState(false);
@@ -295,7 +302,7 @@ export default function AdminPage() {
   const { data, error, reload } = usePolling(async signal => {
     const [overview, users] = await Promise.all([api<Overview>('/admin/overview', { signal }), api<AdminUser[]>('/admin/users', { signal })]);
     return { overview, users };
-  }, [], 20_000);
+  }, [], 20_000, 'admin');
   const overview = data?.overview ?? null;
 
   return <Page scroll>

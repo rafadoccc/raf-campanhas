@@ -3,7 +3,7 @@ import { api, connectionState } from '../lib/api';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, ButtonLink, Card, CardHeader, Dot, EmptyState, Page, PageHeader, ScrollArea, Skeleton, Stat,
-  IconAdd, IconCampaigns, IconClock, IconDelivered, IconOpen, IconQueue, IconReach, IconReads, IconSent,
+  IconAdd, IconCampaigns, IconDelivered, IconOpen, IconQueue, IconReach, IconReads, IconSent,
   dataHora, hora, numero, tempoRelativo,
 } from '../design';
 
@@ -42,7 +42,7 @@ export default function DashboardPage() {
   const { data: loaded, error } = usePolling(async signal => {
     const [dashboard, connection] = await Promise.all([api<Dashboard>('/dashboard', { signal }), connectionState(signal)]);
     return { dashboard, connection };
-  }, []);
+  }, [], 15_000, 'inicio');
   const d = loaded?.dashboard ?? null;
   const connected = loaded?.connection === 'connected';
   const metric = (value: number | null | undefined, suffix = '') => (d ? `${numero(value ?? 0)}${suffix}` : '—');
@@ -66,19 +66,10 @@ export default function DashboardPage() {
 
     <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
       <div className="flex min-h-0 flex-col gap-4 lg:col-span-2">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Card className="p-4">
-            <p className="flex items-center gap-1.5 text-xs text-muted"><IconClock className="h-3.5 w-3.5" aria-hidden />Próximo envio</p>
-            {!d ? <Skeleton className="mt-2 h-12" /> : d.nextDelivery ? <>
-              <p className="mt-1 truncate text-base font-semibold">{d.nextDelivery.group.name}</p>
-              <p className="truncate text-xs text-muted"><Link to={`/campanhas/${d.nextDelivery.campaignId}`} className="hover:underline">{d.nextDelivery.campaign.name}</Link> · {when(d.nextDelivery, d.serverNow, connected)}{d.nextDelivery.provider === 'simulator' && ' · simulação'}</p>
-            </> : <p className="mt-2 text-sm text-muted">Nada na fila agora.</p>}
-          </Card>
-          <Card className="flex flex-col p-4">
-            <p className="text-xs text-muted">Envios nos últimos 7 dias</p>
-            <div className="mt-2 h-24">{d ? <WeekBars days={d.last7Days} /> : <Skeleton className="h-full" />}</div>
-          </Card>
-        </div>
+        <Card className="flex flex-col p-4">
+          <p className="text-xs text-muted">Envios nos últimos 7 dias</p>
+          <div className="mt-2 h-24">{d ? <WeekBars days={d.last7Days} /> : <Skeleton className="h-full" />}</div>
+        </Card>
         <Card className="flex min-h-[14rem] flex-1 flex-col lg:min-h-0">
           <CardHeader title="Em andamento" action={<Link to="/campanhas" className="text-xs text-muted hover:text-ink">Ver todas</Link>} />
           <ScrollArea className="flex-1">
@@ -89,7 +80,7 @@ export default function DashboardPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-medium">{c.name}</span><span className="tabular shrink-0 text-xs text-muted">{c.sent}/{c.total}</span></div>
                     <div className="mt-1.5 h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full bg-brand-600" style={{ width: `${(c.sent / Math.max(1, c.total)) * 100}%` }} /></div>
-                    {c.nextDelivery && <p className="mt-1 truncate text-2xs text-muted">Próximo: {c.nextDelivery.group.name} · {when(c.nextDelivery, d.serverNow, connected)}</p>}
+                    {c.nextDelivery && <p className="mt-1 truncate text-2xs text-muted">Próximo: {c.nextDelivery.group.name} · {when(c.nextDelivery, d.serverNow, connected)}{c.provider === 'simulator' && ' · simulação'}</p>}
                   </div>
                   <IconOpen className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
                 </Link>

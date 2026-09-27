@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { ServerClock } from './server-clock';
+import { screenCache } from '../lib/cache';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
 import {
   Alert, Button, Card, Checkbox, Field, IconButton, Page, PageHeader, ScrollArea, Select,
@@ -36,13 +37,13 @@ const normalize = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, ''
 export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const navigate = useNavigate();
   const [media, setMedia] = useState<CampaignMedia | null>(null);
-  const [groups, setGroups] = useState<Group[]>([]); const [selected, setSelected] = useState<string[]>([]);
+  const [groups, setGroups] = useState<Group[]>(() => screenCache.get<Group[]>('grupos') ?? []); const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState('IMMEDIATE'); const [interval, setIntervalValue] = useState(MIN_INTERVAL_MINUTES);
   const [mentionAll, setMentionAll] = useState(false);
   const [times, setTimes] = useState(['09:00']); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(!campaignId);
   const [search, setSearch] = useState('');
-  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [groupsLoaded, setGroupsLoaded] = useState(() => Boolean(screenCache.get('grupos')));
   const term = normalize(search);
   const visible = term ? groups.filter(group => normalize(group.name).includes(term)) : groups;
   const byId = (id: string) => groups.find(g => g.id === id);
@@ -60,7 +61,13 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
       setTimes(data.schedules.length ? data.schedules.map(s => s.time) : ['09:00']); setLoaded(true);
     }).catch(e => setError(e instanceof Error ? e.message : 'Não foi possível carregar a campanha.'));
   }, [campaignId]);
-  useEffect(() => { api<Group[]>('/groups').then(data => { setGroups(data.filter(g => g.active)); setGroupsLoaded(true); }).catch(() => setError('Não foi possível carregar os grupos.')); }, []);
+  useEffect(() => {
+    api<Group[]>('/groups').then(data => {
+      const active = data.filter(g => g.active);
+      screenCache.set('grupos', active);
+      setGroups(active); setGroupsLoaded(true);
+    }).catch(() => setError('Não foi possível carregar os grupos.'));
+  }, []);
   function move(index: number, delta: number) { setSelected(current => { const copy = [...current]; [copy[index], copy[index + delta]] = [copy[index + delta], copy[index]]; return copy; }); }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving(true); setError(''); const form = new FormData(event.currentTarget);

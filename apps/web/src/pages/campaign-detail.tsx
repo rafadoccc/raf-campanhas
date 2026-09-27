@@ -60,13 +60,13 @@ export default function CampaignPage() {
   const { data, error, reload } = usePolling(async signal => {
     const [campaign, connection] = await Promise.all([api<Campaign>(`/campaigns/${encodeURIComponent(id)}`, { signal }), readConnection(signal)]);
     return { campaign, connection };
-  }, [id]);
+  }, [id], 15_000, `campanha:${id}`);
   // Envios: 100 por página, carregados conforme a rolagem; a 1ª página (com a previsão) atualiza sozinha.
   const deliveries = useInfiniteList<Delivery>(async (cursor, signal) => {
     const page = cursor ? Number(cursor) : 0;
     const items = await api<Delivery[]>(`/deliveries?campaignId=${encodeURIComponent(id)}&page=${page}`, { signal });
     return { items, next: items.length === 100 ? String(page + 1) : null };
-  }, [id]);
+  }, [id], 15_000, `envios:${id}`);
 
   if (!data) return <Page>{error ? <p>Não foi possível carregar a campanha. <Link to="/campanhas" className="underline">Voltar</Link></p> : <><Skeleton className="h-8 w-64" /><Skeleton className="h-40" /></>}</Page>;
 

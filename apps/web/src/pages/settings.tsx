@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../lib/api';
 import { startVisiblePolling, connectionPollDelay } from '../lib/visible-polling';
+import { screenCache } from '../lib/cache';
 import { Alert, Button, Card, Dot, Page, PageHeader, IconOpen, IconRefresh, IconWhatsApp, IconDisable, useConfirm } from '../design';
 
 type Connection = { state: string; qr?: string; accountJid?: string; error?: string };
@@ -10,13 +11,17 @@ const labels: Record<string, string> = { disconnected: 'Desconectado', connectin
 // está logado. Status, QR e número vêm do servidor, escopados pela sessão.
 export default function Settings() {
   const confirm = useConfirm();
-  const [connection, setConnection] = useState<Connection>({ state: 'disconnected' });
+  // null = ainda conferindo (antes aparecia "Desconectado" até a primeira resposta chegar).
+  const [connection, setConnection] = useState<Connection | null>(() => screenCache.get<Connection>('whatsapp') ?? null);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState(''); const [error, setError] = useState('');
 
   async function refresh(signal?: AbortSignal) {
     try {
       const data = await api<Connection>('/whatsapp/status', { signal });
-      if (!signal?.aborted) { setConnection(data); setError(''); }
+      if (!signal?.aborted) {
+        setConnection(data); setError('');
+        screenCache.set('whatsapp', { ...data, qr: undefined }); // QR vence em segundos: nunca reaproveitado
+      }
       return data.state;
     } catch (e) {
       if (signal?.aborted) return;
@@ -35,14 +40,15 @@ export default function Settings() {
     setBusy(true); setNotice('');
     try {
       const data = await api<{ count?: number }>(`/whatsapp/${name}`, { method: 'POST', json: {} });
-      if (name === 'sync') setNotice(`${data.count} grupos sincronizados.`);
+      if (name === 'sync') { setNotice(`${data.count} grupos sincronizados.`); screenCache.delete('grupos'); }
       await refresh();
     } catch (e) { setNotice(''); setError(errorMessage(e, 'Falha na operação.')); }
     finally { setBusy(false); }
   }
 
-  const pairing = ['connecting', 'qr', 'reconnecting'].includes(connection.state);
-  const connected = connection.state === 'connected';
+  const state = connection?.state ?? 'checking';
+  const pairing = ['connecting', 'qr', 'reconnecting'].includes(state);
+  const connected = state === 'connected';
   return <Page>
     <div className="mx-auto w-full max-w-2xl space-y-4">
       <PageHeader title="WhatsApp" subtitle="A conexão é sua: outros usuários conectam o próprio número." />
@@ -50,20 +56,20 @@ export default function Settings() {
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded bg-brand-50 text-brand-700"><IconWhatsApp className="h-5 w-5" aria-hidden /></span>
           <div className="min-w-0">
-            <p className="flex items-center gap-2 font-semibold"><Dot tone={connected ? 'ok' : pairing ? 'busy' : 'warn'} />{labels[connection.state] ?? connection.state}</p>
-            {connection.accountJid && <p className="tabular text-xs text-muted">Número: {connection.accountJid.split('@')[0]}</p>}
+            <p className="flex items-center gap-2 font-semibold"><Dot tone={connected ? 'ok' : pairing || !connection ? 'busy' : 'warn'} />{connection ? labels[state] ?? state : 'Verificando a conexão…'}</p>
+            {connection?.accountJid && <p className="tabular text-xs text-muted">Número: {connection.accountJid.split('@')[0]}</p>}
           </div>
         </div>
-        {connection.qr && <div className="flex flex-wrap items-center gap-4 rounded border border-line p-3">
+        {connection?.qr && <div className="flex flex-wrap items-center gap-4 rounded border border-line p-3">
           <img src={connection.qr} width={220} height={220} alt="QR Code para conectar o WhatsApp" className="rounded" />
           <p className="max-w-xs text-sm text-muted">No celular, abra <span className="inline-flex items-center gap-0.5 font-medium text-ink">WhatsApp<IconOpen className="h-3.5 w-3.5" aria-hidden />Aparelhos conectados<IconOpen className="h-3.5 w-3.5" aria-hidden />Conectar um aparelho</span> e leia este código. Ele se renova sozinho.</p>
         </div>}
-        {(connection.error || error) && <Alert>{connection.error || error}</Alert>}
+        {(connection?.error || error) && <Alert>{connection?.error || error}</Alert>}
         {notice && <Alert tone="brand">{notice}</Alert>}
         <div className="flex flex-wrap gap-2">
-          {!connected && <Button variant="primary" icon={IconWhatsApp} loading={busy && !pairing} disabled={busy || pairing} onClick={() => action('connect')}>{connection.state === 'error' ? 'Conectar novamente' : 'Conectar'}</Button>}
+          {!connected && <Button variant="primary" icon={IconWhatsApp} loading={busy && !pairing} disabled={busy || pairing || !connection} onClick={() => action('connect')}>{state === 'error' ? 'Conectar novamente' : 'Conectar'}</Button>}
           {connected && <Button variant="primary" icon={IconRefresh} loading={busy} disabled={busy} onClick={() => action('sync')}>Sincronizar grupos</Button>}
-          <Button variant="danger" icon={IconDisable} className="ml-auto" disabled={busy || connection.state === 'disconnected'} onClick={async () => {
+          <Button variant="danger" icon={IconDisable} className="ml-auto" disabled={busy || !connection || state === 'disconnected'} onClick={async () => {
             if (await confirm({ title: 'Desconectar o WhatsApp?', description: 'Este aparelho sai do seu WhatsApp e as campanhas reais param até você conectar de novo (será preciso ler o QR).', confirmLabel: 'Desconectar', danger: true })) void action('disconnect');
           }}>Desconectar</Button>
         </div>

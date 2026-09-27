@@ -80,7 +80,7 @@ export default function CampaignsPage() {
     const params = new URLSearchParams({ limit: '24', ...(cursor ? { cursor } : {}), ...(filter ? { status: filter } : {}), ...(query ? { q: query } : {}) });
     const page = await api<{ items: Campaign[]; nextCursor: string | null }>(`/campaigns?${params}`, { signal });
     return { items: page.items, next: page.nextCursor };
-  }, [filter, query]);
+  }, [filter, query], 15_000, `campanhas:${filter}:${query}`);
 
   async function run(campaign: Campaign, action: () => Promise<void>) {
     setBusy(campaign.id); setActionError('');

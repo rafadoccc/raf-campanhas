@@ -15,11 +15,13 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 export function Navigation() {
   const { user, signOut } = useAuth();
   const admin = user?.role === 'SUPER_ADMIN';
-  return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-4">
-    <Link to="/" className="mr-3 shrink-0 truncate font-semibold tracking-tight">Central de Campanhas</Link>
+  // No celular o nome do sistema sai: sem ele, todos os ícones cabem (antes WhatsApp e
+  // Administração ficavam escondidos numa rolagem lateral). Só ícone = rótulo em aria-label.
+  return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-2 sm:px-4">
+    <Link to="/" className="mr-3 hidden shrink-0 truncate font-semibold tracking-tight sm:block">Central de Campanhas</Link>
     <div className="scroll-area flex min-w-0 items-center gap-1 overflow-x-auto">
-      {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass}><Icon className="h-4 w-4" aria-hidden /><span className="hidden md:inline">{label}</span></NavLink>)}
-      {admin && <NavLink to="/admin" className={linkClass}><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden md:inline">Administração</span></NavLink>}
+      {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass} aria-label={label} title={label}><Icon className="h-4 w-4" aria-hidden /><span className="hidden md:inline">{label}</span></NavLink>)}
+      {admin && <NavLink to="/admin" className={linkClass} aria-label="Administração" title="Administração"><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden md:inline">Administração</span></NavLink>}
     </div>
     <div className="ml-auto flex shrink-0 items-center gap-1">
       <NavLink to="/conta" className={linkClass} title="Minha conta"><IconAccount className="h-4 w-4" aria-hidden /><span className="hidden max-w-[10rem] truncate lg:inline">{user?.name ?? 'Minha conta'}</span></NavLink>
