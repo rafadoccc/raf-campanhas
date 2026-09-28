@@ -5,7 +5,7 @@ import { screenCache } from '../lib/cache';
 import { Alert, Button, Card, Dot, Page, PageHeader, IconOpen, IconRefresh, IconWhatsApp, IconDisable, hora, useConfirm } from '../design';
 
 type GroupsSync = { running: boolean; auto: boolean; at: string | null; count: number | null; error: string | null };
-type Connection = { state: string; qr?: string; accountJid?: string; error?: string; groupsSync?: GroupsSync | null };
+type Connection = { state: string; qr?: string; accountJid?: string; error?: string; groupsSync?: GroupsSync | null; ephemeralSession?: boolean };
 const labels: Record<string, string> = { disconnected: 'Desconectado', connecting: 'Conectando…', qr: 'Aguardando leitura do QR Code', connected: 'Conectado', reconnecting: 'Reconectando…', error: 'Conexão interrompida' };
 // Limite suave do botão: o servidor recusa sincronizar de novo antes disso.
 const SYNC_COOLDOWN_MS = 30_000;
@@ -88,20 +88,28 @@ export default function Settings() {
           <img src={connection.qr} width={220} height={220} alt="QR Code para conectar o WhatsApp" className="rounded" />
           <p className="max-w-xs text-sm text-muted">No celular, abra <span className="inline-flex items-center gap-0.5 font-medium text-ink">WhatsApp<IconOpen className="h-3.5 w-3.5" aria-hidden />Aparelhos conectados<IconOpen className="h-3.5 w-3.5" aria-hidden />Conectar um aparelho</span> e leia este código. Os grupos são sincronizados sozinhos logo depois.</p>
         </div>}
-        {(connection?.error || error) && <Alert>{connection?.error || error}</Alert>}
+        {/* Reconectando sozinho é aviso, não erro: o sistema está resolvendo. */}
+        {(connection?.error || error) && <Alert tone={state === 'reconnecting' && !error ? 'warning' : 'danger'}>{connection?.error || error}</Alert>}
+        {connection?.ephemeralSession && <Alert tone="warning">A sessão do WhatsApp está num disco que é apagado a cada atualização do sistema: cada deploy vai pedir o QR de novo. No Railway, adicione um Volume (ex.: /data) — o sistema passa a usá-lo sozinho.</Alert>}
         {connected && sync?.running && <Alert tone="info">Sincronizando os grupos do WhatsApp…</Alert>}
         {connected && !sync?.running && sync?.error && <Alert>Não foi possível sincronizar os grupos: {sync.error}</Alert>}
         {connected && !sync?.running && !sync?.error && sync?.at && <Alert tone="brand">
           {sync.count} {sync.count === 1 ? 'grupo sincronizado' : 'grupos sincronizados'}{sync.auto ? ' automaticamente ao conectar' : ''}, às {hora(sync.at)}.
         </Alert>}
-        <div className="flex flex-wrap gap-2">
-          {!connected && <Button variant="primary" icon={IconWhatsApp} loading={busy && !pairing} disabled={busy || pairing || !connection} onClick={() => action('connect')}>{state === 'error' ? 'Conectar novamente' : 'Conectar'}</Button>}
-          {connected && <Button variant="primary" icon={IconRefresh} loading={syncing} disabled={syncing || cooldown > 0}
-            title={cooldown ? 'Os grupos acabaram de ser sincronizados.' : undefined}
-            onClick={() => action('sync')}>{cooldown ? `Sincronizar de novo em ${Math.ceil(cooldown / 1000)} s` : 'Sincronizar grupos'}</Button>}
-          <Button variant="danger" icon={IconDisable} className="ml-auto" disabled={busy || !connection || state === 'disconnected'} onClick={async () => {
-            if (await confirm({ title: 'Desconectar o WhatsApp?', description: 'Este aparelho sai do seu WhatsApp e as campanhas reais param até você conectar de novo (será preciso ler o QR).', confirmLabel: 'Desconectar', danger: true })) void action('disconnect');
-          }}>Desconectar</Button>
+        {/* Sempre uma linha: ação principal à esquerda, "Desconectar" à direita. Os rótulos têm
+            tamanho fixo (a contagem da espera fica numa legenda embaixo, não no botão) e no
+            celular "Sincronizar grupos" vira "Sincronizar" — cabe inteiro em 360 px. */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            {!connected && <Button variant="primary" icon={IconWhatsApp} loading={busy && !pairing} disabled={busy || pairing || !connection} onClick={() => action('connect')}>{state === 'error' ? 'Conectar de novo' : 'Conectar'}</Button>}
+            {connected && <Button variant="primary" icon={IconRefresh} loading={syncing} disabled={syncing || cooldown > 0}
+              title={cooldown ? `Aguarde ${Math.ceil(cooldown / 1000)} s para sincronizar de novo.` : 'Sincronizar grupos'}
+              onClick={() => action('sync')}>Sincronizar<span className="hidden sm:inline">&nbsp;grupos</span></Button>}
+            <Button variant="danger" icon={IconDisable} className="ml-auto" disabled={busy || !connection || state === 'disconnected'} onClick={async () => {
+              if (await confirm({ title: 'Desconectar o WhatsApp?', description: 'Este aparelho sai do seu WhatsApp e as campanhas reais param até você conectar de novo (será preciso ler o QR).', confirmLabel: 'Desconectar', danger: true })) void action('disconnect');
+            }}>Desconectar</Button>
+          </div>
+          {connected && cooldown > 0 && <p className="tabular text-2xs text-slate-400" aria-live="polite">Sincronizar de novo disponível em {Math.ceil(cooldown / 1000)} s.</p>}
         </div>
       </Card>
       <p className="text-2xs text-muted">As campanhas rodam com o navegador fechado, desde que o sistema fique ligado.</p>

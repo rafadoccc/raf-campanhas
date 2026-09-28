@@ -79,7 +79,7 @@ function RequireAuth() {
   // relative + overflow-hidden: nada escapa da moldura e o documento nunca rola (o menu fica fixo).
   return <div className="relative flex h-dvh flex-col overflow-hidden">
     <Navigation />
-    <div className="scroll-area min-h-0 flex-1">
+    <div className="scroll-area min-h-0 flex-1 overflow-y-auto">
       <Suspense fallback={<Pending />}><Outlet /></Suspense>
     </div>
   </div>;

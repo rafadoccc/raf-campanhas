@@ -129,8 +129,8 @@ export default function CampaignPage() {
 
   return <Page className="lg:overflow-hidden">
     <Link to="/campanhas" className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-ink"><IconBack className="h-3.5 w-3.5" aria-hidden />Campanhas</Link>
-    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-5 lg:grid-rows-[minmax(0,1fr)]">
-      <ScrollArea className="space-y-4 lg:col-span-2">
+    <div className="grid min-w-0 grid-cols-1 min-h-0 flex-1 gap-4 lg:grid-cols-5 lg:grid-rows-[minmax(0,1fr)]">
+      <ScrollArea className="min-w-0 space-y-4 lg:col-span-2">
         <Card>
           <div className="space-y-4 p-4">
             <div className="flex items-start justify-between gap-3">
@@ -173,8 +173,8 @@ export default function CampaignPage() {
         </Card>}
       </ScrollArea>
 
-      <Card className="flex min-h-[20rem] flex-col lg:col-span-3 lg:min-h-0">
-        <CardHeader title="Envios" action={<span className="flex items-center gap-2">
+      <Card className="flex min-h-[20rem] min-w-0 flex-col lg:col-span-3 lg:min-h-0">
+        <CardHeader title="Envios" className="flex-wrap" action={<span className="flex flex-wrap items-center gap-2">
           {canRetry && (p.FAILED ?? 0) > 0 && <Button size="sm" icon={IconRefresh} loading={retrying === '*'} disabled={!!retrying} onClick={retryFailed}>Tentar de novo as falhas</Button>}
           {total > 0 && <span className="tabular text-xs text-muted">{total}</span>}
         </span>} />

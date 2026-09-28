@@ -92,13 +92,13 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
       {loaded && <>
         <Card className="space-y-4 p-4">
           <Field label="Nome"><input defaultValue={initial.name} required maxLength={200} name="name" className={inputClass} placeholder="Ex.: Festival de Inverno" /></Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
               <span className="mb-1 block text-xs font-medium text-muted">Quando enviar</span>
               <Segmented label="Quando enviar" value={mode} onChange={setMode} options={modeOptions} />
               <span className="mt-1 block text-2xs text-slate-400">{mode === 'IMMEDIATE' ? 'Fila única: o 1º grupo recebe assim que você iniciar.' : 'Cada horário inicia uma rodada, todo dia do período.'}</span>
             </div>
-            <Field label="Intervalo entre grupos (min)" hint={`Mínimo de ${MIN_INTERVAL_MINUTES} min entre grupos (evita bloqueio do WhatsApp).`}>
+            <Field className="min-w-0" label="Intervalo entre grupos (min)" hint={`Mínimo de ${MIN_INTERVAL_MINUTES} min entre grupos (evita bloqueio do WhatsApp).`}>
               <input type="number" required min={MIN_INTERVAL_MINUTES} max={60} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} className={inputClass} />
             </Field>
           </div>
@@ -106,9 +106,9 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
             label="Marcar todos os membros (@todos)"
             hint="Cada participante do grupo recebe notificação de menção. O texto da mensagem não muda — a marcação fica oculta, só o aviso aparece." />
           {mode === 'SCHEDULED' && <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="De"><input defaultValue={initial.startsAt} required name="startsAt" type="date" className={inputClass} /></Field>
-              <Field label="Até"><input defaultValue={initial.endsAt} required name="endsAt" type="date" className={inputClass} /></Field>
+            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field className="min-w-0" label="De"><input defaultValue={initial.startsAt} required name="startsAt" type="date" className={inputClass} /></Field>
+              <Field className="min-w-0" label="Até"><input defaultValue={initial.endsAt} required name="endsAt" type="date" className={inputClass} /></Field>
             </div>
             <div>
               <span className="mb-1 block text-xs font-medium text-muted">Horários</span>
@@ -139,8 +139,8 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
             <Button size="sm" variant="ghost" onClick={() => setSelected([])} disabled={!selected.length}>Limpar</Button>
           </div>}
           {/* Duas colunas: mais grupos à vista de uma vez. */}
-          <ScrollArea className="max-h-80 rounded border border-line">
-            <ul className="grid sm:grid-cols-2">{visible.map(group => <li key={group.id} className="border-b border-line sm:odd:border-r">
+          <ScrollArea always className="max-h-80 rounded border border-line">
+            <ul className="grid min-w-0 grid-cols-1 sm:grid-cols-2">{visible.map(group => <li key={group.id} className="min-w-0 border-b border-line sm:odd:border-r">
               <Checkbox className={`w-full px-3 py-2 hover:bg-slate-50 ${selected.includes(group.id) ? 'bg-brand-50/60' : ''}`}
                 checked={selected.includes(group.id)} onChange={() => toggle(group.id)} label={<GroupLabel group={group} />} />
             </li>)}</ul>
@@ -149,7 +149,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
           {blocked > 0 && <Alert>{blocked === 1 ? '1 grupo selecionado só aceita mensagens de admins e você não é admin: ele não vai receber.' : `${blocked} grupos selecionados só aceitam mensagens de admins e você não é admin: eles não vão receber.`}</Alert>}
           {!!selected.length && <div>
             <p className="mb-1.5 text-xs font-medium text-muted">Ordem de envio</p>
-            <ScrollArea className="max-h-72 rounded border border-line">
+            <ScrollArea always className="max-h-72 rounded border border-line">
               <ol className="divide-y divide-line">{selected.map((id, i) => <li key={id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
                 <span className="tabular w-6 shrink-0 text-right text-xs text-slate-400">{i + 1}</span>
                 <span className="min-w-0 flex-1">{byId(id) ? <GroupLabel group={byId(id)!} /> : 'Grupo indisponível'}</span>

@@ -64,8 +64,12 @@ export default function DashboardPage() {
       <Stat icon={IconQueue} label="Na fila" value={metric(d?.pendingNow)} hint="envios aguardando" />
     </Card>
 
-    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
-      <div className="flex min-h-0 flex-col gap-4 lg:col-span-2">
+    {/* grid-cols-1 explícito: sem ele, o CSS Grid usa colunas implícitas que crescem para caber
+        no conteúdo mais largo de QUALQUER item (mesmo o de outra coluna), estourando a tela no
+        celular. min-w-0 em cada item permite encolher abaixo do próprio conteúdo (mesma ideia do
+        min-w-0 em flex, mas o grid não herda isso sozinho). */}
+    <div className="grid min-w-0 grid-cols-1 min-h-0 flex-1 gap-4 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
+      <div className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-2">
         <Card className="flex flex-col p-4">
           <p className="text-xs text-muted">Envios nos últimos 7 dias</p>
           <div className="mt-2 h-24">{d ? <WeekBars days={d.last7Days} /> : <Skeleton className="h-full" />}</div>
@@ -89,7 +93,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <Card className="flex min-h-[16rem] flex-col lg:min-h-0">
+      <Card className="flex min-h-[16rem] min-w-0 flex-col lg:min-h-0">
         <CardHeader title="Atividade recente" />
         <ScrollArea className="flex-1">
           {!d ? <div className="space-y-2 p-4"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>

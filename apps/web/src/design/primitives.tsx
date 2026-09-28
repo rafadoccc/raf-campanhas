@@ -221,7 +221,7 @@ export function Checkbox({ checked, onChange, label, hint, name, disabled, class
         className="peer absolute inset-0 h-4 w-4 cursor-pointer appearance-none rounded-sm border border-line bg-white transition-colors checked:border-brand-600 checked:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-500 disabled:cursor-not-allowed" />
       <IconCheck aria-hidden className="pointer-events-none absolute h-3 w-3 text-white opacity-0 peer-checked:opacity-100" />
     </span>
-    {label && <span className="text-sm leading-4">{label}{hint && <span className="mt-0.5 block text-2xs font-normal text-slate-400">{hint}</span>}</span>}
+    {label && <span className="min-w-0 flex-1 text-sm leading-4">{label}{hint && <span className="mt-0.5 block text-2xs font-normal text-slate-400">{hint}</span>}</span>}
   </label>;
 }
 export function Field({ label, hint, children, className = '' }: { label: string; hint?: string; children: ReactNode; className?: string }) {
@@ -272,9 +272,14 @@ export function Alert({ tone = 'danger', children }: { tone?: 'danger' | 'warnin
   return <div role={tone === 'danger' ? 'alert' : 'status'} className={`rounded border px-3 py-2 text-sm ${style}`}>{children}</div>;
 }
 
-/** Área com rolagem própria e barra invisível. Use dentro de um contêiner com altura definida. */
-export function ScrollArea({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`scroll-area min-h-0 ${className}`}>{children}</div>;
+/**
+ * Área com rolagem própria e barra invisível. Por padrão só rola sozinha a partir do desktop
+ * (lg), onde a tela tem colunas de altura fixa; no celular ela cresce com o conteúdo e quem rola
+ * é a página inteira (lista rolando dentro de página rolando prendia o dedo no celular).
+ * `always`: rola em qualquer tela (listas de altura limitada, ex.: grupos no formulário).
+ */
+export function ScrollArea({ children, className = '', always = false }: { children: ReactNode; className?: string; always?: boolean }) {
+  return <div className={`scroll-area min-h-0 ${always ? 'overflow-y-auto' : 'lg:overflow-y-auto'} ${className}`}>{children}</div>;
 }
 
 /**

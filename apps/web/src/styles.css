@@ -14,7 +14,10 @@
   /* position: relative prende aqui dentro os elementos absolutos (ex.: rótulos sr-only das
      listas). Sem isso eles se posicionavam pelo documento, esticavam a página e o menu do topo
      sumia ao rolar. */
-  .scroll-area { position: relative; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
+  /* Sem overflow aqui: quem rola decide no componente (ScrollArea). E sem overscroll-behavior:
+     contain, que no Chrome do Android prendia o toque dentro de uma lista e impedia a página de
+     voltar para cima. */
+  .scroll-area { position: relative; scrollbar-width: none; -ms-overflow-style: none; }
   .scroll-area::-webkit-scrollbar { display: none; }
   /* Números alinhados nas métricas. */
   .tabular { font-variant-numeric: tabular-nums; }

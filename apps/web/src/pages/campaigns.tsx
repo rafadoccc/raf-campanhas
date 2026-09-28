@@ -32,7 +32,7 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
   const when = campaign.mode === 'IMMEDIATE' ? 'Fila única' : campaign.schedules.map(s => s.time).join(', ');
   const edit = editAction(campaign.status);
   const EditIcon = editIcon[edit.kind];
-  return <li className="flex rounded-lg border border-line bg-white shadow-card">
+  return <li className="flex min-w-0 rounded-lg border border-line bg-white shadow-card">
     <div className="flex min-w-0 flex-1 flex-col p-4">
       <div className="flex items-start gap-3">
         {campaign.media?.kind === 'image'
@@ -88,7 +88,7 @@ export default function CampaignsPage() {
     finally { setBusy(null); }
   }
 
-  return <Page className="overflow-hidden">
+  return <Page className="lg:overflow-hidden">
     <PageHeader title="Campanhas" action={<ButtonLink to="/nova-campanha" variant="primary" icon={IconAdd}>Nova campanha</ButtonLink>} />
     <div className="flex flex-wrap items-center gap-2">
       <Segmented label="Filtrar campanhas" value={filter} onChange={setFilter} options={filters} />
@@ -100,11 +100,11 @@ export default function CampaignsPage() {
     {actionError && <Alert>{actionError}</Alert>}
     {list.error && !list.items && <Alert tone="warning">Não foi possível carregar as campanhas. Confira se o sistema está ligado.</Alert>}
     <ScrollArea className="-mx-1 flex-1 px-1 pb-4">
-      {!list.items ? <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }, (_, i) => <li key={i}><Skeleton className="h-40" /></li>)}</ul>
+      {!list.items ? <ul className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }, (_, i) => <li key={i}><Skeleton className="h-40" /></li>)}</ul>
         : list.items.length === 0 ? <EmptyState icon={IconCampaigns} title={query || filter ? 'Nenhuma campanha com esse filtro.' : 'Nenhuma campanha ainda.'}
           hint={query || filter ? 'Troque o filtro ou a busca.' : 'Crie a primeira em Nova campanha, no alto da tela.'} />
         : <>
-          <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{list.items.map(campaign => <CampaignCard key={campaign.id} campaign={campaign} busy={busy === campaign.id}
+          <ul className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{list.items.map(campaign => <CampaignCard key={campaign.id} campaign={campaign} busy={busy === campaign.id}
             onEdit={() => run(campaign, async () => { const id = await editCampaign(campaign, confirm); if (id) navigate(`/campanhas/${id}/editar`); })}
             onDelete={() => run(campaign, async () => { if (await deleteCampaign(campaign, confirm)) list.remove(campaign.id); })} />)}</ul>
           <LoadMoreSentinel active={list.hasMore} onVisible={() => void list.loadMore()} />

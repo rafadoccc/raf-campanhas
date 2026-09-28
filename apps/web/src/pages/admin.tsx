@@ -80,7 +80,7 @@ function Activity({ overview: o }: { overview: Overview | null }) {
     <span className="flex items-center gap-1"><span aria-hidden className="h-2 w-2 rounded-sm bg-brand-600" />Enviados</span>
     <span className="flex items-center gap-1"><span aria-hidden className="h-2 w-2 rounded-sm bg-red-400" />Falhas</span>
   </span>;
-  return <Card className="flex flex-col lg:col-span-2">
+  return <Card className="flex min-w-0 flex-col lg:col-span-2">
     <CardHeader title={<span className="flex items-center gap-1.5"><IconActivity className="h-4 w-4 text-muted" aria-hidden />Envios nos últimos 7 dias</span>} action={legend} />
     <div className="h-36 p-4">{o ? <WeekBars days={o.last7Days} /> : <Skeleton className="h-full" />}</div>
     <div className="mt-auto border-t border-line px-4 py-3">
@@ -103,7 +103,7 @@ function HealthRow({ icon: Icon, label, children, detail }: { icon: typeof IconS
 }
 
 function Health({ overview: o }: { overview: Overview | null }) {
-  return <Card>
+  return <Card className="min-w-0">
     <CardHeader title={<span className="flex items-center gap-1.5"><IconServer className="h-4 w-4 text-muted" aria-hidden />Saúde do sistema</span>} />
     {!o ? <div className="space-y-2 p-4"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
       : <ul className="divide-y divide-line">
@@ -138,7 +138,7 @@ function CreateUser({ onCreated, onClose }: { onCreated: (email: string) => void
   return <form onSubmit={submit} className="border-b border-line bg-slate-50 px-4 py-4">
     <p className="text-sm font-semibold">Nova conta</p>
     <p className="mt-0.5 text-xs text-muted">A pessoa entra com este e-mail e esta senha inicial, e pode trocar a senha em Minha conta.</p>
-    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Field label="Nome"><input name="name" required maxLength={120} autoFocus className={inputClass} /></Field>
       <Field label="E-mail"><input name="email" type="email" required autoComplete="off" className={inputClass} /></Field>
       <Field label="Senha inicial" hint="Pelo menos 10 caracteres."><PasswordInput name="password" required minLength={10} autoComplete="new-password" /></Field>
@@ -225,7 +225,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
         <p className="tabular mt-0.5 text-muted">{wa.accountJid ? `+${wa.accountJid.split('@')[0].split(':')[0]}` : 'sem número'}</p>
         {wa.lastError && <p className="truncate text-2xs text-red-700" title={wa.lastError}>{wa.lastError}</p>}
       </div>
-      <dl className="tabular grid grid-cols-4 gap-2 text-xs">
+      <dl className="tabular grid min-w-0 grid-cols-4 gap-2 text-xs">
         {counts.map(([label, value, hint]) => <div key={label} title={hint || undefined}>
           <dt className="text-2xs text-muted lg:sr-only">{label}</dt>
           <dd className={`font-semibold ${label === 'Falhas' && value ? 'text-red-700' : ''}`}>{numero(value)}{hint && <span className="block text-2xs font-normal text-slate-400">{hint}</span>}</dd>
@@ -255,7 +255,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
 }
 
 // Mesma grade no cabeçalho da lista e em cada linha: as colunas ficam alinhadas.
-const rowGrid = 'grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_20rem_11rem]';
+const rowGrid = 'grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_20rem_11rem]';
 
 function Accounts({ users, meId, onChanged }: { users: AdminUser[] | null; meId?: string; onChanged: () => void }) {
   const [creating, setCreating] = useState(false);
@@ -309,7 +309,7 @@ export default function AdminPage() {
     <PageHeader title="Administração" subtitle="Números do sistema inteiro e gestão de contas. O conteúdo das campanhas de cada conta nunca aparece aqui." />
     {error && !data && <Alert tone="warning">Não foi possível carregar o painel. Tentando de novo…</Alert>}
     <Summary overview={overview} />
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
       <Activity overview={overview} />
       <Health overview={overview} />
     </div>
