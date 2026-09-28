@@ -3,7 +3,7 @@ import { buildApp } from './app';
 import { bootstrapAdmin } from './auth';
 import { loadConfig } from './config';
 import { startDispatcher } from './dispatcher';
-import { WhatsAppProvider } from './whatsapp';
+import { WhatsAppProvider, defaultSessionsDir, sessionsPersistent } from './whatsapp';
 import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
 import { createSendingRouter } from './sending-router';
 import { legacySessionOwnerId } from './legacy-session';
@@ -43,20 +43,30 @@ async function main() {
     await prisma.$disconnect();
   }
 
-  process.on('SIGINT', () => { void shutdown(); });
-  process.on('SIGTERM', () => { void shutdown(); });
+  // Encerramento limpo em todos os jeitos de fechar: Ctrl+C (SIGINT), serviço/hospedagem (SIGTERM),
+  // fechar a janela no Windows (SIGHUP) e Ctrl+Break (SIGBREAK). Ele termina de gravar a sessão
+  // do WhatsApp antes de sair; sair no meio de uma gravação corrompia a credencial (ADR-036).
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
+    process.on(signal, () => {
+      // Se algo travar, sai mesmo assim. Fechar a janela no Windows dá só ~5 s antes de o sistema
+      // matar o processo; nos outros casos, espera o envio em andamento (o despachante dá até 30 s).
+      setTimeout(() => process.exit(0), signal === 'SIGHUP' ? 4_500 : 35_000).unref();
+      void shutdown().finally(() => process.exit(0));
+    });
+  }
   await app.listen({ port: config.port, host: config.host });
   // Num servidor que reinicia a cada deploy, esperar alguém clicar em Conectar pararia as
   // campanhas. Uma sessão já pareada é retomada sozinha; nunca gera QR sem pedido.
   if (process.env.WHATSAPP_AUTO_CONNECT !== '0' && await provider.hasPairedSession()) {
     console.log('Sessão do WhatsApp já pareada encontrada: reconectando.');
-    void provider.connect();
+    void provider.connect({ interactive: false });
   }
   // Reconecta as conexões por usuário já pareadas (nenhuma existe até alguém parear pelo painel).
   const reconnected = await manager.startAll();
   for (const item of reconnected.filter(r => r.outcome === 'falhou')) console.warn('[WhatsApp] Reconexão falhou para', item.userId, item.error);
   // Imagens antigas ganham cor e miniatura em segundo plano (ADR-026); não atrasa a partida.
   void backfillMediaPreviews().catch(() => undefined);
+  if (!sessionsPersistent()) console.warn('[WhatsApp] ATENÇÃO: as sessões estão em', defaultSessionsDir(), 'que é apagado a cada deploy. Adicione um Volume no Railway (ex.: /data): o sistema passa a usá-lo sozinho e o WhatsApp não pede QR a cada atualização.');
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);
 }

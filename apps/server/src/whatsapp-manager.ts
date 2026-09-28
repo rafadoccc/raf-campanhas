@@ -232,7 +232,8 @@ export class WhatsAppManager {
       try {
         const provider = this.for(userId);
         if (!await provider.hasPairedSession()) return { userId, outcome: 'sem-sessao' };
-        await provider.connect();
+        // Partida: ninguém está olhando a tela. Se o WhatsApp pedir QR, a conexão para com o motivo.
+        await provider.connect({ interactive: false });
         await this.persistState(userId);
         return { userId, outcome: 'conectando' };
       } catch (error) {

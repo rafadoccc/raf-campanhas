@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
-import { closeAction, CODE, MAX_RETRIES } from './connection-policy';
+import { closeAction, CODE, MAX_RETRY_DELAY_MS, retryDelay } from './connection-policy';
 
 const refresh = (childTag: string) => ({ tag: 'notification', attrs: { id: '1', type: 'companion_reg_refresh' }, content: [{ tag: childTag, attrs: {} }] });
 
@@ -46,20 +46,24 @@ test('expired QR stops with a clear message instead of looping', () => {
   assert.match(action.kind === 'stop' ? action.error : '', /QR Code expirou/);
 });
 
-test('logged out or corrupted sessions are cleared so the next connect shows a fresh QR', () => {
-  for (const code of [CODE.loggedOut, CODE.badSession, CODE.multideviceMismatch]) {
+test('only a real logout (401) deletes the session; server hiccups (500) never do', () => {
+  const logout = closeAction(CODE.loggedOut, '', 0);
+  assert.equal(logout.kind === 'stop' && logout.clearSession, true, 'aparelho removido no celular: sessão inútil');
+  // 500 é o código genérico do Baileys para erro de fluxo sem código: instabilidade passageira.
+  assert.deepEqual(closeAction(CODE.badSession, 'Stream Errored (unknown)', 0), { kind: 'reconnect', delayMs: 1000, countsAsRetry: true });
+  for (const code of [CODE.multideviceMismatch, CODE.connectionReplaced, CODE.forbidden]) {
     const action = closeAction(code, '', 0);
-    assert.equal(action.kind === 'stop' && action.clearSession, true, `código ${code}`);
+    assert.equal(action.kind === 'stop' && action.clearSession, false, `código ${code} não apaga a sessão`);
   }
-  const replaced = closeAction(CODE.connectionReplaced, '', 0);
-  assert.equal(replaced.kind === 'stop' && replaced.clearSession, false, 'sessão aberta em outra janela não é apagada');
 });
 
-test('network drops back off exponentially and give up after the retry budget', () => {
+test('network drops back off exponentially and never give up; at most one attempt per minute', () => {
   assert.deepEqual(closeAction(CODE.connectionClosed, 'Connection Closed', 0), { kind: 'reconnect', delayMs: 1000, countsAsRetry: true });
   assert.deepEqual(closeAction(CODE.timedOut, 'Connection was lost', 3), { kind: 'reconnect', delayMs: 8000, countsAsRetry: true });
-  assert.deepEqual(closeAction(undefined, undefined, 5), { kind: 'reconnect', delayMs: 30000, countsAsRetry: true });
-  const done = closeAction(CODE.connectionClosed, '', MAX_RETRIES);
-  assert.equal(done.kind, 'stop');
-  assert.match(done.kind === 'stop' ? done.error : '', /internet/);
+  assert.deepEqual(closeAction(undefined, undefined, 5), { kind: 'reconnect', delayMs: 32000, countsAsRetry: true });
+  for (const retries of [6, 20, 500]) {
+    const later = closeAction(CODE.connectionClosed, '', retries);
+    assert.deepEqual(later, { kind: 'reconnect', delayMs: MAX_RETRY_DELAY_MS, countsAsRetry: true }, `tentativa ${retries}`);
+  }
+  assert.equal(retryDelay(1000), MAX_RETRY_DELAY_MS);
 });

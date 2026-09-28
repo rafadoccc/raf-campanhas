@@ -5,7 +5,8 @@ import { prisma, persistRead, flushPendingReads, applyServerEvent, type ServerEv
 import { describeGroupForSend, mentionTargets, notSent } from './send-context';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
-import { closeAction } from './connection-policy';
+import { closeAction, retryDelay } from './connection-policy';
+import { useDurableAuthState } from './auth-state';
 import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
 
 // Nome exibido de um grupo sincronizado: assunto sem espaços extras, limitado à coluna
@@ -36,8 +37,24 @@ export async function sharedProtocolVersion(fetchVersion: () => Promise<{ versio
 /** Esquece a versão em cache (ex.: depois de um logout). */
 export const forgetProtocolVersion = () => { protocolVersion = undefined; };
 
+const onRailway = () => Boolean(process.env.RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+
+/**
+ * A sessão sobrevive a um novo deploy? No Railway, só num Volume: o disco do contêiner é
+ * apagado a cada deploy, e cada deploy pedia QR de novo (ADR-036).
+ */
+export function sessionsPersistent() {
+  if (!onRailway()) return true;
+  const mount = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  if (!mount) return false;
+  const inside = path.relative(path.resolve(mount), defaultSessionsDir());
+  return !inside.startsWith('..') && !path.isAbsolute(inside);
+}
+
 export function defaultSessionsDir() {
   if (process.env.SESSIONS_DIR) return path.resolve(process.env.SESSIONS_DIR);
+  // Railway com Volume e sem SESSIONS_DIR: guarda no Volume, que sobrevive aos deploys.
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return path.join(path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH), 'sessions');
   if (process.platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA ?? path.join(homedir(), 'AppData', 'Local');
     return path.join(localAppData, 'raf-campanhas', 'sessions');
@@ -58,6 +75,7 @@ export class WhatsAppProvider {
   private retries = 0;
   private wanted = false;
   private starting = false;
+  private interactive = false;
   private version?: WAVersion;
   private receiptWrites = new Set<Promise<void>>();
   private credsSaving: Promise<void> = Promise.resolve();
@@ -96,16 +114,25 @@ export class WhatsAppProvider {
   /** Pasta de sessão desta conexão (só leitura; cada provider tem a sua). */
   get sessionDir() { return this.authDir; }
   status() { return { ...this.data }; }
-  /** Há uma sessão já pareada salva? Reconectar com ela não exige ler QR. */
+  /** Há uma sessão já pareada salva (ou a cópia de segurança dela)? Reconectar não exige QR. */
   async hasPairedSession() {
-    try {
-      const creds = JSON.parse(await readFile(path.join(this.authDir, 'creds.json'), 'utf8')) as { me?: { id?: string } };
-      return Boolean(creds.me?.id);
-    } catch { return false; }
+    for (const file of ['creds.json', 'creds.json.bak']) {
+      try {
+        const creds = JSON.parse(await readFile(path.join(this.authDir, file), 'utf8')) as { me?: { id?: string } };
+        if (creds.me?.id) return true;
+      } catch { /* ausente ou ilegível: tenta a cópia */ }
+    }
+    return false;
   }
-  async connect() {
+  /**
+   * interactive: alguém clicou em Conectar e está olhando a tela — pode aparecer QR. Sem isso
+   * (partida do sistema, reconexão depois de uma queda), um QR quer dizer que o WhatsApp não
+   * reconhece mais o aparelho: a conexão para com o motivo, em vez de gerar QR para ninguém.
+   */
+  async connect(options: { interactive?: boolean } = {}) {
     if (this.starting || ['connected', 'connecting', 'qr', 'reconnecting'].includes(this.data.state)) return this.status();
     this.wanted = true; this.retries = 0;
+    this.interactive = options.interactive ?? true;
     await this.open();
     return this.status();
   }
@@ -114,15 +141,21 @@ export class WhatsAppProvider {
     const generation = ++this.generation;
     this.data = { state: 'connecting' };
     try {
-      const { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser, fetchLatestWaWebVersion, proto } = await import('@whiskeysockets/baileys');
+      const baileys = await import('@whiskeysockets/baileys');
+      const { default: makeWASocket, jidNormalizedUser, fetchLatestWaWebVersion, proto, makeCacheableSignalKeyStore } = baileys;
       const { default: pino } = await import('pino');
       // Keep the verified version across reconnects; never silently downgrade.
       this.version ??= await sharedProtocolVersion(() => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }));
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
-      const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+      // Gravação atômica, com cópia de segurança da credencial (auth-state.ts, ADR-036).
+      const { state, saveCreds } = await useDurableAuthState(this.authDir, baileys);
       if (!this.wanted || generation !== this.generation) return;
+      const paired = Boolean(state.creds.me?.id);
+      const logger = pino({ level: 'silent' });
       const sock = makeWASocket({
-        version: this.version, auth: state, logger: pino({ level: 'silent' }), syncFullHistory: false, markOnlineOnConnect: false,
+        version: this.version, logger, syncFullHistory: false, markOnlineOnConnect: false,
+        // Chaves em memória na frente dos arquivos (recomendação do Baileys): menos leitura de disco.
+        auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         // O sistema não lê conversas: não processa o histórico que o WhatsApp manda ao conectar
         // (economiza memória e CPU numa VPS pequena, sobretudo em contas com muitos grupos).
         shouldSyncHistoryMessage: () => false,
@@ -141,6 +174,16 @@ export class WhatsAppProvider {
       const persistCreds = () => { this.credsSaving = this.credsSaving.then(() => saveCreds()).catch(() => { this.data.error = 'Não foi possível salvar a sessão.'; }); };
       let lastQr: string | undefined;
       const showQr = async (raw: string) => {
+        if (!this.interactive) {
+          // Sessão pareada, ninguém pediu QR: o WhatsApp não reconhece mais este aparelho.
+          console.warn('[WhatsApp] O WhatsApp pediu novo pareamento numa reconexão automática; conexão parada.');
+          this.wanted = false; ++this.generation; clearTimeout(this.timer);
+          this.socket = undefined; sock.end(undefined);
+          this.data = { state: 'error', error: paired
+            ? 'O WhatsApp não reconhece mais este aparelho (ele foi removido no celular ou a sessão foi encerrada pelo WhatsApp). Clique em Conectar e leia o QR Code.'
+            : 'Não há sessão salva deste WhatsApp. Clique em Conectar e leia o QR Code.' };
+          return;
+        }
         lastQr = raw;
         const qr = await QRCode.toDataURL(withAdvSecret(raw, state.creds.advSecretKey), { width: 300, margin: 2 });
         if (generation === this.generation && this.data.state !== 'connected') this.data = { state: 'qr', qr };
@@ -192,6 +235,7 @@ export class WhatsAppProvider {
           if (update.qr) await showQr(update.qr);
           if (update.connection === 'open') {
             this.retries = 0;
+            this.interactive = false; // conectado: dali em diante, reconexões são automáticas
             this.data = { state: 'connected', accountJid: jidNormalizedUser(sock.user?.id) };
           }
           if (update.connection === 'close') {
@@ -202,14 +246,15 @@ export class WhatsAppProvider {
             const action = closeAction(code, error?.message, this.retries);
             if (action.kind === 'stop' || !this.wanted) {
               this.wanted = false;
-              if (action.kind === 'stop' && action.clearSession) await rm(this.authDir, { recursive: true, force: true }).catch(() => {});
+              if (action.kind === 'stop' && action.clearSession) {
+                // Espera a última gravação terminar: senão ela recriaria arquivos na pasta apagada.
+                await this.credsSaving.catch(() => undefined);
+                await rm(this.authDir, { recursive: true, force: true }).catch(() => {});
+              }
               this.data = action.kind === 'stop' ? { state: 'error', error: action.error } : { state: 'disconnected' };
               return;
             }
-            if (action.countsAsRetry) this.retries++;
-            this.data = { state: 'reconnecting' };
-            await this.credsSaving;
-            this.timer = setTimeout(() => { void this.open(); }, action.delayMs);
+            this.scheduleReconnect(action.delayMs, action.countsAsRetry);
           }
         })().catch(error => {
           console.error('[WhatsApp] Falha ao tratar evento de conexão:', error instanceof Error ? error.message : error);
@@ -217,10 +262,25 @@ export class WhatsAppProvider {
         });
       });
     } catch (error) {
-      // O motivo real vai para o log do servidor; a tela recebe uma mensagem acionável.
+      // O motivo real vai para o log do servidor. Sem internet na partida (ou o WhatsApp Web fora
+      // do ar), a conexão tenta de novo sozinha, espaçando, em vez de parar esperando um clique.
       console.error('[WhatsApp] Falha ao iniciar a conexão:', error instanceof Error ? error.message : error);
-      this.data = { state: 'error', error: this.version ? 'Falha ao iniciar a conexão com o WhatsApp. Confira a internet deste computador e clique em Conectar.' : 'Não foi possível consultar a versão atual do WhatsApp Web. Confira a internet e clique em Conectar.' };
+      if (this.wanted && generation === this.generation) this.scheduleReconnect(retryDelay(this.retries), true);
+      else this.data = { state: 'error', error: 'Falha ao iniciar a conexão com o WhatsApp. Confira a internet e clique em Conectar.' };
     } finally { this.starting = false; }
+  }
+  /** Tenta de novo depois de `delayMs`. Depois de algumas tentativas, a tela explica a espera. */
+  private scheduleReconnect(delayMs: number, countsAsRetry: boolean) {
+    if (countsAsRetry) this.retries++;
+    const waiting = this.retries >= 4
+      ? `Sem conexão com o WhatsApp. Tentando de novo sozinho (tentativa ${this.retries}, a próxima em ${Math.round(delayMs / 1000)} s). Confira a internet deste computador.`
+      : undefined;
+    this.data = waiting ? { state: 'reconnecting', error: waiting } : { state: 'reconnecting' };
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      // Espera a credencial terminar de gravar antes de reabrir (importante logo após parear).
+      void this.credsSaving.catch(() => undefined).then(() => { if (this.wanted) void this.open(); });
+    }, delayMs);
   }
   async disconnect() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer);
@@ -336,6 +396,8 @@ export class WhatsAppProvider {
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);
+    // Termina de gravar a credencial antes de sair: encerrar no meio corrompia o creds.json.
+    await this.credsSaving.catch(() => undefined);
     // Encerrada sem logout: a autenticação fica, mas a conexão não está mais de pé.
     this.socket = undefined;
     this.data = { state: 'disconnected' };

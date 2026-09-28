@@ -5,7 +5,7 @@ import { forecastQueue } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
 import { registerMediaRoutes } from './media';
-import type { WhatsAppProvider } from './whatsapp';
+import { sessionsPersistent, type WhatsAppProvider } from './whatsapp';
 import { loadConfig, type AppConfig } from './config';
 import { registerAuth } from './auth';
 import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
@@ -50,7 +50,7 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
         // Junto do estado, a última sincronização de grupos (a automática, feita ao conectar).
         if (path === 'status') {
           const groupsSync = legacy ? null : manager.syncInfo(owner.id);
-          return { ...connection.status(), ...(groupsSync ? { groupsSync } : {}) };
+          return { ...connection.status(), ...(groupsSync ? { groupsSync } : {}), ...(sessionsPersistent() ? {} : { ephemeralSession: true }) };
         }
         if (path === 'connect') {
           const status = await connection.connect();
