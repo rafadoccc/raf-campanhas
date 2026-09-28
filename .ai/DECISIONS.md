@@ -976,3 +976,17 @@ Fora do nosso controle (limites do WhatsApp): o celular sem internet por ~14 dia
 aparelhos vinculados; há um limite de 4 aparelhos vinculados por número; remover o aparelho no
 celular sempre exige ler o QR de novo. Dois processos com a MESMA pasta de sessão derrubam um ao
 outro (440). A posse do despachante já impede um segundo processo no mesmo banco de conectar.
+
+**Complemento (2026-09-28, mesma ADR):** uma sessão paralela (branch
+`claude/compassionate-hawking-lkw3ee`, não mesclada) atacou o mesmo problema. Dela vieram, por
+cima desta implementação:
+- `start-local.cjs` e `scripts/launcher.mjs` matavam o servidor na hora no Ctrl+C. No Windows isso
+  é encerramento forçado no meio da gravação da sessão, e era mais uma causa do QR. Agora esperam o
+  servidor sair sozinho e só forçam depois de 40 s. SIGTERM de gerenciador de serviço é repassado.
+- `session-lock.ts`: uma pasta de sessão, um processo (`<pasta>.lock` com pid, máquina e um
+  sinal de vida por minuto). Um segundo sistema com a mesma pasta, como produção e dev sem
+  `SESSIONS_DIR` próprio, não abre uma segunda conexão com as mesmas credenciais: fica tentando a
+  cada 30 s, com aviso na tela. A trava de um processo morto cai na hora nesta máquina; em outra
+  máquina, em 3 min.
+- Correção de um teste instável: o `attempts` sobe já na reserva.
+O resto daquela branch duplica esta ADR (armazenamento atômico, regras de queda) e ficou de fora.

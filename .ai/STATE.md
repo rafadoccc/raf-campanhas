@@ -30,6 +30,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5c | Troca de tela instantânea, limites contra abuso, VPS pequena, ffmpeg seguro | ✅ concluída (ADR-034) |
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
+| 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---
@@ -118,6 +119,9 @@ verificações de senha, uploads simultâneos.
 - Design system: `Select` e `Checkbox` próprios (sem visual nativo do sistema operacional,
   `docs/design-system.md`), bordas decorativas removidas (faixa/borda colorida do cartão,
   barra do topo do detalhe), logo "CC" removida do topo e do login.
+- T-123: responsivo conferido em 320/360/768/1440 px. `ScrollArea` só rola sozinha no desktop
+  (no Android a página não voltava para cima) e as grades têm `grid-cols-1`. Os botões do
+  WhatsApp ficam numa linha no celular.
 - T-124 (ADR-036): sessão do WhatsApp gravada de forma atômica, com cópia de segurança da
   credencial (`auth-state.ts`). Reconexão sem desistir (no máximo 1 tentativa por minuto). Só o
   401 apaga a sessão. Sem QR em reconexão automática. Encerramento limpo ao fechar a janela.

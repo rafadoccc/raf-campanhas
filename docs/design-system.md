@@ -22,7 +22,7 @@ fica só para o ponto de status (`Dot`). Uma ação primária por área; o resto
 | `Segmented` | Opções exclusivas lado a lado (`aria-pressed`), ex.: Todas / Ativas / Desativadas. Use no lugar do `Select` quando são 2 a 4 opções curtas (ex.: "Quando enviar" na campanha). |
 | `Alert` | Aviso inline (`tone`: `danger`/`warning`/`info`/`brand`). |
 | `EmptyState` / `Skeleton` | Lista vazia (frase + `hint` curto do que fazer) e carregamento. Não repita no vazio um botão que já existe no cabeçalho da tela: diga onde ele está no `hint`. |
-| `ScrollArea` | `overflow-y: auto` com barra invisível (`.scroll-area` em `styles.css`); a rolagem por roda/toque/teclado continua funcionando. Use dentro de um contêiner de altura definida — é assim que cada tela rola por partes em vez do documento inteiro (`Page` ocupa `h-full`, sem rolagem própria). |
+| `ScrollArea` | Rolagem com barra invisível (`.scroll-area` em `styles.css`). **Só rola sozinha a partir do desktop (lg)**; no celular cresce com o conteúdo e quem rola é a página. Lista rolando dentro de página rolando prendia o dedo no Chrome do Android: a página não voltava para cima. `always` = rola em qualquer tela, só para listas de altura limitada (ex.: grupos no formulário). Nunca use `overscroll-behavior: contain`. A rolagem por roda/toque/teclado continua funcionando. Use dentro de um contêiner de altura definida — é assim que cada tela rola por partes em vez do documento inteiro (`Page` ocupa `h-full`, sem rolagem própria). |
 | `Stat` | Número grande com rótulo e ícone, usado nas faixas de métricas (Início, Administração). |
 | `PageHeader` / `Page` | Cabeçalho e moldura da página. `Page` sem opção: altura da tela no desktop, listas rolando por dentro (Início, Campanhas, detalhe). `<Page scroll>`: a página cresce e rola inteira (telas de seções empilhadas, como Administração). No celular toda página rola inteira. Grades com colunas que rolam por dentro precisam de `lg:grid-rows-[minmax(0,1fr)]`, senão a coluna cresce e a parte de baixo é cortada. |
 
@@ -82,6 +82,18 @@ progresso já não dessem) e ficaram de fora deliberadamente — visual limpo, d
 funcional. Ao adicionar uma tela nova, **não** reintroduza esse tipo de elemento; se a cor da
 mídia precisar aparecer, use a miniatura ou a barra de progresso, do jeito que `campaigns.tsx`
 e `campaign-detail.tsx` já fazem.
+
+## Responsivo (T-123)
+
+Conferido em 320, 360, 768 e 1440 px: nada estoura para os lados e só a página rola no celular.
+
+- **Grade:** sempre `grid-cols-1` como base (ex.: `grid grid-cols-1 lg:grid-cols-3`). Sem ela, a
+  coluna implícita do CSS Grid cresce até o conteúdo mais largo e a tela estoura no celular. Item de
+  grade ou flex que contém texto longo leva `min-w-0`.
+- **Tabela:** dentro de `overflow-x-auto`, com as colunas secundárias escondidas no celular
+  (`hidden md:table-cell`).
+- **Botões lado a lado:** rótulo de tamanho fixo (contagem de espera vai numa legenda, não no
+  botão) e versão curta no celular (`Sincronizar<span className="hidden sm:inline"> grupos</span>`).
 
 ## Utilitários de interação
 

@@ -144,7 +144,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
 [x] T-121  Desempenho, limites contra abuso, VPS pequena (ADR-034)      owner: —        since: —
 [x] T-122  Sync automático, 2 min, previsão sem falso "Atrasado", UI     owner: —        since: —
-[~] T-123  Painel 100% responsivo (celular, tablet, desktop)            owner: codex    since: 2026-09-28T04:40Z
+[x] T-123  Painel 100% responsivo (celular, tablet, desktop)            owner: —        since: —
 [x] T-124  Sessão do WhatsApp persistente e resistente a quedas         owner: —        since: —
 ```
 

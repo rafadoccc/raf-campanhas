@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-28T05:30Z · claude
+
+**Fiz:** assumi e fechei a T-123. O dono encerrou a conversa paralela e me passou o trabalho que
+ficou na dev.
+- Validei as mudanças de tela que o outro agente deixou (`grid-cols-1`/`min-w-0` em todas as
+  grades, tabela do histórico com rolagem lateral própria).
+- Refiz os botões do WhatsApp: ele os tinha posto em duas linhas no celular, o contrário do pedido.
+- Da branch paralela `claude/compassionate-hawking-lkw3ee` trouxe só três coisas (complemento da
+  ADR-036):
+  - trava da pasta de sessão;
+  - `start-local` e inicializador sem matar o servidor no meio da gravação;
+  - correção de um teste instável.
+
+**Arquivos:** apps/web/src/* (painel responsivo), apps/server/src/{session-lock,whatsapp,auth-state.test,integration.test}.ts, scripts/{launcher.mjs,start-local.cjs}, docs/design-system.md, .ai/*
+**Tarefas:** T-123 (concluída), T-124 (complemento).
+**Estado:** compila · lint ok · unitários 73/73 · integração 116/116. Auditoria automática em 320,
+360, 768 e 1440 px nas 9 telas: nenhum estouro lateral, e só a página rola no celular.
+**Armadilhas:**
+- A branch remota `claude/compassionate-hawking-lkw3ee` ficou obsoleta, porque o útil já está na
+  main. Ela não foi apagada: apague só se o dono pedir.
+- `ScrollArea` sem `always` não rola no celular, de propósito.
+**Próximo passo sugerido:** T-119 (@todos oficial).
+
+---
+
 ## 2026-09-28T04:50Z · claude
 
 **Fiz:** T-124 (ADR-036), a sessão do WhatsApp que voltava pedindo QR depois de
