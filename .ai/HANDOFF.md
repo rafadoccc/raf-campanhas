@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-09-28T06:10Z · claude
+
+**Fiz:** corrigi a tela que continuava mostrando "Nova campanha" e a lista de grupos depois de o
+usuário sair. A API já respondia 401 (nenhum dado vazava): o painel é que só descobria o fim da
+sessão quando fazia um pedido, e o formulário aberto não faz nenhum.
+- `lib/auth.tsx` agora confere `/auth/me`:
+  - ao voltar para a aba (visibilitychange e focus);
+  - ao restaurar a página pelo Voltar (pageshow);
+  - a cada 60 s com a aba visível.
+- Sair, ou entrar, numa aba avisa as outras do mesmo navegador (BroadcastChannel).
+- Só um 401 tira do painel; sem rede a tela continua como está. Mesma conta: o estado não muda,
+  então a tela não é redesenhada.
+
+**Arquivos:** apps/web/src/lib/auth.tsx
+**Estado:** compila · lint ok · unitários 73/73. Reproduzido e conferido no navegador: sessão
+encerrada com o formulário aberto vai para o login ao voltar para a aba, e Sair numa aba fecha a outra.
+**Armadilhas:** a dev tem mudanças **não commitadas de outro agente** (animações: tailwind.config.ts,
+styles.css, primitives.tsx, confirm.tsx e páginas) e edições dele em DECISIONS/TASKS. Não são minhas e
+ficaram fora do commit.
+**Próximo passo sugerido:** quem terminar as animações valida e commita.
+
+---
+
 ## 2026-09-28T05:30Z · claude
 
 **Fiz:** assumi e fechei a T-123. O dono encerrou a conversa paralela e me passou o trabalho que
