@@ -147,7 +147,13 @@ export type MenuItem = { label: string; icon?: Icon; onSelect: () => void; dange
  * Menu de ações ("⋯"): agrupa as ações secundárias de uma linha para ela não virar uma fileira
  * de botões. Mesmo comportamento do `Select`: setas, Home/End, Enter/Espaço, Esc, clique fora.
  */
-export function Menu({ items, label, disabled }: { items: MenuItem[]; label: string; disabled?: boolean }) {
+export function Menu({ items, label, disabled, trigger, triggerClassName, header }: {
+  items: MenuItem[]; label: string; disabled?: boolean;
+  /** Conteúdo do botão no lugar do "⋯" (ex.: ícone e nome do usuário no menu do topo). */
+  trigger?: ReactNode; triggerClassName?: string;
+  /** Linha de contexto no alto da lista (ex.: nome e e-mail de quem está logado). */
+  header?: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -178,9 +184,12 @@ export function Menu({ items, label, disabled }: { items: MenuItem[]; label: str
   }
 
   return <div ref={root} className="relative">
-    <IconButton icon={IconMore} label={label} variant="secondary" disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} />
+    {trigger
+      ? <button type="button" aria-label={label} title={label} disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} className={triggerClassName}>{trigger}</button>
+      : <IconButton icon={IconMore} label={label} variant="secondary" disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} />}
     {open && <ul ref={list} role="menu" tabIndex={-1} aria-label={label} onKeyDown={onKeyDown}
-      className="absolute right-0 z-20 mt-1 min-w-[13rem] rounded border border-line bg-white py-1 text-sm shadow-pop focus:outline-none">
+      className="absolute right-0 z-30 mt-1 min-w-[13rem] rounded border border-line bg-white py-1 text-sm shadow-pop focus:outline-none">
+      {header && <li role="presentation" className="mb-1 border-b border-line px-3 pb-2 pt-1">{header}</li>}
       {items.map((item, index) => {
         const ItemIcon = item.icon;
         return <li key={item.label} role="menuitem" aria-disabled={item.disabled || undefined}
@@ -242,10 +251,14 @@ export function Stat({ label, value, hint, icon: IconCmp, tone = 'text-ink' }: {
   </div>;
 }
 
-export function EmptyState({ title, action, icon: IconCmp = IconEmpty }: { title: string; action?: ReactNode; icon?: Icon }) {
+/** Lista vazia: ícone, frase e, se preciso, uma dica curta do que fazer (sem repetir botão que já existe na tela). */
+export function EmptyState({ title, hint, action, icon: IconCmp = IconEmpty }: { title: string; hint?: ReactNode; action?: ReactNode; icon?: Icon }) {
   return <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
     <IconCmp className="h-6 w-6 text-slate-300" aria-hidden />
-    <p className="text-sm text-muted">{title}</p>
+    <div className="space-y-1">
+      <p className="text-sm font-medium text-ink">{title}</p>
+      {hint && <p className="max-w-xs text-xs text-muted">{hint}</p>}
+    </div>
     {action}
   </div>;
 }

@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { deleteCampaign, editAction, editCampaign } from '../lib/campaign-ops';
 import {
-  Alert, Badge, Button, ButtonLink, EmptyState, IconButton, LoadMoreSentinel, Page, PageHeader, ScrollArea, Skeleton,
-  IconAdd, IconDelete, IconEdit, IconGroups, IconMention, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
+  Alert, Badge, Button, ButtonLink, EmptyState, IconButton, LoadMoreSentinel, Page, PageHeader, ScrollArea, Segmented, Skeleton,
+  IconAdd, IconCampaigns, IconDelete, IconEdit, IconGroups, IconMention, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
   accent, campaignStatus, dia, inputClass, useConfirm, useInfiniteList,
 } from '../design';
 
@@ -15,7 +15,7 @@ type Campaign = {
   progress: Record<string, number>;
 };
 
-const filters = [
+const filters: { label: string; value: string }[] = [
   { label: 'Todas', value: '' },
   { label: 'Ativas', value: 'ACTIVE,PAUSED' },
   { label: 'Rascunhos', value: 'DRAFT' },
@@ -91,9 +91,7 @@ export default function CampaignsPage() {
   return <Page className="overflow-hidden">
     <PageHeader title="Campanhas" action={<ButtonLink to="/nova-campanha" variant="primary" icon={IconAdd}>Nova campanha</ButtonLink>} />
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex rounded border border-line bg-white p-0.5">
-        {filters.map(f => <button key={f.value} type="button" onClick={() => setFilter(f.value)} className={`h-7 rounded-sm px-2.5 text-xs ${filter === f.value ? 'bg-slate-100 font-medium text-ink' : 'text-muted hover:text-ink'}`}>{f.label}</button>)}
-      </div>
+      <Segmented label="Filtrar campanhas" value={filter} onChange={setFilter} options={filters} />
       <form className="relative ml-auto w-full sm:w-64" onSubmit={event => { event.preventDefault(); setQuery(search.trim()); }}>
         <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
         <input type="search" value={search} onChange={event => { setSearch(event.target.value); if (!event.target.value) setQuery(''); }} placeholder="Buscar pelo nome…" aria-label="Buscar campanha pelo nome" className={`${inputClass} pl-8`} />
@@ -103,7 +101,8 @@ export default function CampaignsPage() {
     {list.error && !list.items && <Alert tone="warning">Não foi possível carregar as campanhas. Confira se o sistema está ligado.</Alert>}
     <ScrollArea className="-mx-1 flex-1 px-1 pb-4">
       {!list.items ? <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }, (_, i) => <li key={i}><Skeleton className="h-40" /></li>)}</ul>
-        : list.items.length === 0 ? <EmptyState title={query || filter ? 'Nenhuma campanha com esse filtro.' : 'Nenhuma campanha ainda.'} action={!query && !filter ? <ButtonLink to="/nova-campanha" variant="primary" icon={IconAdd}>Criar a primeira</ButtonLink> : undefined} />
+        : list.items.length === 0 ? <EmptyState icon={IconCampaigns} title={query || filter ? 'Nenhuma campanha com esse filtro.' : 'Nenhuma campanha ainda.'}
+          hint={query || filter ? 'Troque o filtro ou a busca.' : 'Crie a primeira em Nova campanha, no alto da tela.'} />
         : <>
           <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{list.items.map(campaign => <CampaignCard key={campaign.id} campaign={campaign} busy={busy === campaign.id}
             onEdit={() => run(campaign, async () => { const id = await editCampaign(campaign, confirm); if (id) navigate(`/campanhas/${id}/editar`); })}

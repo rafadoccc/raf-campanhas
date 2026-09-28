@@ -53,4 +53,5 @@ export {
   UserPlus as IconAddUser,
   Activity as IconActivity,
   Server as IconServer,
+  MessageSquareText as IconMessage,
 } from 'lucide-react';

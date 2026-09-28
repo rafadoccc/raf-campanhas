@@ -7,7 +7,7 @@ import { retryAllFailed, retryDelivery } from '../lib/campaign-ops';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
-  IconBack, IconClock, IconGroups, IconMention, IconRefresh,
+  IconBack, IconChevron, IconClock, IconGroups, IconMention, IconMessage, IconRefresh, IconVideo,
   accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, useConfirm, useInfiniteList, type Wait,
 } from '../design';
 
@@ -23,6 +23,38 @@ type Delivery = {
   error: string | null; attemptedAt: string | null; deliveredAt: string | null; serverRejectedAt: string | null;
   errorCode: string | null; attempts: number; group: Group; _count: { reads: number }; wait: Wait | null;
 };
+
+/**
+ * O que a campanha envia (imagem/vídeo + texto). Fechado: miniatura e o começo do texto, para
+ * reconhecer a campanha de relance. Aberto: a mensagem completa, como vai para o grupo.
+ */
+function Template({ campaign }: { campaign: Campaign }) {
+  const [open, setOpen] = useState(campaign.status === 'DRAFT'); // rascunho: aberto para conferir
+  const media = campaign.media;
+  const color = accent(media?.color);
+  const messages = campaign.messages;
+  return <Card>
+    <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)}
+      className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${open ? 'rounded-t-lg' : 'rounded-lg'}`}>
+      {media?.kind === 'image'
+        ? <img src={`/api/media/${media.id}/thumb`} alt="" width={40} height={40} className="h-10 w-10 shrink-0 rounded object-cover" style={{ background: color.soft }} />
+        : <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-slate-100 text-slate-400">{media?.kind === 'video' ? <IconVideo className="h-5 w-5" aria-hidden /> : <IconMessage className="h-5 w-5" aria-hidden />}</span>}
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold">Modelo da mensagem</span>
+        <span className="block truncate text-xs text-muted">{messages[0]?.content ?? 'Sem texto'}</span>
+      </span>
+      <IconChevron className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+    </button>
+    {open && <div className="space-y-3 border-t border-line p-4">
+      {media && <MediaPreview media={media} />}
+      {messages.map((m, i) => <div key={i} className="space-y-1">
+        {messages.length > 1 && <p className="text-2xs font-medium text-muted">Mensagem {i + 1} de {messages.length} · alterna a cada {campaign.mode === 'IMMEDIATE' ? 'grupo' : 'rodada'}</p>}
+        <p className="whitespace-pre-wrap break-words rounded bg-slate-50 p-3 text-sm">{m.content}</p>
+      </div>)}
+      {campaign.mentionAll && <p className="flex items-center gap-1 text-2xs text-muted"><IconMention className="h-3.5 w-3.5" aria-hidden />Marca todos os membros do grupo</p>}
+    </div>}
+  </Card>;
+}
 
 // Uma linha curta com os horários que importam em cada situação.
 function timeline(d: Delivery) {
@@ -107,7 +139,7 @@ export default function CampaignPage() {
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
                   <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groups.length} grupos</span>
                   <span>· a cada {campaign.intervalSeconds / 60} min · {when}</span>
-                  {campaign.status !== 'DRAFT' && <span>· {campaign.provider === 'baileys' ? 'WhatsApp real' : 'simulação'}</span>}
+                  {campaign.status !== 'DRAFT' && campaign.provider === 'simulator' && <span>· simulação</span>}
                   {campaign.mentionAll && <span className="inline-flex items-center gap-1"><IconMention className="h-3.5 w-3.5" aria-hidden />marca todos</span>}
                 </p>
               </div>
@@ -123,17 +155,16 @@ export default function CampaignPage() {
               <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
             </>}
             {next && <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded bg-slate-50 px-3 py-2 text-xs"><IconClock className="h-3.5 w-3.5 text-muted" aria-hidden /><span className="text-muted">Próximo:</span><strong>{next.group.name}</strong><span>às {hora(next.wait!.expectedAt)}</span>{next.wait!.reason && <span className="text-amber-700">· {next.wait!.reason}</span>}</p>}
-            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} provider={campaign.provider} intervalSeconds={campaign.intervalSeconds} groupCount={campaign.groups.length} />
+            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} intervalSeconds={campaign.intervalSeconds} groupCount={campaign.groups.length} />
           </div>
         </Card>
 
+        <Template campaign={campaign} />
+
         {campaign.status === 'DRAFT' && <Card className="space-y-3 p-4">
-          <h2 className="text-sm font-semibold">Conferir antes de iniciar</h2>
-          {campaign.messages.map((m, i) => <p key={i} className="whitespace-pre-wrap rounded bg-slate-50 p-3 text-sm">{m.content}</p>)}
+          <h2 className="text-sm font-semibold">Grupos, na ordem de envio</h2>
           <ol className="space-y-1 text-sm">{campaign.groups.map((g, i) => <li key={i} className="truncate"><span className="tabular mr-1.5 text-slate-400">{i + 1}</span>{g.group.name}{membros(g.group.participants) && <span className="text-slate-400"> · {membros(g.group.participants)}</span>}</li>)}</ol>
         </Card>}
-
-        {campaign.media && <Card className="p-4"><h2 className="text-sm font-semibold">Mídia</h2><MediaPreview media={campaign.media} /></Card>}
 
         {campaign.provider === 'baileys' && total > 0 && <Card>
           <CardHeader title="Visualizações" action={<span className="tabular text-base font-semibold">{campaign.readsTotal}</span>} />
