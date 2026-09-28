@@ -1720,6 +1720,11 @@ test('whatsapp routes (4C): status, QR, connect, disconnect and sync are isolate
     assert.deepEqual(world.perUser.get(b.user.id)?.calls ?? [], [], 'nada foi chamado no provider de B');
     // Sincronizar usa o provider e o dono de quem pediu.
     assert.equal((await b.call('POST', 'sync')).json().count, 3);
+    // Limite suave (035): de novo logo em seguida, recusa com aviso e não chama o provider.
+    const again = await b.call('POST', 'sync');
+    assert.equal(again.statusCode, 429);
+    assert.match(again.json().error, /Aguarde \d+ s/);
+    assert.equal((await b.call('GET', 'status')).json().groupsSync.count, 3, 'a tela vê a última sincronização');
     assert.deepEqual(world.perUser.get(b.user.id)!.calls, ['sync:' + b.user.id]);
     assert.ok(!world.perUser.get(a.user.id)!.calls.includes(`sync:${b.user.id}`));
     // Desconectar A não encosta em B.
@@ -1777,7 +1782,9 @@ test('legacy bridge (4C): only the single active SUPER_ADMIN reaches the global 
       process.env.LEGACY_SESSION_OWNER = user.user.id;
       try {
         assert.deepEqual((await admin.call('GET', 'status')).json(), { state: 'disconnected' });
-        assert.deepEqual((await user.call('GET', 'status')).json(), { state: 'disconnected' }, 'declarar um USER não lhe dá a sessão global');
+        // A última sincronização (dele, feita acima) pode vir junto; a conexão continua a dele.
+        const { groupsSync: _sync, ...own } = (await user.call('GET', 'status')).json();
+        assert.deepEqual(own, { state: 'disconnected' }, 'declarar um USER não lhe dá a sessão global');
       } finally { delete process.env.LEGACY_SESSION_OWNER; }
     } finally { await restore(); }
   } finally { await world.cleanup(); }
@@ -2676,30 +2683,30 @@ test('admin (031): force-logout and stop-WhatsApp act on the account without tou
   } finally { await world.cleanup(); }
 });
 
-// ─── Intervalo mínimo de 3 minutos (ADR-028) ────────────────────────────────────
-test('minimum interval (028): the API refuses less than 3 minutes and the queue never paces faster', async () => {
+// ─── Intervalo mínimo de 2 minutos (ADR-028, 2 min desde a ADR-035) ─────────────
+test('minimum interval (028): the API refuses less than 2 minutes and the queue never paces faster', async () => {
   const group = await prisma.group.create({ data: { name: 'Piso', userId: ownerId } });
   const base = { name: 'Piso', mode: 'IMMEDIATE', messages: ['oi'], groupIds: [group.id] };
-  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 179 })).statusCode, 400, '179 s: recusado');
-  assert.match((await request('POST', '/campaigns', { ...base, intervalSeconds: 60 })).json().error, /mínimo de 3 minutos/);
-  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 180 })).statusCode, 201, '180 s: aceito');
+  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 119 })).statusCode, 400, '119 s: recusado');
+  assert.match((await request('POST', '/campaigns', { ...base, intervalSeconds: 60 })).json().error, /mínimo de 2 minutos/);
+  assert.equal((await request('POST', '/campaigns', { ...base, intervalSeconds: 120 })).statusCode, 201, '120 s: aceito');
   // Campanha com intervalo antigo de 60 s gravada direto no banco: a fila aplica o piso.
   const previous = process.env.SEND_INTERVAL_FLOOR_SECONDS;
-  process.env.SEND_INTERVAL_FLOOR_SECONDS = '180';
+  process.env.SEND_INTERVAL_FLOOR_SECONDS = '120';
   try {
     const { campaign, rows: [row] } = await realCampaign(1, 60);
     const at = new Date();
     assert.ok(await claimDelivery(prisma, row.id, at));
     const reserved = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
-    assert.equal(reserved.nextAvailableAt!.getTime(), at.getTime() + 180_000, 'reserva ocupa o número por 3 min, não 60 s');
+    assert.equal(reserved.nextAvailableAt!.getTime(), at.getTime() + 120_000, 'reserva ocupa o número por 2 min, não 60 s');
     await finishDelivery(prisma, row.id, { providerId: '3EB0PISO', context: '' }, at);
     const number = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: ACCOUNT } });
-    assert.equal(number.nextAvailableAt!.getTime(), at.getTime() + 180_000, 'o número fica livre só 3 min depois');
-    assert.equal(number.lastIntervalSeconds, 180);
+    assert.equal(number.nextAvailableAt!.getTime(), at.getTime() + 120_000, 'o número fica livre só 2 min depois');
+    assert.equal(number.lastIntervalSeconds, 120);
     // Previsão do painel usa o mesmo piso.
     const { forecastQueue } = await import('./queue-forecast.js');
     const plan = forecastQueue([{ id: 'a', status: 'PENDING', sequence: 0, provider: 'baileys', scheduledAt: at, attemptedAt: null, attempts: 0 }, { id: 'b', status: 'PENDING', sequence: 1, provider: 'baileys', scheduledAt: at, attemptedAt: null, attempts: 0 }], { status: 'ACTIVE', nextAvailableAt: null, intervalSeconds: 60 }, at, true, 3);
-    assert.equal(plan.get('b')!.expectedAt.getTime() - plan.get('a')!.expectedAt.getTime(), 180_000);
+    assert.equal(plan.get('b')!.expectedAt.getTime() - plan.get('a')!.expectedAt.getTime(), 120_000);
   } finally {
     if (previous === undefined) delete process.env.SEND_INTERVAL_FLOOR_SECONDS; else process.env.SEND_INTERVAL_FLOOR_SECONDS = previous;
   }

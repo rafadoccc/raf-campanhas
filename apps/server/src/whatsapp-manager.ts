@@ -15,6 +15,19 @@ import { whatsappSessionDir } from './session-paths';
 /** O que o gerenciador usa de um provider. Permite injetar um duble nos testes. */
 export type ManagedProvider = Pick<WhatsAppProvider, 'ownerId' | 'sessionDir' | 'status' | 'connect' | 'disconnect' | 'stop' | 'hasPairedSession' | 'sync' | 'send' | 'flushReads' | 'flushDeliveryEvents'>;
 
+/** Última sincronização de grupos de um usuário (mostrada na tela do WhatsApp). */
+export type GroupsSync = { running: boolean; auto: boolean; at: Date | null; count: number | null; error: string | null };
+
+// Sincronizar de novo antes disso é recusado com aviso (limite suave do botão).
+export const SYNC_COOLDOWN_MS = 30_000;
+// Ao conectar, sincroniza sozinho, a não ser que já tenha sincronizado há pouco (ex.: a conexão
+// caiu e voltou em seguida).
+const AUTO_SYNC_FRESH_MS = 10 * 60_000;
+// Espera a conexão assentar antes de pedir a lista de grupos.
+const AUTO_SYNC_DELAY_MS = 3_000;
+
+export class SyncTooSoonError extends Error {}
+
 export type StartOutcome = { userId: string; outcome: 'conectando' | 'sem-sessao' | 'falhou'; error?: string };
 
 type Options = {
@@ -23,6 +36,8 @@ type Options = {
   sessionsBase?: string;
   /** onStateChange: chamar a cada troca de estado da conexão (o gerenciador grava no banco). */
   createProvider?: (ownerId: string, sessionDir: string, onStateChange: () => void) => ManagedProvider;
+  /** Espera antes da sincronização automática ao conectar (nos testes, 0). */
+  autoSyncDelayMs?: number;
 };
 
 export class WhatsAppManager {
@@ -32,10 +47,14 @@ export class WhatsAppManager {
   private readonly createProvider: (ownerId: string, sessionDir: string, onStateChange: () => void) => ManagedProvider;
   /** Gravações de estado em fila, uma por vez por usuário (a última sempre vence). */
   private persisting = new Map<string, Promise<void>>();
+  private syncs = new Map<string, GroupsSync & { promise?: Promise<{ count: number }> }>();
+  private lastState = new Map<string, string>();
+  private readonly autoSyncDelayMs: number;
 
   constructor(options: Options = {}) {
     this.db = options.db ?? prisma;
     this.sessionsBase = options.sessionsBase;
+    this.autoSyncDelayMs = options.autoSyncDelayMs ?? AUTO_SYNC_DELAY_MS;
     this.createProvider = options.createProvider ?? ((ownerId, sessionDir, onStateChange) => new WhatsAppProvider({ ownerId, sessionDir, onStateChange }));
   }
 
@@ -44,9 +63,62 @@ export class WhatsAppManager {
     const existing = this.providers.get(userId);
     if (existing) return existing;
     // whatsappSessionDir valida o id e garante que o caminho fica dentro da pasta de sessões.
-    const provider = this.createProvider(userId, whatsappSessionDir(userId, this.sessionsBase), () => this.queuePersist(userId));
+    const provider = this.createProvider(userId, whatsappSessionDir(userId, this.sessionsBase), () => {
+      void this.queuePersist(userId);
+      this.autoSyncOnConnect(userId);
+    });
     this.providers.set(userId, provider);
     return provider;
+  }
+
+  /** Situação da sincronização de grupos do usuário (sem a promessa interna). */
+  syncInfo(userId: string): GroupsSync | null {
+    const entry = this.syncs.get(userId);
+    if (!entry) return null;
+    const { promise: _promise, ...info } = entry;
+    return info;
+  }
+
+  /**
+   * Sincroniza os grupos do usuário. Pedido repetido enquanto uma sincronização roda recebe a
+   * mesma; pedido manual até 30 s depois da última é recusado (SyncTooSoonError).
+   */
+  async syncGroups(userId: string, auto = false): Promise<{ count: number }> {
+    const current = this.syncs.get(userId);
+    if (current?.promise) return current.promise;
+    if (!auto && current?.at && !current.error && Date.now() - current.at.getTime() < SYNC_COOLDOWN_MS) {
+      const wait = Math.ceil((SYNC_COOLDOWN_MS - (Date.now() - current.at.getTime())) / 1000);
+      throw new SyncTooSoonError(`Os grupos acabaram de ser sincronizados. Aguarde ${wait} s para sincronizar de novo.`);
+    }
+    const provider = this.for(userId);
+    const promise = provider.sync(userId);
+    this.syncs.set(userId, { running: true, auto, at: current?.at ?? null, count: current?.count ?? null, error: null, promise });
+    try {
+      const result = await promise;
+      this.syncs.set(userId, { running: false, auto, at: new Date(), count: result.count, error: null });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao sincronizar os grupos.';
+      this.syncs.set(userId, { running: false, auto, at: new Date(), count: current?.count ?? null, error: message.slice(0, 200) });
+      throw error;
+    }
+  }
+
+  /** Conectou (e antes não estava): sincroniza os grupos sozinho, sem esperar o clique. */
+  private autoSyncOnConnect(userId: string) {
+    const provider = this.providers.get(userId);
+    const state = provider?.status().state ?? 'disconnected';
+    const before = this.lastState.get(userId);
+    this.lastState.set(userId, state);
+    if (state !== 'connected' || before === 'connected') return;
+    const last = this.syncs.get(userId);
+    if (last?.running || (last?.at && !last.error && Date.now() - last.at.getTime() < AUTO_SYNC_FRESH_MS)) return;
+    setTimeout(() => {
+      if (this.providers.get(userId)?.status().state !== 'connected') return;
+      this.syncGroups(userId, true).catch(error => {
+        console.warn('[WhatsApp] Sincronização automática de grupos falhou para', userId, error instanceof Error ? error.message : error);
+      });
+    }, this.autoSyncDelayMs).unref();
   }
 
   /** Caminho da sessão que este usuário teria, sem criar provider nem pasta. */

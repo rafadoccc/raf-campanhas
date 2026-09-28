@@ -159,3 +159,35 @@ test('manager: the shared protocol version cache never shares anything else', as
   await assert.rejects(sharedProtocolVersion(async () => { throw new Error('sem internet'); }), /sem internet/);
   assert.deepEqual(await sharedProtocolVersion(fetchVersion), [2, 3000, 123]);
 });
+
+test('manager (035): connecting syncs the groups by itself; a manual sync right after is gently refused', async () => {
+  const dir = base();
+  try {
+    let notify = () => {};
+    let syncs = 0;
+    const db = { whatsAppSession: { upsert: async () => ({}), updateMany: async () => ({ count: 0 }) } } as never; // sem banco: só o ciclo de vida é gravado
+    const manager = new WhatsAppManager({
+      sessionsBase: dir, db, autoSyncDelayMs: 0,
+      createProvider: (ownerId, sessionDir, onStateChange) => {
+        const provider = fakeProvider(ownerId, sessionDir);
+        provider.sync = async () => { syncs++; await new Promise(resolve => setTimeout(resolve, 20)); return { count: 7 }; };
+        notify = onStateChange;
+        return provider;
+      },
+    });
+    const provider = manager.for(A) as ReturnType<typeof fakeProvider>;
+    await provider.connect();
+    notify(); // o provider avisa a troca de estado: conectou
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(manager.syncInfo(A)?.running, true, 'sincronizando logo depois de conectar');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual({ ...manager.syncInfo(A), at: undefined }, { running: false, auto: true, at: undefined, count: 7, error: null });
+    assert.equal(syncs, 1);
+    notify(); // outro aviso com a conexão já de pé: não sincroniza de novo
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(syncs, 1);
+    // Botão logo em seguida: limite suave, com aviso de quanto esperar.
+    await assert.rejects(manager.syncGroups(A), /Aguarde \d+ s/);
+    assert.equal(syncs, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

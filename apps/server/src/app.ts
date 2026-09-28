@@ -9,10 +9,11 @@ import type { WhatsAppProvider } from './whatsapp';
 import { loadConfig, type AppConfig } from './config';
 import { registerAuth } from './auth';
 import { registerSecurity, registerWeb, publicMessage, NotFoundError } from './security';
-import { WhatsAppManager } from './whatsapp-manager';
+import { WhatsAppManager, SyncTooSoonError } from './whatsapp-manager';
 import { createSendingRouter } from './sending-router';
 import { registerAdminRoutes } from './admin-routes';
 import { usesLegacySession } from './legacy-session';
+import { wakeDispatcher } from './dispatcher';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -46,7 +47,11 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
       try {
         const { connection, legacy, owner } = await connectionOf(request);
         // status: o QR vem só da memória do provider daquele usuário, nunca do banco.
-        if (path === 'status') return connection.status();
+        // Junto do estado, a última sincronização de grupos (a automática, feita ao conectar).
+        if (path === 'status') {
+          const groupsSync = legacy ? null : manager.syncInfo(owner.id);
+          return { ...connection.status(), ...(groupsSync ? { groupsSync } : {}) };
+        }
         if (path === 'connect') {
           const status = await connection.connect();
           if (!legacy) await manager.persistState(owner.id);
@@ -57,8 +62,9 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
           return legacy ? await connection.disconnect() : await manager.disconnect(owner.id);
         }
         // Os grupos sincronizados pertencem a quem está logado (dono vem da sessão, ADR-017).
-        return await connection.sync(owner.id);
+        return legacy ? await connection.sync(owner.id) : await manager.syncGroups(owner.id);
       } catch (error) {
+        if (error instanceof SyncTooSoonError) return reply.code(429).send({ error: error.message });
         return reply.code(503).send({ error: publicMessage(error, 'Conector indisponível.') });
       }
     } });
@@ -159,10 +165,10 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   if (body?.mediaId !== undefined && body.mediaId !== null && (typeof body.mediaId !== 'string' || !await prisma.campaignMedia.count({ where: { id: body.mediaId, userId: request.user!.id } }))) return reply.code(400).send({ error: 'Mídia inválida. Selecione um arquivo novamente.' });
   const mediaId = typeof body?.mediaId === 'string' ? body.mediaId : body?.mediaId === null ? null : undefined;
   const mode = body?.mode ?? 'SCHEDULED';
-  const intervalSeconds = body?.intervalSeconds ?? 180;
+  const intervalSeconds = body?.intervalSeconds ?? MIN_INTERVAL_SECONDS;
   if (body?.mentionAll !== undefined && typeof body.mentionAll !== 'boolean') return reply.code(400).send({ error: 'Opção "marcar todos" inválida.' });
   const mentionAll = body?.mentionAll === true;
-  if (!['IMMEDIATE', 'SCHEDULED'].includes(String(mode)) || typeof intervalSeconds !== 'number' || !Number.isInteger(intervalSeconds) || intervalSeconds < MIN_INTERVAL_SECONDS || intervalSeconds > 3600) return reply.code(400).send({ error: 'Modo inválido ou intervalo fora de 3 a 60 minutos (mínimo de 3 minutos entre grupos).' });
+  if (!['IMMEDIATE', 'SCHEDULED'].includes(String(mode)) || typeof intervalSeconds !== 'number' || !Number.isInteger(intervalSeconds) || intervalSeconds < MIN_INTERVAL_SECONDS || intervalSeconds > 3600) return reply.code(400).send({ error: 'Modo inválido ou intervalo fora de 2 a 60 minutos (mínimo de 2 minutos entre grupos).' });
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const now = await currentTime();
   const startsAt = mode === 'IMMEDIATE' ? now : new Date(String(body?.startsAt ?? ''));
@@ -227,7 +233,7 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
   const next = body.status as 'ACTIVE' | 'PAUSED' | 'CANCELLED';
   try {
     await completeFinished(prisma);
-    return await prisma.$transaction(async tx => {
+    const updated = await prisma.$transaction(async tx => {
       await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id }, include: { groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
       if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
@@ -260,6 +266,9 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       if (next === 'CANCELLED') await tx.delivery.updateMany({ where: { campaignId: id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
       return tx.campaign.update({ where: { id }, data: { updatedAt: now, status: next, provider: campaignProvider, accountJid, nextAvailableAt, pausedAt: next === 'PAUSED' ? now : null } });
     }, { ...LOCKING_TRANSACTION, timeout: 30000 });
+    // Iniciada ou retomada: o primeiro envio sai já, sem esperar a próxima varredura da fila.
+    if (next === 'ACTIVE') wakeDispatcher();
+    return updated;
   } catch (error) {
     if (error instanceof NotFoundError) return reply.code(404).send({ error: error.message });
     return reply.code(400).send({ error: publicMessage(error, 'Falha ao atualizar.') });
