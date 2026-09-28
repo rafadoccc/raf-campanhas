@@ -4,6 +4,8 @@ import path from 'node:path';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { useDurableAuthState, writeAtomic } from './auth-state';
+import { LOCK_STALE_MS, SessionLock, lockHeld } from './session-lock';
+import { hostname } from 'node:os';
 
 const baileys = () => import('@whiskeysockets/baileys');
 const folder = () => mkdtempSync(path.join(tmpdir(), 'wa-auth-'));
@@ -78,5 +80,34 @@ test('auth (036): writes are whole or nothing, leave no temporary files, and key
     await Promise.all(Array.from({ length: 30 }, (_, i) => writeAtomic(target, JSON.stringify({ i, dado: 'x'.repeat(5000) }))));
     assert.doesNotThrow(() => JSON.parse(readFileSync(target, 'utf8')));
     assert.deepEqual(readdirSync(dir).filter(name => name.endsWith('.tmp')), [], 'nenhum temporário sobrando');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ─── Trava da pasta de sessão (session-lock.ts, portado da sessão paralela) ───
+test('session lock: a live process on this computer or a fresh one elsewhere holds it', () => {
+  const now = 1_000_000;
+  const self = { pid: 10, host: 'pc' };
+  assert.equal(lockHeld({ pid: 10, host: 'pc', at: now }, now, self), false, 'a própria trava');
+  assert.equal(lockHeld({ pid: 11, host: 'pc', at: now }, now, self, () => true), true, 'outro processo vivo');
+  assert.equal(lockHeld({ pid: 11, host: 'pc', at: now }, now, self, () => false), false, 'processo morto não segura');
+  assert.equal(lockHeld({ pid: 11, host: 'outro', at: now - 1000 }, now, self), true, 'outro computador, sinal recente');
+  assert.equal(lockHeld({ pid: 11, host: 'outro', at: now - LOCK_STALE_MS - 1 }, now, self), false, 'sinal velho');
+});
+
+test('session lock refuses a second live owner and frees on release', async () => {
+  const dir = folder();
+  try {
+    const file = path.join(dir, 'whatsapp.lock');
+    const lock = new SessionLock(file);
+    assert.deepEqual(await lock.acquire(), { ok: true });
+    assert.deepEqual(await lock.acquire(), { ok: true }, 'renovar a própria trava');
+    await lock.release();
+    assert.equal(existsSync(file), false);
+    // Trava de outro computador com sinal recente: recusa e diz quem é o dono.
+    writeFileSync(file, JSON.stringify({ pid: 1, host: `${hostname()}-outro`, at: Date.now() }));
+    const refused = await new SessionLock(file).acquire();
+    assert.equal(refused.ok, false);
+    await new SessionLock(file).release();
+    assert.ok(readFileSync(file, 'utf8'), 'nunca solta a trava de outro processo');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

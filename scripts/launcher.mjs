@@ -136,9 +136,18 @@ if (precisaBuild()) {
 passo('Iniciando os serviços');
 const filho = spawn(process.execPath, ['scripts/start-local.cjs'], { stdio: 'inherit' });
 let encerrando = false;
-const encerrar = () => { if (encerrando) return; encerrando = true; filho.kill(); };
+// Ctrl+C e fechar a janela chegam direto ao servidor (mesmo console), que grava a sessão do
+// WhatsApp e sai sozinho. Matar o filho na hora (no Windows, encerramento forçado) cortava essa
+// gravação: espera e só força se ele não sair em 40 s (ADR-036).
+const encerrar = () => {
+  if (encerrando) return;
+  encerrando = true;
+  setTimeout(() => filho.kill(), 40_000).unref();
+};
 process.on('SIGINT', encerrar);
-process.on('SIGTERM', encerrar);
+process.on('SIGHUP', encerrar);
+// SIGTERM vem só para este processo (gerenciador de serviço): fora do Windows, repassa o pedido.
+process.on('SIGTERM', () => { if (isWin) encerrar(); else { encerrando = true; filho.kill('SIGTERM'); } });
 filho.on('exit', code => {
   console.log(`\n  Sistema encerrado${code ? ` (código ${code})` : ''}.`);
   process.exit(code ?? 0);

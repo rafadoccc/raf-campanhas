@@ -7,6 +7,7 @@ import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
 import { closeAction, retryDelay } from './connection-policy';
 import { useDurableAuthState } from './auth-state';
+import { SessionLock } from './session-lock';
 import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
 
 // Nome exibido de um grupo sincronizado: assunto sem espaços extras, limitado à coluna
@@ -76,6 +77,7 @@ export class WhatsAppProvider {
   private wanted = false;
   private starting = false;
   private interactive = false;
+  private lock?: SessionLock;
   private version?: WAVersion;
   private receiptWrites = new Set<Promise<void>>();
   private credsSaving: Promise<void> = Promise.resolve();
@@ -147,6 +149,20 @@ export class WhatsAppProvider {
       // Keep the verified version across reconnects; never silently downgrade.
       this.version ??= await sharedProtocolVersion(() => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }));
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
+      // Uma pasta de sessão, um processo (session-lock.ts): outro sistema ligado com a mesma pasta
+      // abriria uma segunda conexão com as MESMAS credenciais; o WhatsApp derruba uma com a outra
+      // (440) e as duas gravam as mesmas chaves. Espera o outro sair, sem desistir.
+      this.lock ??= new SessionLock(`${this.authDir}.lock`);
+      const lock = await this.lock.acquire();
+      if (!this.wanted || generation !== this.generation) {
+        if (lock.ok && !this.wanted) await this.lock.release().catch(() => undefined);
+        return;
+      }
+      if (!lock.ok) {
+        console.warn('[WhatsApp] Pasta de sessão em uso por outro processo:', `pid ${lock.owner.pid} em ${lock.owner.host}`, this.authDir);
+        this.scheduleReconnect(30_000, false, 'Esta sessão do WhatsApp está aberta em outro sistema ligado (produção ou dev com a mesma pasta de sessões). Feche o outro: a conexão volta sozinha.');
+        return;
+      }
       // Gravação atômica, com cópia de segurança da credencial (auth-state.ts, ADR-036).
       const { state, saveCreds } = await useDurableAuthState(this.authDir, baileys);
       if (!this.wanted || generation !== this.generation) return;
@@ -178,6 +194,7 @@ export class WhatsAppProvider {
           // Sessão pareada, ninguém pediu QR: o WhatsApp não reconhece mais este aparelho.
           console.warn('[WhatsApp] O WhatsApp pediu novo pareamento numa reconexão automática; conexão parada.');
           this.wanted = false; ++this.generation; clearTimeout(this.timer);
+          void this.lock?.release().catch(() => undefined);
           this.socket = undefined; sock.end(undefined);
           this.data = { state: 'error', error: paired
             ? 'O WhatsApp não reconhece mais este aparelho (ele foi removido no celular ou a sessão foi encerrada pelo WhatsApp). Clique em Conectar e leia o QR Code.'
@@ -246,6 +263,7 @@ export class WhatsAppProvider {
             const action = closeAction(code, error?.message, this.retries);
             if (action.kind === 'stop' || !this.wanted) {
               this.wanted = false;
+              void this.lock?.release().catch(() => undefined);
               if (action.kind === 'stop' && action.clearSession) {
                 // Espera a última gravação terminar: senão ela recriaria arquivos na pasta apagada.
                 await this.credsSaving.catch(() => undefined);
@@ -270,11 +288,11 @@ export class WhatsAppProvider {
     } finally { this.starting = false; }
   }
   /** Tenta de novo depois de `delayMs`. Depois de algumas tentativas, a tela explica a espera. */
-  private scheduleReconnect(delayMs: number, countsAsRetry: boolean) {
+  private scheduleReconnect(delayMs: number, countsAsRetry: boolean, message?: string) {
     if (countsAsRetry) this.retries++;
-    const waiting = this.retries >= 4
+    const waiting = message ?? (this.retries >= 4
       ? `Sem conexão com o WhatsApp. Tentando de novo sozinho (tentativa ${this.retries}, a próxima em ${Math.round(delayMs / 1000)} s). Confira a internet deste computador.`
-      : undefined;
+      : undefined);
     this.data = waiting ? { state: 'reconnecting', error: waiting } : { state: 'reconnecting' };
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
@@ -284,6 +302,7 @@ export class WhatsAppProvider {
   }
   async disconnect() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer);
+    void this.lock?.release().catch(() => undefined);
     this.version = undefined;
     forgetProtocolVersion();
     const sock = this.socket; this.socket = undefined;
@@ -398,6 +417,7 @@ export class WhatsAppProvider {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);
     // Termina de gravar a credencial antes de sair: encerrar no meio corrompia o creds.json.
     await this.credsSaving.catch(() => undefined);
+    await this.lock?.release().catch(() => undefined); // outro processo já pode usar a sessão
     // Encerrada sem logout: a autenticação fica, mas a conexão não está mais de pé.
     this.socket = undefined;
     this.data = { state: 'disconnected' };

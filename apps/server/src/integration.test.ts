@@ -2018,7 +2018,8 @@ test('sending (4D): a number that does not match the campaign blocks the send', 
     const campaign = await ownedCampaign(a.id, JID_A);
     const dispatcher = await startDispatcher(world.router, { scanIntervalMs: 50 });
     try {
-      const row = await waitFor(async () => { const d = await fresh(campaign.rows[0].id); return d.attempts > 0 && d; }, 'tentativa registrada');
+      // attempts sobe já na reserva (PROCESSING, sem erro); o erro só é gravado ao terminar.
+      const row = await waitFor(async () => { const d = await fresh(campaign.rows[0].id); return d.attempts > 0 && d.status !== 'PROCESSING' && d; }, 'tentativa registrada');
       assert.notEqual(row.status, 'SENT', 'número incompatível não vira envio');
       assert.match(row.error ?? '', /Número conectado difere/);
       assert.deepEqual(world.fakes.get(a.id)!.sent, [], 'nada saiu');
