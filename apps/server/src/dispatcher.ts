@@ -43,6 +43,11 @@ const SEND_SPACING_MS = 1_500;
 export const laneOf = (delivery: { provider: string }, campaign: { accountJid: string | null; userId: string }) =>
   delivery.provider === 'baileys' ? `numero:${campaign.accountJid ?? `sem-numero:${campaign.userId}`}` : 'simulacao';
 
+// Acorda o despachante na hora (ex.: campanha acabou de ser iniciada), em vez de esperar a
+// próxima varredura de 5 s. Só antecipa a varredura: as regras de fila e intervalo são as mesmas.
+let wake: (() => void) | null = null;
+export function wakeDispatcher() { wake?.(); }
+
 export type Dispatcher = {
   isActive(): boolean;
   stop(): Promise<void>;
@@ -212,11 +217,13 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
   scanTimer = setInterval(() => {
     void scan();
   }, options.scanIntervalMs ?? SCAN_INTERVAL_MS);
+  wake = () => { void scan(); };
   await scan();
 
   async function stop() {
     if (stopping) return;
     stopping = true;
+    wake = null;
     if (scanTimer) clearInterval(scanTimer);
     if (leaseTimer) clearInterval(leaseTimer);
     // Espera os envios em andamento de TODOS os números (até 30 s). Cada faixa confere

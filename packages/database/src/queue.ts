@@ -25,12 +25,12 @@ export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
   await tx.$queryRaw`SELECT id FROM \`Campaign\` WHERE id = ${id} FOR UPDATE`;
 }
 
-// ─── Intervalo mínimo (ADR-028) ─────────────────────────────────────────────────
-// Nenhum número envia mais rápido que 1 mensagem a cada 3 minutos, qualquer que seja o valor
+// ─── Intervalo mínimo (ADR-028; 2 min desde a ADR-035) ──────────────────────────
+// Nenhum número envia mais rápido que 1 mensagem a cada 2 minutos, qualquer que seja o valor
 // gravado na campanha. A API já recusa menos que isso; este piso protege também dados antigos
 // e qualquer caminho que escreva no banco direto. Só o banco de teste descartável pode baixar o
 // piso (os testes de ritmo medem em segundos).
-export const MIN_INTERVAL_SECONDS = 180;
+export const MIN_INTERVAL_SECONDS = 120;
 export function intervalFloorSeconds() {
   const override = process.env.SEND_INTERVAL_FLOOR_SECONDS;
   if (process.env.CAMPAIGN_TEST_DATABASE && override !== undefined && Number.isFinite(Number(override))) return Number(override);

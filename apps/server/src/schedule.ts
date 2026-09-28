@@ -8,7 +8,7 @@ export function planDeliveries(campaign: {
   schedules: { time: string; timezone: string }[];
 }, now = new Date()) {
   if (!campaign.messages.length || !campaign.groups.length) throw new Error('Campanha incompleta.');
-  // Horários planejados já respeitam o piso de 3 minutos (ADR-028); sem intervalo informado,
+  // Horários planejados já respeitam o piso de 2 minutos (ADR-028/035); sem intervalo informado,
   // vale 0 (compatibilidade com os testes antigos do planejador, que não passam intervalo).
   const interval = campaign.intervalSeconds === undefined ? 0 : effectiveInterval(campaign.intervalSeconds);
   if (campaign.mode === 'IMMEDIATE') return campaign.groups.map((group, sequence) => ({ campaignId: campaign.id, groupId: group.groupId, messageBody: campaign.messages[sequence % campaign.messages.length].content, scheduledAt: new Date(now.getTime() + sequence * interval * 1000), provider: campaign.provider, sequence }));

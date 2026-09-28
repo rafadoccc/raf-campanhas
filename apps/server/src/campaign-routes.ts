@@ -6,7 +6,7 @@ import { mediaMetadata } from './media';
 import { isUncertainFailure } from './send-context';
 import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION, dueOrRunning } from '@campaign/database';
 
-// Reabre um FAILED para PENDING agora (ADR-030): o piso de 3 min e o relógio do número em
+// Reabre um FAILED para PENDING agora (ADR-030): o piso de 2 min e o relógio do número em
 // claimDelivery decidem quando ele realmente sai, então marcar "agora" nunca fura o ritmo.
 // Uma campanha COMPLETED volta a ACTIVE para o despachante voltar a olhar para ela.
 async function requeueForRetry(tx: Parameters<typeof lockCampaign>[0], campaignId: string, deliveryIds: string[], campaignStatus: string, now: Date) {

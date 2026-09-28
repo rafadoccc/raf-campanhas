@@ -68,7 +68,7 @@ model Campaign {
   provider        String             @default("simulator")
   accountJid      String?
   mode            String             @default("SCHEDULED")
-  intervalSeconds Int                @default(180)
+  intervalSeconds Int                @default(120)
   // Marcar todos os membros do grupo em cada envio (menção em massa, ADR-029).
   mentionAll      Boolean            @default(false)
   nextAvailableAt DateTime?
