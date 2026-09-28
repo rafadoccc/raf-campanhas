@@ -29,6 +29,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5b | Conversão de vídeo, estado do WhatsApp gravado, painel sem tela branca, rolagem | ✅ concluída (ADR-032/033) |
 | 5c | Troca de tela instantânea, limites contra abuso, VPS pequena, ffmpeg seguro | ✅ concluída (ADR-034) |
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
+| 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---
@@ -117,6 +118,10 @@ verificações de senha, uploads simultâneos.
 - Design system: `Select` e `Checkbox` próprios (sem visual nativo do sistema operacional,
   `docs/design-system.md`), bordas decorativas removidas (faixa/borda colorida do cartão,
   barra do topo do detalhe), logo "CC" removida do topo e do login.
+- T-124 (ADR-036): sessão do WhatsApp gravada de forma atômica, com cópia de segurança da
+  credencial (`auth-state.ts`). Reconexão sem desistir (no máximo 1 tentativa por minuto). Só o
+  401 apaga a sessão. Sem QR em reconexão automática. Encerramento limpo ao fechar a janela.
+  No Railway, usa o Volume sozinho.
 - T-122 (ADR-035): grupos sincronizados sozinhos ao conectar (botão com espera de 30 s), piso de
   2 minutos, "Atrasado" só quando o próximo envio já podia ter saído e não saiu, o 1º envio sai
   na hora ao iniciar (o despachante é acordado), simulação fora da tela, "Modelo da mensagem"

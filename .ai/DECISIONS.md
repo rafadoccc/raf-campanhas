@@ -887,3 +887,92 @@ Caddy, firewall, backup).
   - Menu no nome do usuário (`Menu` com `trigger`/`header`).
   - Excluir só no cartão da lista.
   - Lista vazia sem botão duplicado (`EmptyState` com `hint`).
+
+---
+
+## ADR-036 · Sessão do WhatsApp resistente a quedas; nunca desiste sozinha
+
+**Data:** 2026-09-28 · **Status:** aceita (pedido do dono: sistema confiável, resistente a quedas de conexão) · **Autor:** claude · **Branch:** dev
+
+- **Gravação da credencial à prova de queda** (`auth-state.ts`, substitui `useMultiFileAuthState`
+  do Baileys nos mesmos arquivos, sem migração): grava num arquivo temporário e troca pelo
+  definitivo (`rename`), com `creds.json.bak` e fsync no arquivo principal. Antes, o processo
+  encerrado no meio de uma gravação (janela fechada, queda de luz, atualização) deixava o
+  `creds.json` corrompido; a próxima leitura virava sessão nova e o WhatsApp pedia QR do zero,
+  **apagando o pareamento anterior na gravação seguinte**. Agora um arquivo ilegível cai para a
+  cópia de segurança antes de desistir, e o motivo fica no log.
+- **Nunca desiste de reconectar sozinho:** removido o teto de 6 tentativas
+  (`MAX_RETRIES`/`connection-policy.ts`). O intervalo dobra a cada queda (1 s, 2 s, 4 s…) até um
+  teto de 1 min e continua tentando indefinidamente. Antes, ~1 min de instabilidade de rede
+  (6 tentativas) fazia a conexão desistir e esperar alguém clicar em Conectar de novo — no
+  servidor, ninguém está olhando a tela.
+- **A sessão só é apagada quando é logout de verdade** (código 401 do WhatsApp). O código 500,
+  que o Baileys usa para qualquer erro de fluxo sem código conhecido (inclusive instabilidade
+  passageira do servidor do WhatsApp), **não apaga mais a sessão** — antes cada 500 forçava ler o
+  QR de novo. `multideviceMismatch`, `connectionReplaced` e `forbidden` param a conexão com aviso,
+  mas também preservam a sessão.
+- **Reconexão automática nunca gera QR para ninguém ver:** `connect({ interactive: false })` na
+  partida e no `startAll` do gerenciador. Se o WhatsApp pedir QR numa reconexão automática (sessão
+  não reconhecida), a conexão para com um aviso claro em vez de ficar com um QR que ninguém vai
+  escanear. `connect()` sem argumento (clique em "Conectar" no painel) continua interativo.
+- **Encerramento correto em todo jeito de fechar o processo:** `SIGINT`, `SIGTERM`, `SIGHUP`
+  (fechar a janela no Windows) e `SIGBREAK`, todos chamando o mesmo `shutdown()` — antes só
+  `SIGINT`/`SIGTERM` eram tratados. Espera a gravação da credencial terminar antes de sair
+  (`stop()` e no logout/apagar sessão); um `setTimeout` de segurança força a saída se algo travar
+  (4,5 s no `SIGHUP`, que o Windows só dá ~5 s antes de matar o processo; 35 s nos outros, cobrindo
+  os até 30 s que o despachante espera pelos envios em andamento).
+- **Aviso de sessão que não sobrevive a um deploy:** no Railway sem Volume configurado (ou sem
+  `SESSIONS_DIR` apontando para dentro dele), `sessionsPersistent()` volta `false`; o log na
+  partida e um aviso na tela do WhatsApp (`ephemeralSession`) explicam que cada deploy vai pedir
+  QR de novo, e como resolver (Volume + o sistema usa `RAILWAY_VOLUME_MOUNT_PATH/sessions`
+  sozinho se `SESSIONS_DIR` não estiver definida).
+- **Baileys:** chaves de sessão em memória na frente dos arquivos (`makeCacheableSignalKeyStore`,
+  recomendação do próprio Baileys) — menos leitura de disco por mensagem.
+
+Nada disto migra, renomeia ou apaga uma sessão pareada existente: o formato dos arquivos é o
+mesmo do `useMultiFileAuthState`, e uma sessão já conectada continua valendo sem qualquer ação.
+
+---
+
+## ADR-036 · Sessão do WhatsApp à prova de queda, de reinício e de deploy
+
+**Data:** 2026-09-28 · **Status:** aceita (dono: "a sessão precisa ser mantida o máximo possível") · **Autor:** claude · **Branch:** dev
+
+Sintoma: depois de reinícios e deploys, o WhatsApp voltava pedindo QR ("O QR Code expirou sem ser
+lido"). Causas encontradas:
+
+1. **Credencial virava uma identidade nova em silêncio.** O `useMultiFileAuthState` do Baileys
+   faz `lerCreds() || novaCredencial()` e grava sem ser atômico. O processo encerrado no meio de
+   uma gravação (janela fechada, PC desligado, reinício por atualização) deixava o
+   `creds.json` pela metade. Na partida seguinte nascia uma identidade nova, o WhatsApp mandava QR
+   e a gravação seguinte apagava o pareamento de vez.
+   **Correção:** `auth-state.ts` (`useDurableAuthState`), com os mesmos nomes e formato de
+   arquivo (a sessão atual continua valendo, sem migração):
+   - gravação atômica (temporário + rename, com nova tentativa se o Windows segurar o arquivo);
+   - `creds.json` com fsync e cópia `creds.json.bak`, restaurada se o principal estiver ilegível;
+   - ilegível e sem cópia: o arquivo é guardado à parte (`creds.json.ilegivel-<ts>`), nunca
+     sobrescrito;
+   - `makeCacheableSignalKeyStore` na frente dos arquivos: menos leitura de disco.
+2. **O código 500 apagava a sessão.** É o código genérico do Baileys para erro de fluxo sem código
+   (`getErrorCodeFromStreamError`), inclusive instabilidade passageira do WhatsApp. Agora só o
+   **401** (aparelho removido no celular) apaga. O 500 reconecta; o 411, o 440 e o 403 param sem
+   apagar.
+3. **Desistia depois de ~1 min sem rede** (6 tentativas). Agora tenta para sempre, espaçando
+   1 s, 2 s, 4 s… até **uma tentativa por minuto** (sem martelar o WhatsApp). Depois de algumas
+   tentativas a tela explica a espera, como aviso e não como erro. A falha ao abrir (sem internet
+   na partida) também entra nesse ciclo.
+4. **QR numa reconexão automática.** Com sessão pareada, um QR significa que o WhatsApp não
+   reconhece mais o aparelho. Antes o sistema gerava QRs para ninguém até o "QR expirou". Agora
+   só `connect({ interactive: true })`, o clique em Conectar, mostra QR. Na partida e nas
+   reconexões, a conexão para na hora com o motivo.
+5. **Encerramento.** Fechar a janela no Windows (SIGHUP) e Ctrl+Break (SIGBREAK) também encerram
+   de forma limpa. `stop()` espera a gravação da credencial, e a saída é forçada em 4,5 s
+   (janela) ou 35 s (serviço) se algo travar.
+6. **Railway sem Volume.** O disco do contêiner some a cada deploy. Com Volume, o padrão das
+   sessões passa a ser `$RAILWAY_VOLUME_MOUNT_PATH/sessions` sem configurar nada. Sem Volume, o
+   log e a tela do WhatsApp avisam (`ephemeralSession` no status).
+
+Fora do nosso controle (limites do WhatsApp): o celular sem internet por ~14 dias desconecta os
+aparelhos vinculados; há um limite de 4 aparelhos vinculados por número; remover o aparelho no
+celular sempre exige ler o QR de novo. Dois processos com a MESMA pasta de sessão derrubam um ao
+outro (440). A posse do despachante já impede um segundo processo no mesmo banco de conectar.

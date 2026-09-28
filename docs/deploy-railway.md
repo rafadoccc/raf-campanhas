@@ -10,7 +10,10 @@ painel se preciso e sobe o Fastify servindo o painel e a API na mesma porta. `ra
    Deploy automático a cada push nessa branch (confira em **Settings → Deploy Triggers**).
 2. Adicione um serviço **MySQL** (plugin do próprio Railway) ao projeto — ele expõe
    `DATABASE_URL` automaticamente por variável de referência; use-a direto, sem copiar valor.
-3. Adicione um **Volume** montado em `/data/sessions` (ou outro caminho persistente do
+3. **Obrigatório:** adicione um **Volume** (ex.: montado em `/data`). O sistema detecta o Volume
+   (`RAILWAY_VOLUME_MOUNT_PATH`) e guarda as sessões em `/data/sessions` sozinho, sem precisar de
+   `SESSIONS_DIR`. Sem Volume, a tela do WhatsApp mostra um aviso e o log também, porque cada
+   deploy apaga o disco do contêiner e o WhatsApp pede o QR de novo (ADR-036). Montado em `/data/sessions` (ou outro caminho persistente do
    plano). Sem volume, cada deploy apaga a sessão do WhatsApp de todo mundo e todos precisam
    ler o QR de novo.
 
@@ -19,7 +22,7 @@ painel se preciso e sobe o Fastify servindo o painel e a API na mesma porta. `ra
 | Variável | Obrigatória | Valor |
 |---|---|---|
 | `DATABASE_URL` | sim | referência ao plugin MySQL do Railway |
-| `SESSIONS_DIR` | sim | caminho dentro do Volume, ex.: `/data/sessions` |
+| `SESSIONS_DIR` | não | só para escolher outro caminho; com Volume, o padrão já é `<volume>/sessions` |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | só na primeira subida | cria a primeira conta (`SUPER_ADMIN`) se o banco de usuários estiver vazio. `ADMIN_PASSWORD` precisa de 10+ caracteres. Pode remover depois — não é lido de novo com o banco já populado. |
 | `ADMIN_NAME` | não | nome de exibição da primeira conta (padrão "Administrador") |
 | `PUBLIC_URL` | não | só se usar domínio próprio; sem ela o sistema usa `RAILWAY_PUBLIC_DOMAIN` sozinho |

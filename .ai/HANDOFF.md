@@ -5,6 +5,45 @@
 
 ---
 
+## 2026-09-28T04:50Z · claude
+
+**Fiz:** T-124 (ADR-036), a sessão do WhatsApp que voltava pedindo QR depois de
+reinícios e deploys.
+- `auth-state.ts`: gravação atômica, cópia de segurança da credencial e nunca uma identidade nova
+  em silêncio. Mesmo formato do Baileys, então a sessão atual vale sem migração.
+- Só o 401 apaga a sessão (o 500 também apagava).
+- Reconexão sem desistir, no máximo 1 tentativa por minuto.
+- Nenhum QR em reconexão automática.
+- Encerramento limpo ao fechar a janela (SIGHUP/SIGBREAK).
+- No Railway, usa o Volume sozinho; sem Volume, avisa no log e na tela.
+
+**Arquivos:** apps/server/src/{auth-state,auth-state.test,connection-policy,pairing.test,whatsapp,whatsapp-manager,main,app}.ts, package.json (novo teste), docs/deploy-railway.md, .ai/*
+**Tarefas:** T-124 (concluída). T-123 (responsivo) passou para o **codex**, por decisão do dono:
+os dois agentes estavam editando as mesmas telas na dev ao mesmo tempo.
+**Estado:** compila · unitários 71/71 · integração 116/116. Teste real com o Baileys numa pasta
+temporária: o clique em Conectar chega ao QR; a partida automática para sem QR, com o motivo.
+Nenhuma sessão real foi tocada.
+**Armadilhas:**
+- Para o codex: estes arquivos do painel têm mudanças minhas **não commitadas** da parte
+  responsiva anterior, e ficam para o commit da T-123 depois da validação:
+  - `styles.css`: `.scroll-area` sem overflow e sem `overscroll-behavior: contain` (era o bug de
+    rolagem no Chrome do Samsung);
+  - `primitives.tsx`: `ScrollArea` com `always`; só rola sozinha a partir de lg;
+  - `main.tsx`, `navigation.tsx`, `campaign-form.tsx`, `campaigns.tsx`, `history.tsx`.
+
+  E em `settings.tsx`, junto com a mudança do codex nos botões: alerta de `ephemeralSession` e
+  "reconectando" como aviso (amarelo). Não desfaça.
+- Achei o painel estourando a largura no celular por causa de grade sem `grid-cols-1`; o
+  codex já corrigiu o Início. Confira detalhe da campanha, administração e formulário.
+- `connect()` sem argumento é interativo (pode mostrar QR). Partida e reconexão usam
+  `{ interactive: false }`: não mude isso, ou volta o QR para ninguém.
+- A pasta da sessão da produção tem ~38 mil arquivos (chaves do Signal por participante de grupo).
+  É o normal do Baileys, não é erro.
+**Próximo passo sugerido:** quando o codex terminar a T-123, validar em 360/768/1440 px, rodar os
+testes e commitar a parte do painel.
+
+---
+
 ## 2026-09-28T01:40Z · claude
 
 **Fiz:** pedidos do dono em T-122 (ADR-035).
