@@ -58,14 +58,15 @@ Cada usuário conecta o **próprio** número; não há conexão compartilhada en
 1. Em **WhatsApp**, clique em **Conectar / gerar QR Code**.
 2. No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho.
 3. Leia o QR na tela (ele se renova sozinho a cada 20 segundos).
-4. Clique em **Sincronizar grupos**.
+4. Os grupos são **sincronizados sozinhos** logo depois de conectar, e a tela avisa quantos
+   foram. O botão **Sincronizar grupos** atualiza de novo quando quiser (uma vez a cada 30 s).
 5. Crie uma campanha, busque e selecione os grupos em ordem, e escolha o intervalo (mínimo de
-   3 minutos entre grupos — piso fixo, protege o número contra bloqueio). Marque **"Marcar
+   2 minutos entre grupos — piso fixo, protege o número contra bloqueio). Marque **"Marcar
    todos os membros (@todos)"** se quiser que cada participante receba notificação de menção
    sem mudar o texto da mensagem.
-6. Escolha fila única (início ao ativar) ou horários diários.
-7. Confira o resumo. Use **Simulação** para testar, ou **WhatsApp real** confirmando a
-   autorização dos destinatários.
+6. Escolha **Ao iniciar** (fila única: o 1º grupo recebe na hora) ou **Em horários diários**.
+7. Confira o **Modelo da mensagem** (imagem/vídeo e texto, como vai para o grupo) e clique em
+   **Iniciar**, confirmando a autorização dos grupos. O envio é sempre pelo WhatsApp de verdade.
 
 Depois de pareado, o sistema **reconecta sozinho** ao iniciar (sem QR). Conectar ou
 sincronizar não ativa campanhas. A sessão fica fora da pasta do projeto
@@ -91,7 +92,7 @@ com outro é bloqueado.
   como Encerrada, sem Retomar. O histórico distingue sucessos, falhas e cancelamentos.
 - Excluir só é permitido em rascunhos/encerradas e sem tentativa em andamento. É exclusão
   lógica (`deletedAt`): sai da lista, mas histórico e métricas não são apagados.
-- O padrão de 3 minutos também é aplicado às campanhas antigas; entregas existentes não
+- O piso de 2 minutos também vale para as campanhas antigas; entregas existentes não
   são recriadas. A nova migração numera a ordem antiga por horário/criação/ID.
 - Falhas depois de iniciar o envio não são repetidas automaticamente: o resultado pode ser
   incerto. Uma falha **certa** (nada saiu) pode ser tentada de novo, por envio ou em lote pela

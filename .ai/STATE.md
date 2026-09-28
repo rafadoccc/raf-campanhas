@@ -28,6 +28,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5 | Piso de intervalo no banco, @todos, tentar de novo, métricas do admin | ✅ concluída (ADR-028/029/030/031) |
 | 5b | Conversão de vídeo, estado do WhatsApp gravado, painel sem tela branca, rolagem | ✅ concluída (ADR-032/033) |
 | 5c | Troca de tela instantânea, limites contra abuso, VPS pequena, ffmpeg seguro | ✅ concluída (ADR-034) |
+| 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---
@@ -76,8 +77,8 @@ verificações de senha, uploads simultâneos.
 
 ### Fluxo de uma campanha
 
-1. Usuário cria campanha (`DRAFT`) escolhendo grupos, mensagens, intervalo (mínimo 3 min,
-   ADR-028), modo e, opcionalmente, "marcar todos os membros" (ADR-029).
+1. Usuário cria campanha (`DRAFT`) escolhendo grupos, mensagens, intervalo (mínimo 2 min,
+   ADR-028/035), modo e, opcionalmente, "marcar todos os membros" (ADR-029).
 2. Ao ativar, `apps/server/src/schedule.ts::planDeliveries` materializa **todas** as
    entregas no MySQL com `sequence` fixa. Isso só acontece na primeira ativação.
 3. O despachante interno de `apps/server` varre o MySQL a cada 5 s, por **faixa** (uma por
@@ -86,7 +87,7 @@ verificações de senha, uploads simultâneos.
    `LOCKING_TRANSACTION`, READ COMMITTED, ADR-010).
 5. Envio pela conexão do DONO da campanha (baileys) ou simulador. `finishDelivery` grava
    SENT/FAILED e empurra `nextAvailableAt` em `effectiveInterval(intervalSeconds)` — nunca
-   abaixo do piso de 180 s, mesmo que o valor gravado seja menor (ADR-028).
+   abaixo do piso de 120 s, mesmo que o valor gravado seja menor (ADR-028/035).
 
 ### Invariantes que NÃO podem ser quebradas
 
@@ -96,7 +97,7 @@ verificações de senha, uploads simultâneos.
 - Falha de resultado **incerto** (pode ter chegado) nunca é reenviada sem confirmação explícita
   do usuário — risco de duplicar mensagem (`isUncertainFailure`, `send-context.ts`).
 - Só o primeiro pendente (`sequence` mínima) de uma campanha pode ser reservado.
-- O intervalo é contado a partir do **fim** da tentativa anterior, nunca abaixo de 180 s
+- O intervalo é contado a partir do **fim** da tentativa anterior, nunca abaixo de 120 s
   (`MIN_INTERVAL_SECONDS`, `packages/database/src/queue.ts`).
 - `Delivery` tem `@@unique([campaignId, sequence])` e `@@unique([campaignId, groupId, scheduledAt])`.
 - Um envio nunca sai pela conexão de um usuário que não é o dono da campanha (ADR-022).
@@ -105,7 +106,7 @@ verificações de senha, uploads simultâneos.
 
 ## Trabalho recente (branch dev, 2026-09-24)
 
-- **ADR-028:** piso de 3 minutos entre grupos garantido no banco (não só na API) — protege
+- **ADR-028:** piso entre grupos (3 minutos; 2 minutos desde a ADR-035) garantido no banco (não só na API) — protege
   campanhas antigas e qualquer escrita direta.
 - **ADR-029:** marcar todos os membros do grupo (@todos oculto), por campanha.
 - **ADR-030:** tentar de novo um envio com falha — direto se a falha é certa, com confirmação
@@ -116,6 +117,10 @@ verificações de senha, uploads simultâneos.
 - Design system: `Select` e `Checkbox` próprios (sem visual nativo do sistema operacional,
   `docs/design-system.md`), bordas decorativas removidas (faixa/borda colorida do cartão,
   barra do topo do detalhe), logo "CC" removida do topo e do login.
+- T-122 (ADR-035): grupos sincronizados sozinhos ao conectar (botão com espera de 30 s), piso de
+  2 minutos, "Atrasado" só quando o próximo envio já podia ter saído e não saiu, o 1º envio sai
+  na hora ao iniciar (o despachante é acordado), simulação fora da tela, "Modelo da mensagem"
+  recolhível no detalhe, menu no nome do usuário, excluir só na lista.
 - Desempenho e segurança (T-121, ADR-034): telas pré-carregadas e com cache (troca de tela de
   1 a 90 ms), painel pré-comprimido (376 KB para 108 KB), login antes de ler o corpo, limites
   por IP/senha/upload, ffmpeg só com o contêiner detectado (fecha a leitura de arquivos do

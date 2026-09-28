@@ -851,3 +851,39 @@ cada tela era baixada só no clique (React.lazy), e depois esperava os dados com
 
 Guia de instalação: `docs/deploy-vps.md` (MySQL com 128 MB de buffer, swap, systemd,
 Caddy, firewall, backup).
+
+---
+
+## ADR-035 · Sincronização automática de grupos, piso de 2 min e "Atrasado" preciso
+
+**Data:** 2026-09-28 · **Status:** aceita (pedido do dono) · **Autor:** claude · **Branch:** dev
+
+- **Piso de 2 minutos** (altera a ADR-028 a pedido explícito do dono): `MIN_INTERVAL_SECONDS =
+  120`, padrão da API e do formulário em 2 min e padrão da coluna em 120 (migration
+  `20260928000000_min_interval_2min`, só o `DEFAULT`). Campanhas existentes mantêm o intervalo
+  escolhido. O relógio por número (ADR-006) continua valendo: o intervalo conta do fim do
+  envio anterior do NÚMERO, mesmo que tenha sido de outra campanha.
+- **"Atrasado" preciso** (`queue-forecast.ts`): antes era qualquer pendente cuja previsão
+  passava do horário planejado. Como o intervalo conta do fim do envio anterior, cada envio
+  empurra os seguintes alguns segundos, e uma campanha recém-iniciada aparecia inteira como
+  "Atrasado". Agora só o PRÓXIMO da fila pode estar atrasado: quando já podia sair (horário
+  planejado e intervalo do número cumpridos) e passou 1 min (`LATE_GRACE_MS`) sem sair — ex.:
+  WhatsApp desconectado. Os seguintes mostram só a previsão ("deve sair ~HH:MM").
+- **Primeiro envio na hora:** conferido na produção, o 1º envio já saía de 1 a 4 s depois do
+  horário (a espera só existe se o NÚMERO enviou há menos de um intervalo). Ao iniciar ou retomar,
+  `wakeDispatcher()` antecipa a varredura da fila, sem esperar até 5 s. As regras de claim não
+  mudaram.
+- **Grupos sincronizados sozinhos:** `WhatsAppManager.autoSyncOnConnect`. Na passagem para
+  "conectado", sincroniza depois de 3 s, a não ser que já tenha sincronizado há menos de 10 min.
+  `syncGroups` junta pedidos simultâneos. O pedido manual até 30 s depois do último recebe 429
+  com aviso de quanto esperar (limite suave do botão, que também mostra a contagem). O status de
+  `/api/whatsapp/status` traz `groupsSync` (`running`, `auto`, `at`, `count`, `error`), e a tela
+  avisa quando termina.
+- **Interface:**
+  - Simulação fora da tela; o servidor ainda aceita `provider: 'simulator'`, que os testes usam.
+  - "Quando enviar" em `Segmented`.
+  - "Modelo da mensagem" recolhível no detalhe (miniatura e começo do texto; aberto mostra a
+    mensagem completa).
+  - Menu no nome do usuário (`Menu` com `trigger`/`header`).
+  - Excluir só no cartão da lista.
+  - Lista vazia sem botão duplicado (`EmptyState` com `hint`).

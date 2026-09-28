@@ -5,6 +5,43 @@
 
 ---
 
+## 2026-09-28T01:40Z · claude
+
+**Fiz:** pedidos do dono em T-122 (ADR-035).
+- **WhatsApp:** os grupos são sincronizados sozinhos ao conectar, e a tela avisa quantos. O
+  botão de sincronizar tem limite suave de 30 s (429 com aviso e contagem no botão).
+- **Intervalo mínimo:** 2 min em vez de 3. A migration só troca o DEFAULT da coluna.
+- **"Atrasado":** só aparece no próximo envio, quando ele já podia ter saído e passou 1 min sem
+  sair. Antes a campanha inteira aparecia atrasada logo ao iniciar.
+- **Início imediato:** o despachante é acordado ao iniciar ou retomar.
+- **Interface:**
+  - Simulação fora da tela.
+  - "Quando enviar" em Segmented.
+  - "Modelo da mensagem" recolhível no detalhe, no lugar de "Mídia".
+  - Menu no nome do usuário, com "Alterar senha".
+  - Excluir só no cartão da lista.
+  - Lista vazia sem o botão duplicado de criar.
+
+**Arquivos:**
+- Servidor: queue-forecast(.test).ts, whatsapp-manager(.test).ts, app.ts, dispatcher.ts, schedule.ts, campaign-routes.ts, integration.test.ts
+- Banco: packages/database/src/queue.ts, schema.prisma, migrations/20260928000000_min_interval_2min
+- Painel: settings.tsx, campaign-detail.tsx, campaigns.tsx, components/{campaign-actions,campaign-form,navigation}.tsx, design/{primitives,icons,format}.ts(x)
+- Docs: README, STATE, DECISIONS, design-system.md
+
+**Tarefas:** T-122 (concluída).
+**Estado:** compila · lint ok · unitários 67/67 · integração 116/116. Conferido no navegador (dev):
+Modelo recolhível, menu do usuário, formulário com Segmented e 2 min.
+**Armadilhas:**
+- Medi na produção que o 1º envio já saía de 1 a 4 s depois do horário. A espera maior só
+  acontece se o MESMO número enviou há menos de um intervalo (ADR-006), por exemplo numa
+  campanha anterior, e isso é proteção contra bloqueio: não remova.
+- O servidor ainda aceita `provider: 'simulator'`; os testes dependem disso.
+- `/api/whatsapp/status` só traz `groupsSync` depois da primeira sincronização (os testes
+  antigos comparam o objeto inteiro).
+**Próximo passo sugerido:** T-119 (@todos oficial) quando o dono puder mandar um @todos de teste.
+
+---
+
 ## 2026-09-27T23:45Z · claude
 
 **Fiz:** revisão de desempenho e segurança pedida pelo dono (T-121, ADR-034).

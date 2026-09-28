@@ -18,10 +18,10 @@ fica só para o ponto de status (`Dot`). Uma ação primária por área; o resto
 | `PasswordInput` | Campo de senha com o botão de mostrar/esconder. Use sempre no lugar de `<input type="password">`. |
 | `Select` | Ver abaixo. |
 | `Checkbox` | Ver abaixo. |
-| `Menu` | Botão "⋯" com a lista de ações secundárias de uma linha (`items`: `label`, `icon`, `onSelect`, `danger`, `disabled`). Mesmo teclado do `Select`. Use quando uma linha teria mais de dois botões — ex.: ações de cada conta na Administração. |
-| `Segmented` | Filtro de opções exclusivas lado a lado (`aria-pressed`), ex.: Todas / Ativas / Desativadas. |
+| `Menu` | Botão "⋯" com a lista de ações secundárias de uma linha (`items`: `label`, `icon`, `onSelect`, `danger`, `disabled`). Mesmo teclado do `Select`. Use quando uma linha teria mais de dois botões — ex.: ações de cada conta na Administração. `trigger` troca o "⋯" por outro conteúdo e `header` põe uma linha de contexto no alto (ex.: o menu do nome do usuário no topo). |
+| `Segmented` | Opções exclusivas lado a lado (`aria-pressed`), ex.: Todas / Ativas / Desativadas. Use no lugar do `Select` quando são 2 a 4 opções curtas (ex.: "Quando enviar" na campanha). |
 | `Alert` | Aviso inline (`tone`: `danger`/`warning`/`info`/`brand`). |
-| `EmptyState` / `Skeleton` | Lista vazia e carregamento. |
+| `EmptyState` / `Skeleton` | Lista vazia (frase + `hint` curto do que fazer) e carregamento. Não repita no vazio um botão que já existe no cabeçalho da tela: diga onde ele está no `hint`. |
 | `ScrollArea` | `overflow-y: auto` com barra invisível (`.scroll-area` em `styles.css`); a rolagem por roda/toque/teclado continua funcionando. Use dentro de um contêiner de altura definida — é assim que cada tela rola por partes em vez do documento inteiro (`Page` ocupa `h-full`, sem rolagem própria). |
 | `Stat` | Número grande com rótulo e ícone, usado nas faixas de métricas (Início, Administração). |
 | `PageHeader` / `Page` | Cabeçalho e moldura da página. `Page` sem opção: altura da tela no desktop, listas rolando por dentro (Início, Campanhas, detalhe). `<Page scroll>`: a página cresce e rola inteira (telas de seções empilhadas, como Administração). No celular toda página rola inteira. Grades com colunas que rolam por dentro precisam de `lg:grid-rows-[minmax(0,1fr)]`, senão a coluna cresce e a parte de baixo é cortada. |
