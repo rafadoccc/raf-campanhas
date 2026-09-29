@@ -14,22 +14,32 @@ const ConfirmContext = createContext<((options: Options) => Promise<boolean>) | 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const confirm = useCallback((options: Options) => new Promise<boolean>(resolve => setPending({ ...options, resolve })), []);
   const close = (ok: boolean) => { pending?.resolve(ok); setPending(null); };
   useEffect(() => {
     if (!pending) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     cancelRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close(false); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close(false);
+      if (event.key !== 'Tab') return;
+      const buttons = [...(dialogRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])];
+      const first = buttons[0]; const last = buttons.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); previous?.focus(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending]);
   return <ConfirmContext.Provider value={confirm}>
     {children}
     {pending && <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onMouseDown={event => { if (event.target === event.currentTarget) close(false); }}>
-      <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="w-full max-w-sm rounded-lg border border-line bg-white p-5 shadow-pop">
+      <div ref={dialogRef} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby={pending.description ? 'confirm-description' : undefined} className="w-full max-w-sm rounded-lg border border-line bg-white p-5 shadow-pop">
         <h2 id="confirm-title" className="text-base font-semibold">{pending.title}</h2>
-        {pending.description && <div className="mt-2 text-sm text-muted">{pending.description}</div>}
+        {pending.description && <div id="confirm-description" className="mt-2 text-sm text-muted">{pending.description}</div>}
         <div className="mt-5 flex justify-end gap-2">
           <Button ref={cancelRef} onClick={() => close(false)}>{pending.cancelLabel ?? 'Cancelar'}</Button>
           <Button variant={pending.danger ? 'secondary' : 'primary'} className={pending.danger ? '!border-red-200 !bg-red-600 !text-white hover:!bg-red-700' : ''} onClick={() => close(true)}>{pending.confirmLabel ?? 'Confirmar'}</Button>
