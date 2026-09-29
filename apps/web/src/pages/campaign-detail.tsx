@@ -51,7 +51,7 @@ function Template({ campaign }: { campaign: Campaign }) {
         {messages.length > 1 && <p className="text-2xs font-medium text-muted">Mensagem {i + 1} de {messages.length} · alterna a cada {campaign.mode === 'IMMEDIATE' ? 'grupo' : 'rodada'}</p>}
         <p className="whitespace-pre-wrap break-words rounded bg-slate-50 p-3 text-sm">{m.content}</p>
       </div>)}
-      {campaign.mentionAll && <p className="flex items-center gap-1 text-2xs text-muted"><IconMention className="h-3.5 w-3.5" aria-hidden />Marca todos os membros do grupo</p>}
+      {campaign.mentionAll && <p className="flex items-center gap-1 text-2xs text-muted"><IconMention className="h-3.5 w-3.5" aria-hidden />Com @todos: notifica todos os membros (oculto em grupos acima de 32 membros onde você não é admin)</p>}
     </div>}
   </Card>;
 }

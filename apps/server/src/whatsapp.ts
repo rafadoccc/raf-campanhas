@@ -2,7 +2,8 @@ import path from 'node:path';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads, applyServerEvent, type ServerEvent } from '@campaign/database';
-import { describeGroupForSend, mentionTargets, notSent } from './send-context';
+import { describeGroupForSend, mentionTargets, notSent, mentionAllMode, withMentionAllToken, mentionAllSample, DEFAULT_MENTION_ALL_TOKEN } from './send-context';
+import { writeAtomic } from './auth-state';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
 import { closeAction, retryDelay } from './connection-policy';
@@ -236,6 +237,24 @@ export class WhatsAppProvider {
       });
       // Recusa do servidor DEPOIS do sendMessage (ack com erro): o Baileys marca a mensagem
       // com status ERROR e o código. Sem ouvir isto, a entrega ficaria "enviada" para sempre.
+      // @todos (ADR-039): quando o dono manda um @todos pelo celular, a mensagem chega também
+      // aqui (outro aparelho da mesma conta). Guarda só o FORMATO do marcador, nunca o texto, e o
+      // envio das campanhas passa a usar exatamente o mesmo marcador. Mensagens deste sistema
+      // (append) e de outras pessoas não entram.
+      sock.ev.on('messages.upsert', ({ messages, type }) => {
+        if (generation !== this.generation || type !== 'notify') return;
+        for (const message of messages) {
+          if (!message.key?.fromMe || !message.key.remoteJid?.endsWith('@g.us')) continue;
+          const content = message.message?.extendedTextMessage ?? message.message?.imageMessage ?? message.message?.videoMessage;
+          const contextInfo = content?.contextInfo;
+          if (!contextInfo?.nonJidMentions) continue;
+          const text = message.message?.extendedTextMessage?.text ?? message.message?.imageMessage?.caption ?? message.message?.videoMessage?.caption ?? '';
+          const sample = { at: new Date().toISOString(), ...mentionAllSample(text, contextInfo) };
+          console.info('[WhatsApp] Formato do @todos capturado do celular:', JSON.stringify(sample));
+          this.mentionSample = sample;
+          void writeAtomic(this.mentionSampleFile, JSON.stringify(sample, null, 2)).catch(() => undefined);
+        }
+      });
       sock.ev.on('messages.update', updates => {
         if (generation !== this.generation || !sock.user?.id) return;
         for (const { key, update } of updates) {
@@ -408,15 +427,35 @@ export class WhatsAppProvider {
     }
     if (this.socket !== sock || this.data.state !== 'connected') throw new Error('Conexão interrompida antes do envio.');
     if (media && !['image', 'video'].includes(media.kind)) throw Error('Tipo de mídia inválido.');
-    // "Marcar todos" (ADR-029): cada membro recebe a notificação de menção; o texto não muda.
-    // Funciona igual em texto, imagem e vídeo (a menção vai junto da legenda).
-    const mentions = options.mentionAll ? mentionTargets(metadata, me) : [];
-    const tag = mentions.length ? { mentions } : {};
-    const content = !media ? { text, ...tag } : media.kind === 'image'
-      ? { image: Buffer.from(media.data), mimetype: media.mimeType, caption: text, ...tag }
-      : { video: Buffer.from(media.data), mimetype: media.mimeType, caption: text, ...tag };
-    const context = options.mentionAll ? `${group.context} mencoes=${mentions.length}`.slice(0, 160) : group.context;
+    // "Marcar todos": o @todos nativo do WhatsApp quando a regra dele permite (grupo de até 32
+    // membros, ou a conta é admin — ADR-039); senão, a marcação oculta de cada membro (ADR-029),
+    // que também notifica. Igual em texto, imagem e vídeo (vai junto da legenda).
+    const mode = options.mentionAll ? mentionAllMode(group) : null;
+    const mentions = mode === 'hidden' ? mentionTargets(metadata, me) : [];
+    const body = mode === 'native' ? withMentionAllToken(text, await this.mentionAllToken()) : text;
+    const tag = mode === 'native' ? { contextInfo: { nonJidMentions: 1 } } : mentions.length ? { mentions } : {};
+    const content = !media ? { text: body, ...tag } : media.kind === 'image'
+      ? { image: Buffer.from(media.data), mimetype: media.mimeType, caption: body, ...tag }
+      : { video: Buffer.from(media.data), mimetype: media.mimeType, caption: body, ...tag };
+    const marked = mode === 'native' ? 'mencoes=todos' : mode === 'hidden' ? `mencoes=${mentions.length}` : '';
+    const context = marked ? `${group.context} ${marked}`.slice(0, 160) : group.context;
     return { sock, content, group: { ...group, context } };
+  }
+  /** Arquivo com o formato do @todos capturado do celular (ao lado da pasta da sessão). */
+  private get mentionSampleFile() { return path.join(path.dirname(this.authDir), 'mencao-todos.json'); }
+  private mentionSample?: { tokens: string[]; nonJidMentions: number | null };
+  /**
+   * Marcador do @todos: o que o celular do dono usou num @todos de verdade (captura), senão o
+   * padrão. Só aceita palavra sem número, para um "@5511…" nunca virar marcador.
+   */
+  private async mentionAllToken() {
+    if (!this.mentionSample) {
+      try { this.mentionSample = JSON.parse(await readFile(this.mentionSampleFile, 'utf8')); }
+      catch { /* sem captura ainda: usa o padrão */ }
+    }
+    const tokens = (this.mentionSample?.tokens ?? []).filter(token => /^@[\p{L}_]+$/u.test(token));
+    const known = tokens.find(token => /^@(todos|all|everyone)$/i.test(token));
+    return known ?? (tokens.length === 1 ? tokens[0] : DEFAULT_MENTION_ALL_TOKEN);
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);

@@ -41,6 +41,45 @@ export function mentionTargets(group: GroupInfo, me: { id?: string; lid?: string
   return [...new Set(ids)];
 }
 
+// ─── @todos nativo do WhatsApp (ADR-039) ────────────────────────────────────────
+// O @todos que o celular cria (digitar "@" e tocar em "todos") não lista ninguém: vai no texto
+// um marcador e, no contextInfo, nonJidMentions = 1. Todos os membros recebem a notificação, até
+// quem silenciou o grupo, e o marcador aparece destacado. Regra do WhatsApp: em grupo com mais de
+// 32 membros, só administradores podem usar. Fora dessa regra, o sistema usa a marcação oculta
+// antiga (ADR-029), que também notifica, só sem o destaque.
+
+/** Acima disso, só administradores do grupo podem usar o @todos nativo. */
+export const MENTION_ALL_OPEN_LIMIT = 32;
+/** Marcador enviado no texto. O que o celular grava confirma ou troca este padrão (captura). */
+export const DEFAULT_MENTION_ALL_TOKEN = '@all';
+
+/** 'native' = @todos do WhatsApp; 'hidden' = marcação oculta de cada membro (compatível sempre). */
+export function mentionAllMode(group: { participants: number | null; isAdmin: boolean | null }): 'native' | 'hidden' {
+  if (group.isAdmin === true) return 'native';
+  return group.participants !== null && group.participants <= MENTION_ALL_OPEN_LIMIT ? 'native' : 'hidden';
+}
+
+// "@todos", "@all" ou "@everyone" digitados pelo usuário no texto da campanha.
+const MENTION_ALL_WORD = /(^|[\s(])@(todos|all|everyone)(?![\p{L}\p{N}_])/iu;
+
+/**
+ * Texto com o marcador do @todos: onde o usuário escreveu "@todos" (ou "@all"), fica ali; se não
+ * escreveu, entra no começo. Nunca repete o marcador.
+ */
+export function withMentionAllToken(text: string, token = DEFAULT_MENTION_ALL_TOKEN) {
+  if (MENTION_ALL_WORD.test(text)) return text.replace(MENTION_ALL_WORD, (_match, lead: string) => `${lead}${token}`);
+  return text ? `${token} ${text}` : token;
+}
+
+/**
+ * Do que o celular mandou num @todos de verdade, guarda só o formato (nunca o texto): as palavras
+ * logo depois de "@" que não são números, e os campos de menção. Serve para confirmar o marcador.
+ */
+export function mentionAllSample(text: string, contextInfo: { nonJidMentions?: number | null; mentionedJid?: string[] | null }) {
+  const tokens = [...new Set([...text.matchAll(/@([\p{L}_][\p{L}\p{N}_]{0,20})/gu)].map(m => `@${m[1]}`))];
+  return { nonJidMentions: contextInfo.nonJidMentions ?? null, mentionedJidCount: contextInfo.mentionedJid?.length ?? 0, tokens };
+}
+
 // Falha antes de o sendMessage ser chamado: nada saiu, então o envio pode ser tentado de novo
 // (ADR-014). Qualquer falha sem esta marca é tratada como resultado incerto.
 export function notSent(error: unknown): Error {

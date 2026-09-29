@@ -49,7 +49,7 @@ test('admin-only group without admin rights fails before anything is sent', asyn
   assert.equal((await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net')).messageId, 'fake-id');
   assert.equal(sent.length, 1);
 });
-test('mention all (029): every member except the account itself is mentioned, in text and media', async () => {
+test('mention all (039): native @todos when WhatsApp allows it, in text and media', async () => {
   const { provider, sent } = fake();
   const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;
   Object.assign(socket, {
@@ -62,11 +62,11 @@ test('mention all (029): every member except the account itself is mentioned, in
     ] }),
   });
   const result = await provider.send('a@g.us', 'Olá!', '5511000000000@s.whatsapp.net', null, undefined, { mentionAll: true });
-  assert.deepEqual(sent[0], ['a@g.us', { text: 'Olá!', mentions: ['5511111111111@s.whatsapp.net', '123456@lid'] }], 'texto intacto, todos marcados menos a própria conta');
-  assert.match(result.context, /mencoes=2$/);
+  assert.deepEqual(sent[0], ['a@g.us', { text: '@all Olá!', contextInfo: { nonJidMentions: 1 } }], '@todos nativo: marcador no texto, nenhum membro listado');
+  assert.match(result.context, /mencoes=todos$/);
   const data = Buffer.from('img');
-  await provider.send('a@g.us', 'Legenda', '5511000000000@s.whatsapp.net', { kind: 'image', mimeType: 'image/png', data }, undefined, { mentionAll: true });
-  assert.deepEqual(sent[1], ['a@g.us', { image: data, mimetype: 'image/png', caption: 'Legenda', mentions: ['5511111111111@s.whatsapp.net', '123456@lid'] }], 'marcação junto da legenda');
+  await provider.send('a@g.us', 'Oi @todos, chegou!', '5511000000000@s.whatsapp.net', { kind: 'image', mimeType: 'image/png', data }, undefined, { mentionAll: true });
+  assert.deepEqual(sent[1], ['a@g.us', { image: data, mimetype: 'image/png', caption: 'Oi @all, chegou!', contextInfo: { nonJidMentions: 1 } }], 'onde o usuário escreveu @todos, o marcador fica ali');
   await provider.send('a@g.us', 'Sem marcar', '5511000000000@s.whatsapp.net');
   assert.deepEqual(sent[2], ['a@g.us', { text: 'Sem marcar' }], 'desligado: mensagem sem menções');
 });
@@ -148,4 +148,32 @@ test('technical error codes are kept apart from the readable message', async () 
   assert.equal(errorCodeOf(Object.assign(new Error('x'), { output: { statusCode: 428 } })), 'baileys:428');
   assert.equal(errorCodeOf(Object.assign(new Error('x'), { code: 'ETIMEDOUT' })), 'ETIMEDOUT');
   assert.equal(errorCodeOf(new Error('sem código')), undefined);
+});
+test('mention all (039): big group without admin falls back to hidden mentions', async () => {
+  const { provider, sent } = fake();
+  const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;
+  Object.assign(socket, {
+    user: { id: '5511000000000:3@s.whatsapp.net' },
+    groupMetadata: async () => ({ size: 40, participants: [
+      { id: '5511000000000@s.whatsapp.net', admin: null },
+      { id: '5511111111111@s.whatsapp.net' },
+      { id: '5522222222222@s.whatsapp.net' },
+    ] }),
+  });
+  const result = await provider.send('a@g.us', 'Olá!', '5511000000000@s.whatsapp.net', null, undefined, { mentionAll: true });
+  assert.deepEqual(sent[0], ['a@g.us', { text: 'Olá!', mentions: ['5511111111111@s.whatsapp.net', '5522222222222@s.whatsapp.net'] }], 'texto intacto, marcação oculta');
+  assert.match(result.context, /mencoes=2$/);
+});
+test('mention all (039): rules for mode, token placement and the captured sample', async () => {
+  const { mentionAllMode, withMentionAllToken, mentionAllSample } = await import('./send-context.js');
+  assert.equal(mentionAllMode({ participants: 32, isAdmin: false }), 'native', 'até 32 membros qualquer um pode');
+  assert.equal(mentionAllMode({ participants: 33, isAdmin: false }), 'hidden', 'acima de 32 só admin');
+  assert.equal(mentionAllMode({ participants: 500, isAdmin: true }), 'native');
+  assert.equal(mentionAllMode({ participants: null, isAdmin: null }), 'hidden', 'sem saber, não arrisca');
+  assert.equal(withMentionAllToken('Promoção hoje'), '@all Promoção hoje');
+  assert.equal(withMentionAllToken('Atenção @Todos: começa às 20h', '@todos'), 'Atenção @todos: começa às 20h');
+  assert.equal(withMentionAllToken('email@todos.com.br e @todosjuntos'), '@all email@todos.com.br e @todosjuntos', 'não confunde e-mail nem outra palavra');
+  assert.equal(withMentionAllToken('@all @all'), '@all @all', 'só troca o primeiro');
+  assert.deepEqual(mentionAllSample('Oi @todos e @5511999, até já', { nonJidMentions: 1, mentionedJid: ['x@s.whatsapp.net'] }),
+    { nonJidMentions: 1, mentionedJidCount: 1, tokens: ['@todos'] }, 'guarda só o marcador, nunca o texto nem números');
 });

@@ -112,7 +112,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
           </div>
           <Checkbox checked={mentionAll} onChange={setMentionAll}
             label="Marcar todos os membros (@todos)"
-            hint="Cada participante do grupo recebe notificação de menção. O texto da mensagem não muda — a marcação fica oculta, só o aviso aparece." />
+            hint="Envia com o @todos do WhatsApp: aparece destacado e todos recebem notificação, até quem silenciou o grupo. Se você escrever @todos no texto, ele fica nesse lugar; senão, vai no começo. Em grupos com mais de 32 membros o WhatsApp só deixa admins usarem: se você não for admin, a marcação vai oculta (notifica igual, sem o destaque)." />
           {mode === 'SCHEDULED' && <div className="animate-fade-in space-y-4">
             <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
               <Field className="min-w-0" label="De"><input defaultValue={initial.startsAt} required name="startsAt" type="date" className={inputClass} /></Field>
