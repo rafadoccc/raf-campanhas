@@ -142,11 +142,45 @@ sistema, pela própria máquina.
 
 ## 7. Backup diário
 
+Os arquivos contêm mensagens, mídia e credenciais do WhatsApp. Crie uma pasta acessível só
+ao administrador e configure uma conta MySQL com permissão de leitura/backup. Guarde a senha
+em `/etc/campanhas/mysql-backup.cnf` (formato abaixo), nunca no crontab nem no repositório:
+
+```bash
+sudo install -d -m 700 -o root /var/backups/campanhas /etc/campanhas
+sudo install -m 600 -o root /dev/null /etc/campanhas/mysql-backup.cnf
+sudoedit /etc/campanhas/mysql-backup.cnf
+```
+
+Conteúdo do arquivo de credenciais (preencha localmente; não o envie pelo chat):
+
+```ini
+[client]
+user=USUARIO_DE_BACKUP
+password=SENHA_DE_BACKUP
+host=localhost
+```
+
+Depois, agende o script versionado. Ele só substitui o backup anterior após **confirmar** que
+banco e sessões foram exportados; uma falha não publica um gzip vazio como backup válido.
+
 ```bash
 sudo crontab -e
-# 03:30 todo dia: banco + sessões do WhatsApp, guardando 7 dias.
-30 3 * * * mysqldump --single-transaction campanhas | gzip > /var/backups/campanhas-$(date +\%u).sql.gz && tar czf /var/backups/sessoes-$(date +\%u).tgz -C /var/lib/campanhas sessions
+# 03:30 todo dia, 7 posições semanais; erros aparecem no log do cron.
+30 3 * * * /bin/bash /opt/campanhas/scripts/backup-vps.sh
 ```
+
+Teste manualmente uma vez: `sudo bash /opt/campanhas/scripts/backup-vps.sh` e confira que
+os dois arquivos existem e têm conteúdo. Mantenha também cópia criptografada **fora da VPS**:
+um backup só no mesmo servidor não protege contra perda do servidor.
+
+Para validar a restauração, use **um banco de teste separado**, nunca o banco de produção.
+Pare a aplicação antes de restaurar de verdade. Confira o arquivo escolhido com
+`gzip -t /var/backups/campanhas/campanhas-1.sql.gz` e
+`tar -tzf /var/backups/campanhas/sessoes-1.tgz`. Depois restaure o dump no banco de teste,
+verifique as campanhas e somente então planeje uma recuperação de produção. As sessões
+devem voltar para `/var/lib/campanhas/sessions` com o serviço parado e permissões do usuário
+`www-data`; não restaure credenciais de WhatsApp em duas instâncias ligadas ao mesmo tempo.
 
 ## Atualizar
 

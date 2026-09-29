@@ -19,7 +19,7 @@ const PORTS = { sistema: PORTA };
 const URL_PAINEL = `http://localhost:${PORTA}`;
 // Fontes cujo conteudo decide se o build esta em dia (declarado no topo: o fluxo
 // principal roda antes do fim do arquivo, e const nao sofre hoisting).
-const FONTES = ['apps/server/src', 'apps/web/src', 'apps/web/index.html', 'apps/web/vite.config.mts', 'apps/web/tailwind.config.ts', 'packages/database/src', 'packages/database/prisma/schema.prisma'];
+const FONTES = ['package.json', 'package-lock.json', 'apps/server/package.json', 'apps/web/package.json', 'packages/database/package.json', 'apps/server/src', 'apps/web/src', 'apps/web/index.html', 'apps/web/vite.config.mts', 'apps/web/tailwind.config.ts', 'packages/database/src', 'packages/database/prisma/schema.prisma', 'packages/database/prisma/migrations', 'scripts/compress-dist.mjs'];
 
 const ok = m => console.log(`  ✔  ${m}`);
 const aviso = m => console.log(`  ⚠  ${m}`);
@@ -41,22 +41,19 @@ const major = Number(process.versions.node.split('.')[0]);
 if (major < 22) parar(`Node.js ${process.versions.node} é antigo demais.`, ['Instale o Node.js 22 ou superior: https://nodejs.org']);
 ok(`Node.js ${process.versions.node}`);
 
-if (!existsSync('node_modules')) parar('Dependências não instaladas.', ['Rode uma vez: npm.cmd install']);
-// Uma atualização do código pode trazer pacote novo (ex.: o conversor de vídeo). Instala só
-// quando o package-lock.json mudou desde a última instalação. Se falhar (sem internet), avisa e
-// segue: o sistema funciona sem o pacote novo, só o recurso dele fica indisponível.
+// Antes de alterar node_modules, confirma que não há outra instância usando os arquivos.
+if (await portaAberta('127.0.0.1', PORTA)) parar(`A porta ${PORTA} já está em uso.`, ['O sistema provavelmente já está aberto. Feche a outra janela com Ctrl+C antes de atualizar.']);
+if (!existsSync('package-lock.json')) parar('package-lock.json ausente.', ['Recupere o arquivo versionado antes de iniciar.']);
+// Instala exatamente as versões do lockfile. Uma falha não pode deixar o painel iniciar com
+// dependências antigas ou parcialmente removidas.
 const lock = existsSync('package-lock.json') ? createHash('sha1').update(readFileSync('package-lock.json')).digest('hex') : '';
 const lockAnterior = existsSync('.runtime/deps-stamp') ? readFileSync('.runtime/deps-stamp', 'utf8').trim() : '';
-if (lock && lock !== lockAnterior) {
-  aviso('Dependências novas no código. Instalando (pode levar alguns minutos)…');
-  const r = spawnSync(`${npm} install --no-audit --no-fund`, { stdio: 'inherit', shell: true });
-  if (r.status === 0) {
-    mkdirSync('.runtime', { recursive: true });
-    writeFileSync('.runtime/deps-stamp', lock);
-    ok('Dependências atualizadas');
-  } else {
-    aviso('Não foi possível instalar as dependências novas agora. O sistema abre assim mesmo; a instalação é tentada de novo na próxima vez.');
-  }
+if (!existsSync('node_modules') || lock !== lockAnterior) {
+  aviso('Conferindo dependências do projeto (pode levar alguns minutos)…');
+  rodar(npm, ['ci', '--no-audit', '--no-fund'], 'Dependências não foram instaladas. Verifique a internet e tente iniciar novamente.');
+  mkdirSync('.runtime', { recursive: true });
+  writeFileSync('.runtime/deps-stamp', lock);
+  ok('Dependências atualizadas');
 } else ok('Dependências instaladas');
 
 // 2 ─ .env ----------------------------------------------------------------
