@@ -1,10 +1,40 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
-import { publicMessage } from './security';
-import { Gate, LoginLimiter, ServerBusyError } from './auth';
+import { publicMessage, registerSecurity } from './security';
+import { Gate, LoginLimiter, ServerBusyError, registerAuth } from './auth';
 import { RateLimiter } from './rate-limit';
 import { loadConfig, TRUSTED_PROXIES } from './config';
+
+test('encoded API paths receive origin, rate limit and authentication checks', async () => {
+  const app = Fastify();
+  const config = loadConfig({});
+  registerSecurity(app, config, new RateLimiter(2, 0));
+  registerAuth(app, config);
+  app.post('/api/probe', async () => ({ reached: true }));
+
+  const normal = await app.inject({ method: 'POST', url: '/api/probe', payload: {} });
+  assert.equal(normal.statusCode, 403);
+  const encoded = await app.inject({ method: 'POST', url: '/%61pi/probe', payload: {} });
+  assert.equal(encoded.statusCode, 403, 'a URL codificada exige Origin');
+
+  const authenticated = await app.inject({
+    method: 'POST', url: '/%61pi/probe', payload: {},
+    headers: { origin: config.publicUrl.origin },
+  });
+  assert.equal(authenticated.statusCode, 401, 'a URL codificada exige login');
+  const second = await app.inject({
+    method: 'POST', url: '/%61pi/probe', payload: {},
+    headers: { origin: config.publicUrl.origin },
+  });
+  assert.equal(second.statusCode, 401);
+  const limited = await app.inject({
+    method: 'POST', url: '/%61pi/probe', payload: {},
+    headers: { origin: config.publicUrl.origin },
+  });
+  assert.equal(limited.statusCode, 429, 'a URL codificada consome o limite da API');
+  await app.close();
+});
 
 test('publicMessage: business messages go to the screen; system details never do', () => {
   assert.equal(publicMessage(new Error('Conecte o WhatsApp primeiro.'), 'x'), 'Conecte o WhatsApp primeiro.');

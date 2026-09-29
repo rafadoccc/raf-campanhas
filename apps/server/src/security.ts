@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { AppConfig } from './config';
 import { ServerBusyError } from './auth';
 import { RateLimiter } from './rate-limit';
+import { apiPath } from './api-path';
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -17,23 +18,25 @@ const CSP = [
 
 export function registerSecurity(app: FastifyInstance, config: AppConfig, limiter = new RateLimiter()) {
   app.addHook('onRequest', async (request, reply) => {
+    const route = apiPath(request);
     // Host desconhecido: DNS rebinding ou acesso por um endereço não configurado.
     if (config.allowedHosts && !config.allowedHosts.includes(request.hostname)) return reply.code(403).send({ error: 'Endereço não permitido. Confira PUBLIC_URL.' });
     const origin = request.headers.origin;
     if (origin && !config.allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
     // Ações que alteram dados precisam vir do próprio painel. Navegadores sempre enviam
     // Origin nelas; sem Origin é um cliente fora do painel (ou um formulário forjado).
-    if (UNSAFE_METHODS.has(request.method) && request.url.startsWith('/api/') && !origin) {
+    if (UNSAFE_METHODS.has(request.method) && route.startsWith('/api/') && !origin) {
       return reply.code(403).send({ error: 'Requisição sem origem. Use o painel.' });
     }
     // Limite geral por IP, antes do login e da leitura do corpo. /api/health fica de fora: é o
     // que a hospedagem consulta para saber se o sistema está no ar.
-    if (request.url.startsWith('/api/') && !request.url.startsWith('/api/health') && !limiter.take(request.ip)) {
+    if (route.startsWith('/api/') && route !== '/api/health' && !limiter.take(request.ip)) {
       return reply.code(429).header('Retry-After', String(limiter.retryAfter(request.ip))).send({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns segundos.' });
     }
   });
 
   app.addHook('onSend', async (request, reply, payload) => {
+    const route = apiPath(request);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Referrer-Policy', 'same-origin');
@@ -43,7 +46,7 @@ export function registerSecurity(app: FastifyInstance, config: AppConfig, limite
     reply.header('Content-Security-Policy', CSP);
     if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=31536000');
     // API sem cache, exceto quando a rota define o próprio (mídia imutável: cache privado).
-    if (request.url.startsWith('/api/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
+    if (route.startsWith('/api/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
     return payload;
   });
 
@@ -82,7 +85,7 @@ export function registerWeb(app: FastifyInstance, config: AppConfig) {
     });
   }
   app.setNotFoundHandler((request, reply) => {
-    if (request.url.startsWith('/api/') || request.method !== 'GET') return reply.code(404).send({ error: 'Rota não encontrada.' });
+    if (apiPath(request).startsWith('/api/') || request.method !== 'GET') return reply.code(404).send({ error: 'Rota não encontrada.' });
     if (!config.webDist) return reply.code(503).send({ error: 'Painel não compilado. Rode npm run build.' });
     // Arquivo do painel que não existe (ex.: aba aberta antes de uma recompilação) é 404 de
     // verdade: devolver o index.html no lugar de um .js deixa a tela em branco sem erro nenhum.

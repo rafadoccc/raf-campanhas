@@ -9,6 +9,12 @@
 
 ---
 
+## Revisão de robustez de 2026-09-28
+
+```text
+[~] T-125  Corrigir achados críticos de autenticação, concorrência e sessão; validar regressões  owner: codex   since: 2026-09-29T00:24Z
+```
+
 ## Urgente — achados da auditoria de 2026-09-20
 
 Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe completo em

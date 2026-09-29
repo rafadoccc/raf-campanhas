@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { prisma } from '@campaign/database';
 import type { AppConfig } from './config';
+import { apiPath } from './api-path';
 
 const scrypt = promisify(scryptCallback) as (password: string, salt: Buffer, keylen: number, options: { N: number; r: number; p: number; maxmem: number }) => Promise<Buffer>;
 
@@ -203,7 +204,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
 
   // onRequest, ANTES de ler o corpo: sem login, um upload de 200 MB é recusado sem ocupar memória.
   app.addHook('onRequest', async (request, reply) => {
-    const url = request.url.split('?')[0];
+    const url = apiPath(request);
     if (!url.startsWith('/api/') || PUBLIC_API.has(url)) return;
     request.user = await resolveSession(request, reply, config);
     if (!request.user) return reply.code(401).send({ error: 'Faça login para continuar.' });
