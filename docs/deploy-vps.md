@@ -14,7 +14,7 @@ mesma máquina.
   fica ocioso. Voltar para uma tela mostra na hora o que ela tinha e atualiza por trás.
 - **Senhas:** no máximo 2 verificações de senha (scrypt, ~32 MB cada) ao mesmo tempo e até 32
   esperando. Uma rajada de logins recebe "servidor ocupado" em vez de esgotar a memória.
-- **Uploads:** no máximo 2 recebidos ao mesmo tempo, porque o corpo fica em memória (até 200 MB
+- **Uploads:** no máximo 1 recebido ao mesmo tempo, porque o corpo fica em memória (até 200 MB
   num vídeo). O login é conferido **antes** de ler o corpo, então um upload sem login não ocupa
   memória nenhuma. A conversão de vídeo roda uma por vez.
 - **Imagens:** o sharp roda sem cache de imagens decodificadas.
@@ -105,10 +105,17 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo mkdir -p /var/lib/campanhas/sessions && sudo chown -R www-data /var/lib/campanhas /opt/campanhas
+sudo mkdir -p /var/lib/campanhas/sessions /opt/campanhas/.runtime
+sudo chown -R www-data:www-data /var/lib/campanhas/sessions /opt/campanhas/.runtime
+sudo chmod 700 /var/lib/campanhas/sessions /opt/campanhas/.runtime
+sudo chown root:www-data /opt/campanhas/.env && sudo chmod 640 /opt/campanhas/.env
 sudo systemctl daemon-reload && sudo systemctl enable --now campanhas
 journalctl -u campanhas -f   # log
 ```
+
+O código e as dependências em `/opt/campanhas` continuam pertencendo ao usuário de deploy,
+não ao serviço `www-data`. Só as sessões e `.runtime` precisam de escrita durante a execução.
+O `.env` pode ser lido pelo serviço, mas não por outros usuários.
 
 ## 5. HTTPS com Caddy
 
@@ -143,7 +150,7 @@ sistema, pela própria máquina.
 ## 7. Backup diário
 
 Os arquivos contêm mensagens, mídia e credenciais do WhatsApp. Crie uma pasta acessível só
-ao administrador e configure uma conta MySQL com permissão de leitura/backup. Guarde a senha
+ao administrador. Pode usar a conta MySQL `campanhas` criada acima para o backup. Guarde a senha
 em `/etc/campanhas/mysql-backup.cnf` (formato abaixo), nunca no crontab nem no repositório:
 
 ```bash
@@ -156,8 +163,8 @@ Conteúdo do arquivo de credenciais (preencha localmente; não o envie pelo chat
 
 ```ini
 [client]
-user=USUARIO_DE_BACKUP
-password=SENHA_DE_BACKUP
+user=campanhas
+password=SENHA_DA_CONTA_CAMPANHAS
 host=localhost
 ```
 

@@ -33,7 +33,7 @@ No PowerShell use `npm.cmd`; o `npm` puro é bloqueado pela política de scripts
 Todo o painel e toda a API exigem login, conferido antes de ler o corpo do pedido. Não há
 cadastro público. Limites contra abuso: 10 tentativas de login erradas por IP ou e-mail a cada
 15 min; 300 pedidos à API por IP de uma vez (repondo 5 por segundo); no máximo 2 verificações de
-senha e 2 uploads ao mesmo tempo. Papéis: `SUPER_ADMIN`
+senha e 1 upload ao mesmo tempo. Papéis: `SUPER_ADMIN`
 (administra o sistema) e `USER`. A primeira conta — criada pelo inicializador, por
 `npm run user:create` com o banco vazio ou, num servidor, por `ADMIN_EMAIL`/`ADMIN_PASSWORD` —
 é `SUPER_ADMIN`. Depois, `npm run user:create` cria `USER`; um novo `SUPER_ADMIN` exige
@@ -110,9 +110,10 @@ para mensagens enviadas pelo sistema, grupo e conta correspondentes. Uma restri�
 dos leitores; persistimos um hash por mensagem do identificador fornecido pelo WhatsApp.
 O contador é aproximado: recibos ausentes, períodos desconectados, mudanças de identidade
 PN/LID ou mensagens anteriores à atualização podem causar sub/supercontagem. Não há
-backfill garantido. Zero recibos não comprova zero leitores. Um buffer limitado em memória
-absorve recibos que chegam antes da gravação do ID do envio; um reinício nessa janela pode
-perder esse recibo. O dashboard conta leituras por mensagem (não pessoas únicas entre campanhas).
+backfill garantido. Zero recibos não comprova zero leitores. Recibos recebidos antes da gravação
+do ID do envio ficam pendentes no MySQL e sobrevivem ao reinício. Recibos sem envio correspondente
+são descartados após 30 dias; os que casam com um envio são contados mesmo se antigos. O
+dashboard conta leituras por mensagem (não pessoas únicas entre campanhas).
 Mostra hoje e ontem no fuso de São Paulo. Simulações não entram em sucesso/envios reais.
 
 ### Idempotência e resultados incertos
