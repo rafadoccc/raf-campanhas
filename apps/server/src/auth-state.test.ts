@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { useDurableAuthState, writeAtomic } from './auth-state';
 import { LOCK_STALE_MS, SessionLock, lockHeld } from './session-lock';
 import { hostname } from 'node:os';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
 const baileys = () => import('@whiskeysockets/baileys');
 const folder = () => mkdtempSync(path.join(tmpdir(), 'wa-auth-'));
@@ -110,4 +112,37 @@ test('session lock refuses a second live owner and frees on release', async () =
     await new SessionLock(file).release();
     assert.ok(readFileSync(file, 'utf8'), 'nunca solta a trava de outro processo');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('session lock is exclusive across two processes starting together', { timeout: 10_000 }, async () => {
+  const dir = folder();
+  const file = path.join(dir, 'whatsapp.lock');
+  const program = `
+    const { SessionLock } = require(process.argv[1]);
+    const lock = new SessionLock(process.argv[2]);
+    process.send('ready');
+    process.on('message', async message => {
+      if (message === 'go') {
+        try { process.send((await lock.acquire()).ok ? 'acquired' : 'blocked'); }
+        catch (error) { process.send('error:' + error.message); }
+      }
+      if (message === 'stop') { await lock.release(); process.exit(0); }
+    });
+  `;
+  const children = Array.from({ length: 2 }, () => spawn(
+    process.execPath,
+    ['-e', program, path.join(__dirname, 'session-lock.js'), file],
+    { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
+  ));
+  try {
+    await Promise.all(children.map(child => once(child, 'message')));
+    const outcomes = children.map(child => once(child, 'message').then(([value]) => value));
+    for (const child of children) child.send('go');
+    assert.deepEqual((await Promise.all(outcomes)).sort(), ['acquired', 'blocked']);
+  } finally {
+    const exits = children.map(child => once(child, 'exit').catch(() => child.kill()));
+    for (const child of children) child.send('stop');
+    await Promise.all(exits);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

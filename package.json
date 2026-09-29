@@ -30,5 +30,11 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "proper-lockfile": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/proper-lockfile": "^4.1.4"
   }
 }

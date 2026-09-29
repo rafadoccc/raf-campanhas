@@ -155,7 +155,7 @@ export class WhatsAppProvider {
       this.lock ??= new SessionLock(`${this.authDir}.lock`);
       const lock = await this.lock.acquire();
       if (!this.wanted || generation !== this.generation) {
-        if (lock.ok && !this.wanted) await this.lock.release().catch(() => undefined);
+        if (lock.ok) await this.lock.release().catch(() => undefined);
         return;
       }
       if (!lock.ok) {
@@ -194,8 +194,9 @@ export class WhatsAppProvider {
           // Sessão pareada, ninguém pediu QR: o WhatsApp não reconhece mais este aparelho.
           console.warn('[WhatsApp] O WhatsApp pediu novo pareamento numa reconexão automática; conexão parada.');
           this.wanted = false; ++this.generation; clearTimeout(this.timer);
-          void this.lock?.release().catch(() => undefined);
           this.socket = undefined; sock.end(undefined);
+          await this.credsSaving.catch(() => undefined);
+          await this.lock?.release().catch(() => undefined);
           this.data = { state: 'error', error: paired
             ? 'O WhatsApp não reconhece mais este aparelho (ele foi removido no celular ou a sessão foi encerrada pelo WhatsApp). Clique em Conectar e leia o QR Code.'
             : 'Não há sessão salva deste WhatsApp. Clique em Conectar e leia o QR Code.' };
@@ -263,12 +264,12 @@ export class WhatsAppProvider {
             const action = closeAction(code, error?.message, this.retries);
             if (action.kind === 'stop' || !this.wanted) {
               this.wanted = false;
-              void this.lock?.release().catch(() => undefined);
+              await this.credsSaving.catch(() => undefined);
               if (action.kind === 'stop' && action.clearSession) {
                 // Espera a última gravação terminar: senão ela recriaria arquivos na pasta apagada.
-                await this.credsSaving.catch(() => undefined);
                 await rm(this.authDir, { recursive: true, force: true }).catch(() => {});
               }
+              await this.lock?.release().catch(() => undefined);
               this.data = action.kind === 'stop' ? { state: 'error', error: action.error } : { state: 'disconnected' };
               return;
             }
@@ -302,18 +303,22 @@ export class WhatsAppProvider {
   }
   async disconnect() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer);
-    void this.lock?.release().catch(() => undefined);
     this.version = undefined;
     forgetProtocolVersion();
     const sock = this.socket; this.socket = undefined;
     this.data = { state: 'disconnected' };
     let logoutFailed = false;
-    if (sock) {
-      try { await sock.logout(); }
-      catch { logoutFailed = true; }
-      finally { sock.end(undefined); }
+    try {
+      if (sock) {
+        try { await sock.logout(); }
+        catch { logoutFailed = true; }
+        finally { sock.end(undefined); }
+      }
+      await this.credsSaving.catch(() => undefined);
+      await rm(this.authDir, { recursive: true, force: true });
+    } finally {
+      await this.lock?.release().catch(() => undefined);
     }
-    await rm(this.authDir, { recursive: true, force: true });
     if (logoutFailed) {
       this.data = { state: 'error', error: 'Não foi possível revogar a sessão pelo WhatsApp. Remova este aparelho no celular.' };
       throw new Error(this.data.error);
@@ -417,10 +422,10 @@ export class WhatsAppProvider {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);
     // Termina de gravar a credencial antes de sair: encerrar no meio corrompia o creds.json.
     await this.credsSaving.catch(() => undefined);
-    await this.lock?.release().catch(() => undefined); // outro processo já pode usar a sessão
     // Encerrada sem logout: a autenticação fica, mas a conexão não está mais de pé.
     this.socket = undefined;
     this.data = { state: 'disconnected' };
     await Promise.all(this.receiptWrites);
+    await this.lock?.release().catch(() => undefined);
   }
 }
