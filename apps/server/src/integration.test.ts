@@ -494,6 +494,29 @@ test('login sets a hardened cookie, logout and expiry end the session, wrong pas
   } finally { await probe.close(); }
 });
 
+test('health reports an inactive dispatcher instead of advertising a healthy system', async () => {
+  const probe = buildApp(fakeProvider, undefined, undefined, () => false);
+  try {
+    const health = await probe.inject({ method: 'GET', url: '/api/health', headers: { host: 'localhost' } });
+    assert.equal(health.statusCode, 503);
+    assert.equal(health.json().dispatcher, 'inactive');
+  } finally { await probe.close(); }
+});
+
+test('lease loss stops the dispatcher and calls its failure handler once', async () => {
+  const wa = fakeWhatsApp(okSend);
+  let failures = 0;
+  const dispatcher = await startDispatcher(wa.router, { scanIntervalMs: 1000, leaseRenewMs: 50, onLeaseLost: () => { failures++; } });
+  try {
+    await prisma.workerLease.update({ where: { id: 'worker' }, data: { ownerId: 'outro-processo' } });
+    await waitFor(async () => !dispatcher.isActive() && failures === 1, 'fila para após perder posse', 3000);
+    assert.equal(failures, 1);
+  } finally {
+    await dispatcher.stop();
+    await prisma.workerLease.deleteMany({ where: { id: 'worker', ownerId: 'outro-processo' } });
+  }
+});
+
 test('password change revokes other sessions together with the new hash', async () => {
   const probe = buildApp(fakeProvider);
   const email = 'troca-atomica@teste.local';

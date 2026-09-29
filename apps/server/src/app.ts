@@ -17,7 +17,7 @@ import { wakeDispatcher } from './dispatcher';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
-export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadConfig({}), manager: WhatsAppManager = new WhatsAppManager()) {
+export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadConfig({}), manager: WhatsAppManager = new WhatsAppManager(), dispatcherActive?: () => boolean) {
   const app = Fastify({
     trustProxy: config.trustProxy,
     // Cookie de sessão nunca vai para o log.
@@ -76,7 +76,8 @@ app.get('/api/time', async (_request, reply) => { try { return { now: await curr
 app.get('/api/health', async (_request, reply) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    return { status: 'ok', database: 'ok' };
+    if (dispatcherActive && !dispatcherActive()) return reply.code(503).send({ status: 'error', database: 'ok', dispatcher: 'inactive' });
+    return { status: 'ok', database: 'ok', ...(dispatcherActive ? { dispatcher: 'ok' } : {}) };
   } catch {
     return reply.code(503).send({ status: 'error', database: 'unavailable', error: 'Banco de dados indisponível. Verifique o serviço MySQL80.' });
   }

@@ -58,7 +58,7 @@ export type Dispatcher = {
  * conexão DO DONO da campanha (ADR-022). Sem conexão do dono, o envio espera — nunca sai por
  * outro número e nunca é marcado como enviado.
  */
-export async function startDispatcher(router: SendingRouter, options: { scanIntervalMs?: number } = {}): Promise<Dispatcher> {
+export async function startDispatcher(router: SendingRouter, options: { scanIntervalMs?: number; leaseRenewMs?: number; onLeaseLost?: (reason: string) => void } = {}): Promise<Dispatcher> {
   const owner = randomUUID();
   let stopping = false;
   let working = false;
@@ -198,22 +198,34 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     await delay(2_000);
   }
 
-  // O envio interrompido pode ter saído pouco antes da queda: o número espera um intervalo inteiro.
-  await holdInterruptedAccounts(prisma, await currentTime());
-  await prisma.delivery.updateMany({
-    where: { status: 'PROCESSING' },
-    data: {
-      status: 'FAILED',
-      error: 'Processo interrompido durante envio. Resultado incerto: confira no celular. Sem repetição automática.',
-    },
-  });
+  try {
+    // O envio interrompido pode ter saído pouco antes da queda: o número espera um intervalo inteiro.
+    await holdInterruptedAccounts(prisma, await currentTime());
+    await prisma.delivery.updateMany({
+      where: { status: 'PROCESSING' },
+      data: {
+        status: 'FAILED',
+        error: 'Processo interrompido durante envio. Resultado incerto: confira no celular. Sem repetição automática.',
+      },
+    });
+  } catch (error) {
+    await releaseLease(prisma, owner).catch(() => undefined);
+    throw error;
+  }
+  let leaseLost = false;
+  function lost(reason: string) {
+    if (stopping || leaseLost) return;
+    leaseLost = true;
+    console.error('[Fila] Posse perdida:', reason);
+    void stop().catch(error => console.error('[Fila] Falha ao parar após perder a posse:', error)).finally(() => options.onLeaseLost?.(reason));
+  }
   leaseTimer = setInterval(() => {
     void renewLease(prisma, owner, LEASE_TTL_MS).then(ok => {
-      if (!ok) void stop();
-    }).catch(() => {
-      void stop();
+      if (!ok) lost('outro processo assumiu ou a posse expirou');
+    }).catch(error => {
+      lost(error instanceof Error ? error.message : 'não foi possível renovar a posse');
     });
-  }, LEASE_RENEW_MS);
+  }, options.leaseRenewMs ?? LEASE_RENEW_MS);
   scanTimer = setInterval(() => {
     void scan();
   }, options.scanIntervalMs ?? SCAN_INTERVAL_MS);

@@ -2,7 +2,7 @@ import { prisma } from '@campaign/database';
 import { buildApp } from './app';
 import { bootstrapAdmin } from './auth';
 import { loadConfig } from './config';
-import { startDispatcher } from './dispatcher';
+import { startDispatcher, type Dispatcher } from './dispatcher';
 import { WhatsAppProvider, defaultSessionsDir, sessionsPersistent } from './whatsapp';
 import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
 import { createSendingRouter } from './sending-router';
@@ -29,20 +29,30 @@ async function main() {
     ? new WhatsAppProvider({ ownerId: legacyOwnerId, sessionDir: legacyWhatsappSessionDir(), legacySession: true })
     : new WhatsAppProvider();
   if (legacyOwnerId) console.info('[WhatsApp] Sessão global legada reconhecida como do usuário', legacyOwnerId, '(migração: fase 4E).');
-  const app = buildApp(provider, config, manager);
-  const dispatcher = await startDispatcher(createSendingRouter<ManagedProvider>({ manager, legacyProvider: provider }));
+  let dispatcher: Dispatcher | undefined;
+  const app = buildApp(provider, config, manager, () => dispatcher?.isActive() ?? false);
   let closing = false;
 
   async function shutdown() {
     if (closing) return;
     closing = true;
-    await dispatcher.stop();
-    await manager.stopAll(); // encerra preservando a autenticação de cada usuário
-    await provider.stop();
-    await app.close();
-    await prisma.$disconnect();
+    // Cada etapa roda mesmo se a anterior falhar: em especial, não deixa o processo vivo
+    // sem API/fila após um erro de partida ou de renovação da posse.
+    await dispatcher?.stop().catch(error => console.error('[Fila] Falha ao encerrar:', error));
+    await manager.stopAll().catch(error => console.error('[WhatsApp] Falha ao encerrar conexões:', error));
+    await provider.stop().catch(error => console.error('[WhatsApp] Falha ao encerrar sessão legada:', error));
+    await app.close().catch(error => console.error('[API] Falha ao encerrar:', error));
+    await prisma.$disconnect().catch(error => console.error('[Banco] Falha ao desconectar:', error));
   }
 
+  try {
+    dispatcher = await startDispatcher(createSendingRouter<ManagedProvider>({ manager, legacyProvider: provider }), {
+      onLeaseLost: () => {
+        // Não permanecer "verde" com a fila parada. O supervisor reinicia o processo;
+        // uma instalação local precisa ser iniciada novamente pelo operador.
+        void shutdown().finally(() => process.exit(1));
+      },
+    });
   // Encerramento limpo em todos os jeitos de fechar: Ctrl+C (SIGINT), serviço/hospedagem (SIGTERM),
   // fechar a janela no Windows (SIGHUP) e Ctrl+Break (SIGBREAK). Ele termina de gravar a sessão
   // do WhatsApp antes de sair; sair no meio de uma gravação corrompia a credencial (ADR-036).
@@ -69,6 +79,10 @@ async function main() {
   if (!sessionsPersistent()) console.warn('[WhatsApp] ATENÇÃO: as sessões estão em', defaultSessionsDir(), 'que é apagado a cada deploy. Adicione um Volume no Railway (ex.: /data): o sistema passa a usá-lo sozinho e o WhatsApp não pede QR a cada atualização.');
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);
+  } catch (error) {
+    await shutdown();
+    throw error;
+  }
 }
 
 void main().catch(error => {
