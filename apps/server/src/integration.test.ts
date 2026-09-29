@@ -2827,6 +2827,41 @@ test('retry (030): retrying all failures in a campaign skips the uncertain ones 
   assert.equal((await fresh(c.id)).status, 'SENT');
 });
 
+test('retry: two failed rounds for the same group keep distinct scheduled identities', async () => {
+  const group = await prisma.group.create({ data: { name: 'Duas rodadas', userId: ownerId } });
+  const now = Date.now();
+  const times = [new Date(now - 240_000), new Date(now - 120_000)];
+  const campaign = await prisma.campaign.create({ data: {
+    name: 'Duas rodadas', userId: ownerId, startsAt: times[0], endsAt: times[1],
+    status: 'COMPLETED', mode: 'SCHEDULED',
+    groups: { create: [{ groupId: group.id, position: 0 }] },
+    deliveries: { create: times.map((scheduledAt, sequence) => ({
+      groupId: group.id, messageBody: 'oi', sequence, scheduledAt,
+      status: 'FAILED', error: 'Recusado antes do envio.',
+    })) },
+  } });
+
+  const result = await request('POST', `/campaigns/${campaign.id}/retry-failed`, {});
+  assert.equal(result.statusCode, 200, result.body);
+  assert.equal(result.json().retried, 2);
+  const rows = await prisma.delivery.findMany({ where: { campaignId: campaign.id }, orderBy: { sequence: 'asc' } });
+  assert.deepEqual(rows.map(row => row.status), ['PENDING', 'PENDING']);
+  assert.deepEqual(rows.map(row => row.scheduledAt.getTime()), times.map(time => time.getTime()));
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE');
+});
+
+test('retry: two simultaneous requests can requeue a failed delivery only once', async () => {
+  const { rows: [delivery] } = await realCampaign(1);
+  await prisma.delivery.update({ where: { id: delivery.id }, data: { status: 'FAILED', error: 'Recusado antes do envio.' } });
+
+  const responses = await Promise.all([
+    request('POST', `/deliveries/${delivery.id}/retry`, {}),
+    request('POST', `/deliveries/${delivery.id}/retry`, {}),
+  ]);
+  assert.deepEqual(responses.map(response => response.statusCode).sort(), [200, 400]);
+  assert.equal((await fresh(delivery.id)).status, 'PENDING');
+});
+
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.

@@ -6,11 +6,15 @@ import { mediaMetadata } from './media';
 import { isUncertainFailure } from './send-context';
 import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION, dueOrRunning } from '@campaign/database';
 
-// Reabre um FAILED para PENDING agora (ADR-030): o piso de 2 min e o relógio do número em
-// claimDelivery decidem quando ele realmente sai, então marcar "agora" nunca fura o ritmo.
+// Reabre somente entregas ainda FAILED. O horário original já venceu quando o envio falhou;
+// mantê-lo preserva a chave única (campanha + grupo + horário) entre rodadas do mesmo grupo.
 // Uma campanha COMPLETED volta a ACTIVE para o despachante voltar a olhar para ela.
 async function requeueForRetry(tx: Parameters<typeof lockCampaign>[0], campaignId: string, deliveryIds: string[], campaignStatus: string, now: Date) {
-  await tx.delivery.updateMany({ where: { id: { in: deliveryIds } }, data: { status: 'PENDING', scheduledAt: now, error: null, errorCode: null, serverRejectedAt: null, sendReturnedAt: null, updatedAt: now } });
+  const updated = await tx.delivery.updateMany({
+    where: { id: { in: deliveryIds }, campaignId, status: 'FAILED' },
+    data: { status: 'PENDING', error: null, errorCode: null, serverRejectedAt: null, sendReturnedAt: null, updatedAt: now },
+  });
+  if (updated.count !== deliveryIds.length) throw new Error('O estado dos envios mudou. Atualize a página e tente novamente.');
   if (campaignStatus === 'COMPLETED') await tx.campaign.update({ where: { id: campaignId }, data: { status: 'ACTIVE', pausedAt: null, updatedAt: now } });
 }
 
@@ -111,13 +115,17 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     const userId = request.user!.id;
     try {
       const outcome = await prisma.$transaction(async tx => {
+        // A primeira leitura só identifica qual campanha travar. Estado e autorização são
+        // revalidados depois do lock, inclusive se outro retry ou encerramento ganhou a disputa.
+        const target = await tx.delivery.findUnique({ where: { id }, select: { campaignId: true } });
+        if (!target) throw new NotFoundError('Envio não encontrado.');
+        await lockCampaign(tx, target.campaignId);
         const delivery = await tx.delivery.findUnique({ where: { id }, include: { campaign: true } });
         if (!delivery || delivery.campaign.userId !== userId || delivery.campaign.deletedAt) throw new NotFoundError('Envio não encontrado.');
         if (delivery.status !== 'FAILED') throw new Error('Só envios com falha podem ser tentados de novo.');
         if (delivery.campaign.status === 'CANCELLED') throw new Error('Campanha encerrada: use "usar de novo" para reenviar.');
         const uncertain = isUncertainFailure(delivery.error);
         if (uncertain && !confirmUncertain) return { uncertain: true as const };
-        await lockCampaign(tx, delivery.campaignId);
         const now = await currentTime();
         await requeueForRetry(tx, delivery.campaignId, [id], delivery.campaign.status, now);
         return { retried: true as const };
