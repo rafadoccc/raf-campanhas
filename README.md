@@ -62,8 +62,9 @@ Cada usuário conecta o **próprio** número; não há conexão compartilhada en
    foram. O botão **Sincronizar grupos** atualiza de novo quando quiser (uma vez a cada 30 s).
 5. Crie uma campanha, busque e selecione os grupos em ordem, e escolha o intervalo (mínimo de
    2 minutos entre grupos — piso fixo, protege o número contra bloqueio). Marque **"Marcar
-   todos os membros (@todos)"** se quiser que cada participante receba notificação de menção
-   sem mudar o texto da mensagem.
+   todos os membros (@todos)"** para mandar com o @todos do WhatsApp: aparece destacado e
+   notifica todos, até quem silenciou o grupo. Em grupos com mais de 32 membros o WhatsApp só
+   deixa admins usarem; nesses, se você não for admin, a marcação vai oculta.
 6. Escolha **Ao iniciar** (fila única: o 1º grupo recebe na hora) ou **Em horários diários**.
 7. Confira o **Modelo da mensagem** (imagem/vídeo e texto, como vai para o grupo) e clique em
    **Iniciar**, confirmando a autorização dos grupos. O envio é sempre pelo WhatsApp de verdade.

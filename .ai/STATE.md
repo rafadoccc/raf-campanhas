@@ -31,6 +31,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
+| 5g | Revisão do codex (ADR-037), animações (ADR-038), @todos nativo (ADR-039) | ✅ código pronto · @todos falta validar num grupo real (T-127) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---

@@ -1030,3 +1030,30 @@ tela, nunca a cada atualização automática dos dados. Botões com `active:scal
 clicar) e selos com `transition-colors` (trocam de cor em vez de piscar). Com "reduzir movimento"
 ligado no sistema operacional, nada anima (`prefers-reduced-motion` em `styles.css`). Detalhes em
 `docs/design-system.md`.
+
+---
+
+## ADR-039 · @todos nativo do WhatsApp, com a marcação oculta como reserva
+
+**Data:** 2026-09-29 · **Status:** aceita, falta validar num grupo real (T-127) · **Autor:** claude · **Branch:** dev
+
+A opção "Marcar todos" mandava uma menção oculta de cada participante (ADR-029): notificava todos,
+mas nada aparecia no texto. O dono queria o @todos do celular (digitar "@" e tocar em "todos"),
+destacado.
+
+- **Formato:** o @todos não lista ninguém. Vai um marcador no texto e `contextInfo.nonJidMentions
+  = 1` (campo 70 do ContextInfo). É o formato que o fork `@itsliaaa/baileys` usa no `mentionAll`.
+  O Baileys oficial já aceita um `contextInfo` próprio no conteúdo, então não precisamos de fork.
+- **Regra do WhatsApp:** em grupos com mais de 32 membros, só admins podem usar o @todos. Por isso
+  `mentionAllMode` escolhe o **nativo** quando o grupo tem até 32 membros ou a conta é admin.
+  Nos demais casos usa a **marcação oculta** (ADR-029), que notifica igual, só sem o destaque. Com
+  o número de membros desconhecido, usa a oculta (não arrisca). O `sendContext` grava
+  `mencoes=todos` ou `mencoes=N`.
+- **Posição do marcador:** onde o usuário escreveu "@todos", "@all" ou "@everyone"; se ele não
+  escreveu, vai no começo. Só o primeiro é trocado; e-mail e palavras como "@todosjuntos" não
+  contam.
+- **Marcador confirmado pelo celular:** não se sabe se o celular em português grava "@todos" ou
+  "@all". Quando o dono manda um @todos pelo celular num grupo, a mensagem chega a este aparelho
+  vinculado. O sistema guarda **só o formato**, nunca o texto: as palavras depois de "@" que não
+  são números, e os campos de menção. Isso vai para `mencao-todos.json`, ao lado da pasta da
+  sessão, e o envio passa a usar o mesmo marcador. Sem captura, vale o padrão `@all`.

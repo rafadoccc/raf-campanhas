@@ -27,6 +27,39 @@ e testar reinício; depois validar backup/restauração numa VPS de teste e ensa
 
 ---
 
+## 2026-09-29T04:40Z · claude
+
+**Fiz:**
+- Juntei a branch `hardening-20260928` do codex (ADR-037), depois de revisar e rodar todos os testes.
+  Ajustei um ponto dela: uma falha isolada ao renovar a posse da fila derrubava o sistema inteiro.
+  Agora o sistema só para quando outro processo assume ou quando a posse vence.
+- Validei e commitei as animações que o codex deixou na dev (ADR-038). Troquei `both` por
+  `backwards` para não sobrar `transform` no elemento ao terminar a animação. Descartei as edições
+  dele nos arquivos `.ai`, que apagavam texto da ADR-036.
+- Implementei o @todos nativo (T-119, ADR-039):
+  - marcador no texto e `contextInfo.nonJidMentions = 1`;
+  - marcação oculta como reserva em grupos com mais de 32 membros onde a conta não é admin;
+  - captura do formato real quando o dono manda @todos pelo celular (`mencao-todos.json`, só o
+    formato, nunca o texto).
+
+**Arquivos:** apps/server/src/{dispatcher,send-context,whatsapp,whatsapp.test}.ts, apps/web/src/{components/campaign-form,pages/campaign-detail}.tsx, apps/web/tailwind.config.ts e as telas das animações, README, .ai/*
+**Tarefas:** T-119 (concluída no código); **T-127 aberta**: validar num grupo real.
+**Estado:** compila · lint ok · unitários 78/78 · integração 123/123.
+**Armadilhas:**
+- O marcador padrão é `@all`. Ainda não se sabe se o celular em português grava "@todos" ou
+  "@all": a captura resolve isso sozinha na primeira vez que o dono mandar um @todos pelo celular
+  com o sistema ligado.
+- Os IDs T-125 e T-126 já tinham sido usados pelo codex; a validação ficou como T-127.
+- `.ai/DECISIONS.md` tem duas entradas com o número ADR-036 (histórico, é append-only).
+- Com a revisão do codex, o inicializador agora roda `npm ci` quando o package-lock muda e
+  **não abre o sistema** se a instalação falhar (por exemplo, sem internet logo após uma
+  atualização).
+**Próximo passo sugerido:** T-127. O dono manda um @todos pelo celular num grupo de teste com o
+sistema ligado, confere o `mencao-todos.json` e depois cria uma campanha nesse grupo com
+"Marcar todos".
+
+---
+
 ## 2026-09-28T06:10Z · claude
 
 **Fiz:** corrigi a tela que continuava mostrando "Nova campanha" e a lista de grupos depois de o
