@@ -9,7 +9,9 @@ type Icon = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md';
 
-const base = 'inline-flex shrink-0 items-center justify-center gap-1.5 rounded font-medium transition-colors disabled:pointer-events-none disabled:opacity-50';
+// active:scale dá um retorno tátil sutil ao clique (não anima quando desabilitado ou parado
+// no teclado, só no clique de verdade — :active não dispara em foco nem em disabled).
+const base = 'inline-flex shrink-0 items-center justify-center gap-1.5 rounded font-medium transition-all duration-150 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100';
 const variants: Record<Variant, string> = {
   primary: 'bg-brand-600 text-white hover:bg-brand-700',
   secondary: 'border border-line bg-white text-ink hover:bg-slate-50',
@@ -56,7 +58,9 @@ const tones: Record<Tone, string> = {
   muted: 'bg-slate-50 text-slate-500',
 };
 export function Badge({ tone = 'neutral', title, children, className = '' }: { tone?: Tone; title?: string; children: ReactNode; className?: string }) {
-  return <span title={title} className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide ${tones[tone]} ${className}`}>{children}</span>;
+  // transition-colors: um selo que muda de status durante a atualização automática da tela
+  // (ex.: "Enviando" → "Entregue") troca de cor suavemente, em vez de piscar.
+  return <span title={title} className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide transition-colors duration-300 ${tones[tone]} ${className}`}>{children}</span>;
 }
 
 /** Ponto de status (o único elemento redondo do sistema). */
@@ -131,7 +135,7 @@ export function Select({ value, onChange, options, label, name, disabled, classN
       <IconChevron className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
     </button>
     {open && <ul role="listbox" tabIndex={-1} aria-label={label}
-      className="absolute z-20 mt-1 max-h-60 w-full min-w-max overflow-auto rounded border border-line bg-white py-1 text-sm shadow-pop">
+      className="absolute z-20 mt-1 max-h-60 w-full min-w-max origin-top animate-pop-in overflow-auto rounded border border-line bg-white py-1 text-sm shadow-pop">
       {options.map((option, index) => <li key={option.value} role="option" aria-selected={option.value === value}
         onMouseEnter={() => setActive(index)} onClick={() => choose(index)}
         className={`flex cursor-pointer items-center justify-between gap-3 px-3 py-1.5 ${index === active ? 'bg-brand-50 text-brand-700' : ''} ${option.value === value ? 'font-medium' : ''}`}>
@@ -188,7 +192,7 @@ export function Menu({ items, label, disabled, trigger, triggerClassName, header
       ? <button type="button" aria-label={label} title={label} disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} className={triggerClassName}>{trigger}</button>
       : <IconButton icon={IconMore} label={label} variant="secondary" disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} />}
     {open && <ul ref={list} role="menu" tabIndex={-1} aria-label={label} onKeyDown={onKeyDown}
-      className="absolute right-0 z-30 mt-1 min-w-[13rem] rounded border border-line bg-white py-1 text-sm shadow-pop focus:outline-none">
+      className="absolute right-0 z-30 mt-1 min-w-[13rem] origin-top-right animate-pop-in rounded border border-line bg-white py-1 text-sm shadow-pop focus:outline-none">
       {header && <li role="presentation" className="mb-1 border-b border-line px-3 pb-2 pt-1">{header}</li>}
       {items.map((item, index) => {
         const ItemIcon = item.icon;
@@ -269,7 +273,7 @@ export function Skeleton({ className = '' }: { className?: string }) {
 
 export function Alert({ tone = 'danger', children }: { tone?: 'danger' | 'warning' | 'info' | 'brand'; children: ReactNode }) {
   const style = { danger: 'border-red-200 bg-red-50 text-red-800', warning: 'border-amber-200 bg-amber-50 text-amber-900', info: 'border-sky-200 bg-sky-50 text-sky-900', brand: 'border-brand-100 bg-brand-50 text-brand-800' }[tone];
-  return <div role={tone === 'danger' ? 'alert' : 'status'} className={`rounded border px-3 py-2 text-sm ${style}`}>{children}</div>;
+  return <div role={tone === 'danger' ? 'alert' : 'status'} className={`animate-fade-in rounded border px-3 py-2 text-sm ${style}`}>{children}</div>;
 }
 
 /**
@@ -290,5 +294,7 @@ export function ScrollArea({ children, className = '', always = false }: { child
 export function Page({ children, className = '', scroll = false }: { children: ReactNode; className?: string; scroll?: boolean }) {
   // No celular a página sempre cresce com o conteúdo e rola inteira (travar na altura da tela
   // espremia colunas até sumirem); a altura fixa com listas rolando por dentro é só no desktop.
-  return <main className={`mx-auto flex ${scroll ? 'min-h-full' : 'min-h-full lg:h-full'} w-full max-w-6xl flex-col gap-4 px-4 py-5 md:px-6 ${className}`}>{children}</main>;
+  // animate-fade-in roda uma vez, quando a tela monta (troca de rota) — os dados chegando por
+  // trás (polling) não recriam o <main>, então a tela não fica piscando a cada atualização.
+  return <main className={`mx-auto flex animate-fade-in ${scroll ? 'min-h-full' : 'min-h-full lg:h-full'} w-full max-w-6xl flex-col gap-4 px-4 py-5 md:px-6 ${className}`}>{children}</main>;
 }

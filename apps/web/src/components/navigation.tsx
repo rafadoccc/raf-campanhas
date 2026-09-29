@@ -27,8 +27,10 @@ export function Navigation() {
   return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-2 sm:px-4">
     <Link to="/" className="mr-3 hidden shrink-0 truncate font-semibold tracking-tight sm:block">Central de Campanhas</Link>
     <div className="scroll-area flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden">
-      {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass} aria-label={label} title={label}><Icon className="h-4 w-4" aria-hidden /><span className="hidden md:inline">{label}</span></NavLink>)}
-      {admin && <NavLink to="/admin" className={linkClass} aria-label="Administração" title="Administração"><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden md:inline">Administração</span></NavLink>}
+      {/* Rótulo só a partir do lg (1024 px): entre 640 e 1023 (tablet e telas médias) só ícone
+          cabe sem forçar uma rolagem lateral escondida no meio do menu. */}
+      {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass} aria-label={label} title={label}><Icon className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">{label}</span></NavLink>)}
+      {admin && <NavLink to="/admin" className={linkClass} aria-label="Administração" title="Administração"><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">Administração</span></NavLink>}
     </div>
     <div className="ml-auto flex shrink-0 items-center gap-1">
       {/* Clicar no nome abre um menu (em vez de ir direto para a troca de senha). */}

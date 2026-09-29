@@ -57,7 +57,7 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
       </div>
       {total > 0 && <div className="mt-3">
         <div className="flex justify-between text-2xs text-muted"><span className="tabular">{sent} de {total} enviados</span>{failed > 0 && <span className="text-red-700">{failed} {failed === 1 ? 'falha' : 'falhas'}</span>}</div>
-        <div className="mt-1 h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
+        <div className="mt-1 h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full transition-[width] duration-500 ease-out" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
       </div>}
       <div className="mt-auto flex items-center gap-1.5 pt-4">
         <ButtonLink to={`/campanhas/${campaign.id}`} variant="primary" size="sm" icon={IconView}>Ver</ButtonLink>

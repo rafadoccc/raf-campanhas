@@ -85,7 +85,7 @@ export default function Settings() {
             {connection?.accountJid && <p className="tabular text-xs text-muted">Número: {connection.accountJid.split('@')[0]}</p>}
           </div>
         </div>
-        {connection?.qr && <div className="flex flex-wrap items-center gap-4 rounded border border-line p-3">
+        {connection?.qr && <div className="flex flex-wrap animate-fade-in items-center gap-4 rounded border border-line p-3">
           <img src={connection.qr} width={220} height={220} alt="QR Code para conectar o WhatsApp" className="rounded" />
           <p className="max-w-xs text-sm text-muted">No celular, abra <span className="inline-flex items-center gap-0.5 font-medium text-ink">WhatsApp<IconOpen className="h-3.5 w-3.5" aria-hidden />Aparelhos conectados<IconOpen className="h-3.5 w-3.5" aria-hidden />Conectar um aparelho</span> e leia este código. Os grupos são sincronizados sozinhos logo depois.</p>
         </div>}

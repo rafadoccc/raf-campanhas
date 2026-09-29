@@ -1016,3 +1016,17 @@ Não houve migration nesta revisão. A versão de `deepmerge-ts` transitiva do P
 risco aceito nas ADR-023/034; substituí-la por override de versão principal requer decisão
 separada. Eventos de entrega/recusa recebidos antes da gravação do envio ainda aguardam uma
 migration aditiva para persistência, dependente de autorização explícita para alterar o banco.
+
+---
+
+## ADR-038 · Animações curtas e discretas no design system
+
+**Data:** 2026-09-29 · **Status:** aceita · **Autor:** codex (trabalho de 2026-09-28, validado e commitado por claude) · **Branch:** dev
+
+Três animações no `tailwind.config.ts`: `fade-in` (200 ms), `pop-in` (150 ms) e `overlay-in`
+(150 ms). Ficam no núcleo do design system (`Page`, `Alert`, listas do `Select` e do `Menu`,
+diálogo de confirmação), então uma tela nova já nasce com elas. O `Page` anima só ao trocar de
+tela, nunca a cada atualização automática dos dados. Botões com `active:scale` (retorno leve ao
+clicar) e selos com `transition-colors` (trocam de cor em vez de piscar). Com "reduzir movimento"
+ligado no sistema operacional, nada anima (`prefers-reduced-motion` em `styles.css`). Detalhes em
+`docs/design-system.md`.

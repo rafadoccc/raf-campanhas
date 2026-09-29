@@ -32,7 +32,7 @@ function WeekBars({ days }: { days: Dashboard['last7Days'] }) {
   return <div className="flex h-full items-end gap-1.5" role="img" aria-label={`Envios dos últimos 7 dias: ${days.map(d => d.sent).join(', ')}`}>
     {days.map((d, i) => <div key={d.day} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={`${weekday(d.day)}: ${d.sent} envios`}>
       <span className="tabular text-2xs text-muted">{d.sent || ''}</span>
-      <div className={`w-full rounded-sm ${i === days.length - 1 ? 'bg-brand-600' : 'bg-brand-100'}`} style={{ height: `${Math.max(3, (d.sent / max) * 72)}px` }} />
+      <div className={`w-full rounded-sm transition-[height] duration-500 ease-out ${i === days.length - 1 ? 'bg-brand-600' : 'bg-brand-100'}`} style={{ height: `${Math.max(3, (d.sent / max) * 72)}px` }} />
       <span className="text-2xs capitalize text-slate-400">{weekday(d.day)}</span>
     </div>)}
   </div>;
@@ -83,7 +83,7 @@ export default function DashboardPage() {
                 <Link to={`/campanhas/${c.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-medium">{c.name}</span><span className="tabular shrink-0 text-xs text-muted">{c.sent}/{c.total}</span></div>
-                    <div className="mt-1.5 h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full bg-brand-600" style={{ width: `${(c.sent / Math.max(1, c.total)) * 100}%` }} /></div>
+                    <div className="mt-1.5 h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full bg-brand-600 transition-[width] duration-500 ease-out" style={{ width: `${(c.sent / Math.max(1, c.total)) * 100}%` }} /></div>
                     {c.nextDelivery && <p className="mt-1 truncate text-2xs text-muted">Próximo: {c.nextDelivery.group.name} · {when(c.nextDelivery, d.serverNow, connected)}{c.provider === 'simulator' && ' · simulação'}</p>}
                   </div>
                   <IconOpen className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />

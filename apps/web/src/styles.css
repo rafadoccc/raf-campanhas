@@ -7,6 +7,11 @@
   html, body, #root { height: 100%; }
   body { margin: 0; @apply bg-canvas font-sans text-sm text-ink antialiased; }
   :focus-visible { outline: 2px solid theme('colors.brand.500'); outline-offset: 1px; }
+  /* Quem pede menos movimento ao sistema operacional não vê as animações de entrada nem as
+     transições de cor/tamanho — tudo aparece direto, sem atraso nem viagem de posição. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
 }
 
 @layer utilities {

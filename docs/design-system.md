@@ -118,3 +118,23 @@ carregam à parte e são **pré-carregadas** depois do login, com o navegador oc
 300 ms. `ConfirmProvider` envolve a árvore inteira, uma vez. A moldura tem `overflow-hidden` e
 toda `.scroll-area` é `position: relative`: um elemento absoluto (ex.: `sr-only`) nunca estica o
 documento, e o menu do topo nunca sai da tela.
+
+## Animações (ADR-038)
+
+Curtas (150–200 ms) e discretas, definidas uma vez em `tailwind.config.ts` e usadas pelo núcleo
+do design system — uma tela nova ganha tudo isso de graça, sem precisar aplicar nada:
+
+| Classe | Onde já está | Uso em telas novas |
+|---|---|---|
+| `animate-fade-in` | `Page` (monta uma vez por troca de rota, nunca a cada atualização de dados), `Alert` | Blocos que aparecem por uma condição (`{open && ...}`): formulário que se revela, aviso. |
+| `animate-pop-in` | Lista do `Select`, lista do `Menu`, painel do `ConfirmProvider` | Qualquer flutuante que abre perto de um botão. Combine com `origin-top`/`origin-top-right` conforme o lado que abre. |
+| `animate-overlay-in` | Fundo escurecido do `ConfirmProvider` | Fundo de um diálogo novo. |
+
+Barras de progresso e de gráfico que mudam de tamanho ganham `transition-[width]`/
+`transition-[height] duration-500 ease-out` no elemento que tem o `style={{ width/height }}`
+dinâmico. `Badge` já troca de cor suavemente (`transition-colors`) quando o tom muda durante a
+atualização automática da tela. `Button`/`IconButton` encolhem um pouco ao clique
+(`active:scale-[0.97]`, no `base` de `primitives.tsx`) — não precisa adicionar em cada botão.
+
+Quem pede "reduzir movimento" ao sistema operacional não vê nenhuma dessas animações nem as
+transições de cor/tamanho (`prefers-reduced-motion` em `styles.css`); o conteúdo aparece direto.

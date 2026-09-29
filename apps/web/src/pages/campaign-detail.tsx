@@ -45,7 +45,7 @@ function Template({ campaign }: { campaign: Campaign }) {
       </span>
       <IconChevron className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
     </button>
-    {open && <div className="space-y-3 border-t border-line p-4">
+    {open && <div className="animate-fade-in space-y-3 border-t border-line p-4">
       {media && <MediaPreview media={media} />}
       {messages.map((m, i) => <div key={i} className="space-y-1">
         {messages.length > 1 && <p className="text-2xs font-medium text-muted">Mensagem {i + 1} de {messages.length} · alterna a cada {campaign.mode === 'IMMEDIATE' ? 'grupo' : 'rodada'}</p>}
@@ -152,7 +152,7 @@ export default function CampaignPage() {
                 <Stat label="Aguardando" value={pending} />
                 <Stat label="Falhas" value={p.FAILED ?? 0} tone={p.FAILED ? 'text-red-700' : 'text-ink'} />
               </div>
-              <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
+              <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full transition-[width] duration-500 ease-out" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
             </>}
             {next && <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded bg-slate-50 px-3 py-2 text-xs"><IconClock className="h-3.5 w-3.5 text-muted" aria-hidden /><span className="text-muted">Próximo:</span><strong>{next.group.name}</strong><span>às {hora(next.wait!.expectedAt)}</span>{next.wait!.reason && <span className="text-amber-700">· {next.wait!.reason}</span>}</p>}
             <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} intervalSeconds={campaign.intervalSeconds} groupCount={campaign.groups.length} />

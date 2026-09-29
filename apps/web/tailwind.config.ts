@@ -20,6 +20,20 @@ const config: Config = {
       },
       fontSize: { '2xs': ['0.6875rem', { lineHeight: '1rem' }] },
       boxShadow: { card: '0 1px 2px rgba(16, 24, 40, 0.05)', pop: '0 8px 24px rgba(16, 24, 40, 0.12)' },
+      // Animações curtas e discretas (150–200 ms): dão sensação de fluidez sem chamar atenção
+      // para si. Usadas ao trocar de tela, em avisos, em listas suspensas (Select/Menu), no
+      // diálogo de confirmação e em blocos que se revelam (ex.: "Modelo da mensagem"). Respeitam
+      // "reduzir movimento" do sistema operacional (ver styles.css).
+      keyframes: {
+        'fade-in': { from: { opacity: '0', transform: 'translateY(2px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+        'pop-in': { from: { opacity: '0', transform: 'scale(0.96) translateY(-2px)' }, to: { opacity: '1', transform: 'scale(1) translateY(0)' } },
+        'overlay-in': { from: { opacity: '0' }, to: { opacity: '1' } },
+      },
+      animation: {
+        'fade-in': 'fade-in 200ms ease-out backwards',
+        'pop-in': 'pop-in 150ms ease-out backwards',
+        'overlay-in': 'overlay-in 150ms ease-out backwards',
+      },
     },
     borderRadius: {
       none: '0', sm: '3px', DEFAULT: '5px', md: '5px', lg: '6px', xl: '6px', '2xl': '6px', full: '9999px',

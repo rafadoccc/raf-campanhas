@@ -36,8 +36,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   }, [pending]);
   return <ConfirmContext.Provider value={confirm}>
     {children}
-    {pending && <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onMouseDown={event => { if (event.target === event.currentTarget) close(false); }}>
-      <div ref={dialogRef} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby={pending.description ? 'confirm-description' : undefined} className="w-full max-w-sm rounded-lg border border-line bg-white p-5 shadow-pop">
+    {pending && <div className="fixed inset-0 z-50 flex animate-overlay-in items-center justify-center bg-ink/40 p-4" onMouseDown={event => { if (event.target === event.currentTarget) close(false); }}>
+      <div ref={dialogRef} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby={pending.description ? 'confirm-description' : undefined} className="w-full max-w-sm animate-pop-in rounded-lg border border-line bg-white p-5 shadow-pop">
+
         <h2 id="confirm-title" className="text-base font-semibold">{pending.title}</h2>
         {pending.description && <div id="confirm-description" className="mt-2 text-sm text-muted">{pending.description}</div>}
         <div className="mt-5 flex justify-end gap-2">

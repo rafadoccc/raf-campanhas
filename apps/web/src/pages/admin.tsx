@@ -67,8 +67,8 @@ function WeekBars({ days }: { days: Overview['last7Days'] }) {
     {days.map((d, i) => <div key={d.day} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={`${weekday(d.day)}: ${d.sent} enviados, ${d.failed} falhas`}>
       <span className="tabular text-2xs text-muted">{d.sent + d.failed || ''}</span>
       <div className="flex w-full flex-col-reverse overflow-hidden rounded-t-sm border-b border-line" style={{ height: '96px' }}>
-        <div className={`w-full ${i === days.length - 1 ? 'bg-brand-600' : 'bg-brand-500/60'}`} style={{ height: `${Math.max(d.sent ? 3 : 0, (d.sent / max) * 96)}px` }} />
-        {d.failed > 0 && <div className="w-full bg-red-400" style={{ height: `${Math.max(3, (d.failed / max) * 96)}px` }} />}
+        <div className={`w-full transition-[height] duration-500 ease-out ${i === days.length - 1 ? 'bg-brand-600' : 'bg-brand-500/60'}`} style={{ height: `${Math.max(d.sent ? 3 : 0, (d.sent / max) * 96)}px` }} />
+        {d.failed > 0 && <div className="w-full bg-red-400 transition-[height] duration-500 ease-out" style={{ height: `${Math.max(3, (d.failed / max) * 96)}px` }} />}
       </div>
       <span className={`text-2xs capitalize ${i === days.length - 1 ? 'font-semibold text-ink' : 'text-slate-400'}`}>{i === days.length - 1 ? 'hoje' : weekday(d.day)}</span>
     </div>)}
@@ -135,7 +135,7 @@ function CreateUser({ onCreated, onClose }: { onCreated: (email: string) => void
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
-  return <form onSubmit={submit} className="border-b border-line bg-slate-50 px-4 py-4">
+  return <form onSubmit={submit} className="animate-fade-in border-b border-line bg-slate-50 px-4 py-4">
     <p className="text-sm font-semibold">Nova conta</p>
     <p className="mt-0.5 text-xs text-muted">A pessoa entra com este e-mail e esta senha inicial, e pode trocar a senha em Minha conta.</p>
     <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -240,7 +240,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
           </>}
       </div>
     </div>
-    {resetting && <form onSubmit={resetPassword} className="mt-3 flex flex-wrap items-end gap-2 rounded border border-line bg-slate-50 p-3">
+    {resetting && <form onSubmit={resetPassword} className="mt-3 flex flex-wrap animate-fade-in items-end gap-2 rounded border border-line bg-slate-50 p-3">
       <Field label={`Nova senha para ${user.name}`} hint="As sessões abertas desta conta serão encerradas." className="w-72 max-w-full">
         <PasswordInput name="password" required minLength={10} autoFocus autoComplete="new-password" placeholder="Pelo menos 10 caracteres" />
       </Field>
