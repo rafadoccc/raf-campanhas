@@ -1,0 +1,42 @@
+name: Verificar projeto
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: senha-descartavel-ci
+          MYSQL_DATABASE: campanhas_base
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -psenha-descartavel-ci"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      # Banco efêmero deste job. O teste cria e apaga apenas campaign_test_*.
+      DATABASE_URL: mysql://root:senha-descartavel-ci@127.0.0.1:3306/campanhas_base
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: bash -n scripts/backup-vps.sh
+      - run: npm run ai:check
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
+      - run: node scripts/test-integration.cjs
