@@ -323,6 +323,21 @@ test('pending receipts survive a new client, early arrival and replay after reco
   } finally { await fresh.$disconnect(); }
 });
 
+test('old unmatched receipts expire, but an old matching receipt is still counted first', async () => {
+  const { id, groups } = await create(1); await activate(id);
+  const [delivery] = await deliveries(id);
+  const old = new Date('2020-01-01T12:00:00Z');
+  const groupJid = `${groups[0].id}@g.us`;
+  await prisma.campaign.update({ where: { id }, data: { accountJid: 'retencao-conta' } });
+  await prisma.group.update({ where: { id: groups[0].id }, data: { externalId: groupJid } });
+  await prisma.delivery.update({ where: { id: delivery.id }, data: { provider: 'baileys', providerId: `antiga-${id}`, status: 'SENT' } });
+  await persistRead(prisma, { messageId: `antiga-${id}`, groupJid, accountJid: 'retencao-conta', participant: 'leitor', readAt: old });
+  await persistRead(prisma, { messageId: `sem-entrega-${id}`, groupJid, accountJid: 'retencao-conta', participant: 'leitor', readAt: old });
+  await flushPendingReads(prisma);
+  assert.equal(await prisma.deliveryRead.count({ where: { deliveryId: delivery.id } }), 1, 'leitura antiga comprovada entra na métrica');
+  assert.equal(await prisma.pendingRead.count({ where: { messageId: `sem-entrega-${id}` } }), 0, 'leitura antiga sem envio não cresce indefinidamente');
+});
+
 test('closed campaign retains old group reads while dashboard success uses today only', async () => {
   const old = new Date('2020-01-01T12:00:00Z');
   // Isolated schema: remove earlier fixtures from today's terminal-result window.

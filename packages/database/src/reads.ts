@@ -4,6 +4,9 @@ import type { PrismaClient } from '@prisma/client';
 // ownerId = dono da conexão que recebeu o recibo (ADR-022). Um recibo de A nunca pode casar
 // com um envio de B. null só existe na sessão global legada, enquanto ela não tem dono (4E).
 export type ReadReceipt = { messageId: string; groupJid: string; accountJid: string; participant: string; readAt: Date; ownerId?: string | null };
+// Recibos de mensagens enviadas manualmente pelo mesmo número também podem chegar aqui.
+// Se não casarem com uma entrega do sistema, não devem ocupar a tabela para sempre.
+const UNMATCHED_READ_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export async function persistRead(db: PrismaClient, receipt: ReadReceipt) {
   if (!receipt.messageId || !receipt.accountJid || !receipt.groupJid.endsWith('@g.us') || !receipt.participant || !Number.isFinite(receipt.readAt.getTime()) || receipt.readAt.getTime() <= 0) return;
   const id = createHash('sha256').update(JSON.stringify([receipt.ownerId ?? '', receipt.accountJid, receipt.groupJid, receipt.messageId, receipt.participant])).digest('hex');
@@ -23,6 +26,10 @@ export async function flushPendingReads(db: PrismaClient, owner: { ownerId: stri
   for (const receipt of pending) {
     // Replay after interruption is safe because DeliveryRead has a unique key.
     if (await recordRead(db, receipt)) await db.pendingRead.deleteMany({ where: { id: receipt.id } });
+    else if (receipt.readAt.getTime() < now.getTime() - UNMATCHED_READ_RETENTION_MS) {
+      // Tenta associar primeiro: uma leitura antiga ainda válida entra na métrica.
+      await db.pendingRead.deleteMany({ where: { id: receipt.id } });
+    }
     else await db.pendingRead.updateMany({ where: { id: receipt.id }, data: { nextAttemptAt: new Date(now.getTime() + 60000) } });
   }
 }
