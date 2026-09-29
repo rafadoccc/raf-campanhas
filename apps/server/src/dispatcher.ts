@@ -219,11 +219,18 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     console.error('[Fila] Posse perdida:', reason);
     void stop().catch(error => console.error('[Fila] Falha ao parar após perder a posse:', error)).finally(() => options.onLeaseLost?.(reason));
   }
+  // Uma falha passageira do banco (MySQL reiniciando, rede oscilando) não derruba o sistema: a
+  // posse ainda vale até LEASE_TTL_MS depois da última renovação. Só desiste quando outro processo
+  // assumiu (renovação recusada) ou quando o banco ficou fora tempo suficiente para a posse vencer.
+  let lastRenewedAt = Date.now();
   leaseTimer = setInterval(() => {
     void renewLease(prisma, owner, LEASE_TTL_MS).then(ok => {
-      if (!ok) lost('outro processo assumiu ou a posse expirou');
+      if (ok) lastRenewedAt = Date.now();
+      else lost('outro processo assumiu ou a posse expirou');
     }).catch(error => {
-      lost(error instanceof Error ? error.message : 'não foi possível renovar a posse');
+      const reason = error instanceof Error ? error.message : 'não foi possível renovar a posse';
+      if (Date.now() - lastRenewedAt >= LEASE_TTL_MS) lost(reason);
+      else console.warn('[Fila] Renovação da posse falhou; tento de novo em instantes:', reason);
     });
   }, options.leaseRenewMs ?? LEASE_RENEW_MS);
   scanTimer = setInterval(() => {
