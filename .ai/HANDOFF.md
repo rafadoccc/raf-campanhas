@@ -27,6 +27,28 @@ e testar reinício; depois validar backup/restauração numa VPS de teste e ensa
 
 ---
 
+## 2026-09-29T05:20Z · claude
+
+**Fiz:** editor da mensagem com prévia ao vivo (`components/message-editor.tsx`), a pedido do dono.
+- Barrinha com Negrito, Itálico, Riscado e **Inserir @todos**. O botão insere no cursor e liga o
+  "Marcar todos".
+- Balão no jeito do WhatsApp (`WhatsAppPreview`), com *negrito*, _itálico_, ~riscado~, ```mono``` e
+  o @todos em azul no lugar em que vai sair. A regra de posição é a mesma de `withMentionAllToken`
+  no servidor.
+- Aviso quando a pessoa escreve @todos com a opção desligada.
+- O "Modelo da mensagem" do detalhe usa o mesmo balão.
+
+**Arquivos:** apps/web/src/components/{message-editor,campaign-form}.tsx, apps/web/src/pages/campaign-detail.tsx
+**Estado:** compila · lint ok · unitários 78/78. Conferido no navegador (desktop e 360 px):
+formatação, inserir @todos no cursor, liga a opção, marcador no começo quando não escrito.
+**Armadilhas:** a regex do @todos agora existe em dois lugares (`send-context.ts` e
+`message-editor.tsx`): mudou um, mude o outro. O dono usa o Railway (deploy automático
+funcionando) e o celular dele está em inglês ("@all" = o padrão), então a captura só confirma o
+padrão. T-127 continua aberta até ver o @todos no celular dos membros.
+**Próximo passo sugerido:** T-127: campanha num grupo de teste com "Marcar todos".
+
+---
+
 ## 2026-09-29T04:40Z · claude
 
 **Fiz:**

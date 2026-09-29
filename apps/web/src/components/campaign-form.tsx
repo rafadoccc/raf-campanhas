@@ -4,6 +4,7 @@ import { api, errorMessage } from '../lib/api';
 import { ServerClock } from './server-clock';
 import { screenCache } from '../lib/cache';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
+import { MessageEditor } from './message-editor';
 import {
   Alert, Button, Card, Checkbox, Field, IconButton, Page, PageHeader, ScrollArea, Segmented,
   IconAdd, IconBack, IconMoveDown, IconMoveUp, IconRemove, IconSearch,
@@ -170,7 +171,8 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         </Card>
 
         <Card className="space-y-3 p-4">
-          {initial.messages.map((message, i) => <Field key={i} label={`Mensagem${initial.messages.length > 1 ? ` ${i + 1}` : ''}`}><textarea defaultValue={message} required maxLength={10000} name="message" className={`${inputClass} min-h-28`} /></Field>)}
+          {initial.messages.map((message, i) => <MessageEditor key={i} label={`Mensagem${initial.messages.length > 1 ? ` ${i + 1}` : ''}`}
+            defaultValue={message} mentionAll={mentionAll} onMentionAll={setMentionAll} />)}
         </Card>
         <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
 
