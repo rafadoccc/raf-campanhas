@@ -2,6 +2,7 @@ import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from 'node:util';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { prisma } from '@campaign/database';
+import type { Prisma } from '@prisma/client';
 import type { AppConfig } from './config';
 import { apiPath } from './api-path';
 
@@ -136,7 +137,10 @@ export const SESSION_MAX_AGE_MS = 30 * 24 * 3_600_000;
 function readCookie(request: FastifyRequest, name: string) {
   for (const part of (request.headers.cookie ?? '').split(';')) {
     const [key, ...value] = part.trim().split('=');
-    if (key === name) return decodeURIComponent(value.join('='));
+    if (key === name) {
+      try { return decodeURIComponent(value.join('=')); }
+      catch { return null; }
+    }
   }
   return null;
 }
@@ -147,10 +151,10 @@ function setSessionCookie(reply: FastifyReply, config: AppConfig, token: string,
   reply.header('Set-Cookie', attrs.join('; '));
 }
 
-async function createSession(userId: string, request: FastifyRequest, config: AppConfig) {
+async function createSession(db: Prisma.TransactionClient, userId: string, request: FastifyRequest, config: AppConfig) {
   const token = randomBytes(32).toString('base64url');
   const now = new Date();
-  await prisma.authSession.create({ data: {
+  await db.authSession.create({ data: {
     userId, tokenHash: tokenHash(token), expiresAt: new Date(now.getTime() + config.sessionTtlMs),
     ip: request.ip?.slice(0, 64) ?? null, userAgent: request.headers['user-agent']?.slice(0, 255) ?? null
   } });
@@ -239,9 +243,21 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
       limiter.fail(keys);
       return reply.code(401).send({ error: 'E-mail ou senha incorretos.' });
     }
-    limiter.succeed(keys);
+    // A verificação da senha é lenta. Entre ela e a criação da sessão, um administrador pode
+    // desativar a conta ou trocar a senha. O lock serializa login e revogação da senha.
     await prisma.authSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
-    setSessionCookie(reply, config, await createSession(user.id, request, config), config.sessionTtlMs);
+    const token = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${user.id} FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: user.id }, select: { passwordHash: true, disabledAt: true } });
+      if (!current || current.disabledAt || current.passwordHash !== user.passwordHash) return null;
+      return createSession(tx, user.id, request, config);
+    });
+    if (!token) {
+      limiter.fail(keys);
+      return reply.code(401).send({ error: 'E-mail ou senha incorretos.' });
+    }
+    limiter.succeed(keys);
+    setSessionCookie(reply, config, token, config.sessionTtlMs);
     return { user: { id: user.id, email: user.email, name: user.name, role: user.role } };
   });
 
@@ -267,15 +283,23 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
         passwordLimiter.fail(keys);
         return reply.code(400).send({ error: 'A senha atual está incorreta.' });
       }
+      const nextHash = await hashPassword(body.next as string);
+      const changed = await prisma.$transaction(async tx => {
+        // Evita que duas trocas simultâneas validem a mesma senha antiga. Sessões e senha
+        // mudam juntas ou não mudam, inclusive se o banco falhar no meio.
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${user.id} FOR UPDATE`;
+        const updated = await tx.user.updateMany({ where: { id: user.id, passwordHash: user.passwordHash }, data: { passwordHash: nextHash } });
+        if (!updated.count) return false;
+        const current = readCookie(request, SESSION_COOKIE);
+        await tx.authSession.deleteMany({ where: { userId: user.id, NOT: { tokenHash: tokenHash(current ?? '') } } });
+        return true;
+      });
+      if (!changed) return reply.code(409).send({ error: 'A senha foi alterada em outra sessão. Entre novamente e tente de novo.' });
       passwordLimiter.succeed(keys);
-      await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(body.next as string) } });
     } catch (error) {
       if (error instanceof ServerBusyError) return reply.code(503).send({ error: error.message });
       throw error;
     }
-    // Encerra as outras sessões: quem trocou a senha por suspeita não fica com intrusos logados.
-    const current = readCookie(request, SESSION_COOKIE);
-    await prisma.authSession.deleteMany({ where: { userId: user.id, NOT: { tokenHash: tokenHash(current ?? '') } } });
     return { ok: true };
   });
 }

@@ -494,6 +494,23 @@ test('login sets a hardened cookie, logout and expiry end the session, wrong pas
   } finally { await probe.close(); }
 });
 
+test('password change revokes other sessions together with the new hash', async () => {
+  const probe = buildApp(fakeProvider);
+  const email = 'troca-atomica@teste.local';
+  const user = await prisma.user.create({ data: { email, name: 'Troca', passwordHash: await hashPassword('senha-antiga-forte') } });
+  try {
+    const first = await loginAs(probe, email, 'senha-antiga-forte');
+    const other = await loginAs(probe, email, 'senha-antiga-forte');
+    const changed = await probe.inject({ method: 'POST', url: '/api/auth/password', headers: as(first.cookie), payload: { current: 'senha-antiga-forte', next: 'senha-nova-forte' } });
+    assert.equal(changed.statusCode, 200, changed.body);
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: as(first.cookie) })).statusCode, 200, 'sessão atual continua');
+    assert.equal((await probe.inject({ method: 'GET', url: '/api/auth/me', headers: as(other.cookie) })).statusCode, 401, 'outra sessão foi revogada');
+    assert.equal((await loginAs(probe, email, 'senha-antiga-forte')).status, 401);
+    assert.equal((await loginAs(probe, email, 'senha-nova-forte')).status, 200);
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).passwordHash === user.passwordHash, false);
+  } finally { await probe.close(); }
+});
+
 test('published URL: secure cookie, only its host and origin accepted, security headers on every response', async () => {
   const config = loadConfig({ PUBLIC_URL: 'https://campanhas.exemplo.com.br', PORT: '8080' });
   assert.equal(config.host, '0.0.0.0');
@@ -2627,6 +2644,29 @@ test('admin (6): create, disable, enable, reset password and change role — wit
     } finally { await restore(); }
     assert.equal((await world.app.inject({ method: 'PATCH', url: '/api/admin/users/nao-existe', headers: h, payload: { disabled: true } })).statusCode, 404);
   } finally { await world.cleanup(); }
+});
+
+test('admin: concurrent demotions cannot remove both remaining active administrators', async () => {
+  const world = whatsappApp();
+  const a = await sessionFor(world.app, 'concorrente-a@teste.local', 'SUPER_ADMIN');
+  const b = await sessionFor(world.app, 'concorrente-b@teste.local', 'SUPER_ADMIN');
+  const restore = await onlySuperAdmin(a.user.id);
+  try {
+    await prisma.user.update({ where: { id: b.user.id }, data: { role: 'SUPER_ADMIN' } });
+    const loginA = await loginAs(world.app, 'concorrente-a@teste.local');
+    const loginB = await loginAs(world.app, 'concorrente-b@teste.local');
+    const [removeB, removeA] = await Promise.all([
+      world.app.inject({ method: 'PATCH', url: `/api/admin/users/${b.user.id}`, headers: as(loginA.cookie), payload: { role: 'USER' } }),
+      world.app.inject({ method: 'PATCH', url: `/api/admin/users/${a.user.id}`, headers: as(loginB.cookie), payload: { role: 'USER' } }),
+    ]);
+    assert.deepEqual([removeB.statusCode, removeA.statusCode].sort(), [200, 400]);
+    assert.equal(await prisma.user.count({ where: { role: 'SUPER_ADMIN', disabledAt: null } }), 1);
+  } finally {
+    await restore();
+    await prisma.user.update({ where: { id: a.user.id }, data: { role: 'USER' } });
+    await prisma.user.update({ where: { id: b.user.id }, data: { role: 'USER' } });
+    await world.cleanup();
+  }
 });
 
 // ─── Painel do administrador (ADR-031) ──────────────────────────────────────────

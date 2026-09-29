@@ -101,10 +101,13 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
       if (role !== undefined && !ROLES.includes(role)) throw new AdminError('Papel inválido.');
       if (id === request.user!.id) throw new AdminError('Você não pode desativar nem trocar o papel da própria conta.');
       const result = await prisma.$transaction(async tx => {
+        // Primeiro lock, depois leitura: dois admins rebaixados ao mesmo tempo não podem
+        // enxergar ambos a contagem antiga e deixar o sistema sem administrador ativo.
+        const activeAdmins = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM \`User\` WHERE role = 'SUPER_ADMIN' AND disabledAt IS NULL ORDER BY id FOR UPDATE`;
         const target = await tx.user.findUnique({ where: { id }, select: { id: true, role: true, disabledAt: true } });
         if (!target) throw new AdminError('Usuário não encontrado.', 404);
         const losesAdmin = target.role === 'SUPER_ADMIN' && !target.disabledAt && (disabled === true || role === 'USER');
-        if (losesAdmin && await tx.user.count({ where: { role: 'SUPER_ADMIN', disabledAt: null } }) <= 1) {
+        if (losesAdmin && activeAdmins.length <= 1) {
           throw new AdminError('Não é possível remover o último administrador ativo.');
         }
         const now = await currentTime();
@@ -133,9 +136,14 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
     const password = (request.body as { password?: unknown } | null)?.password;
     const problem = validateNewPassword(password);
     if (problem) return reply.code(400).send({ error: problem });
-    const updated = await prisma.user.updateMany({ where: { id }, data: { passwordHash: await hashPassword(password as string) } });
-    if (!updated.count) return reply.code(404).send({ error: 'Usuário não encontrado.' });
-    await prisma.authSession.deleteMany({ where: { userId: id } });
+    const nextHash = await hashPassword(password as string);
+    const updated = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${id} FOR UPDATE`;
+      const changed = await tx.user.updateMany({ where: { id }, data: { passwordHash: nextHash } });
+      if (changed.count) await tx.authSession.deleteMany({ where: { userId: id } });
+      return changed.count;
+    });
+    if (!updated) return reply.code(404).send({ error: 'Usuário não encontrado.' });
     return { ok: true };
   });
 
