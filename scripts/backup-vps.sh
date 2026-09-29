@@ -16,7 +16,7 @@ sessions_tmp=$(mktemp "$backup_dir/.sessoes-XXXXXX")
 trap 'rm -f -- "$db_tmp" "$sessions_tmp"' EXIT
 
 # pipefail impede publicar um gzip vazio se mysqldump falhar.
-mysqldump --defaults-extra-file="$credentials" --single-transaction --quick --routines --triggers campanhas | gzip -c > "$db_tmp"
+mysqldump --defaults-extra-file="$credentials" --single-transaction --quick --no-tablespaces --routines --triggers campanhas | gzip -c > "$db_tmp"
 test -s "$db_tmp"
 tar -czf "$sessions_tmp" -C "$sessions_dir" sessions
 test -s "$sessions_tmp"
