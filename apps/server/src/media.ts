@@ -14,9 +14,9 @@ export const mediaMetadata = { id: true, name: true, mimeType: true, kind: true,
 // (até ~50 MB) só ocuparia memória de uma VPS pequena.
 sharp.cache(false);
 
-// Uploads recebidos ao mesmo tempo. O corpo inteiro fica em memória (até 200 MB num vídeo), então
-// poucos simultâneos bastam para esgotar uma VPS fraca: acima do limite, recusa ANTES de ler.
-export const MAX_CONCURRENT_UPLOADS = 2;
+// O corpo inteiro fica em memória (até 200 MB num vídeo). Limita a um upload por processo:
+// dois vídeos simultâneos poderiam ocupar mais de 400 MB antes mesmo da conversão.
+export const MAX_CONCURRENT_UPLOADS = 1;
 let uploadsInFlight = 0;
 const holdsUploadSlot = new WeakSet<object>();
 function releaseUploadSlot(request: object) {

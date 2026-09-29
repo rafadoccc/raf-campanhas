@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -69,7 +69,7 @@ export function containerOf(data: Buffer): 'mov' | 'matroska' | 'avi' | 'mpeg' |
 }
 
 /** Converte para MP4 H.264 + AAC, no máximo 1280 px no lado maior, pronto para o WhatsApp. */
-async function convert(data: Buffer) {
+async function convert(data: Buffer, limit: number) {
   const binary = ffmpegPath();
   if (!binary) throw Error('Este vídeo precisa ser convertido, e o conversor não está instalado neste computador. Rode npm install com o sistema fechado, ou envie um MP4 (H.264).');
   const format = containerOf(data);
@@ -88,8 +88,10 @@ async function convert(data: Buffer) {
       '-vf', "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))',scale=trunc(iw/2)*2:trunc(ih/2)*2",
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-      '-movflags', '+faststart', '-f', 'mp4', output,
+      '-movflags', '+faststart', '-f', 'mp4', '-fs', String(limit + 1), output,
     ]);
+    // Nunca carrega um resultado acima do limite inteiro em memória só para rejeitá-lo.
+    if ((await stat(output)).size > limit) throw Error('Mesmo convertido, o vídeo passou de 64 MB. Corte o vídeo ou envie um mais curto.');
     return await readFile(output);
   } finally {
     await rm(input, { force: true }).catch(() => undefined);
@@ -110,7 +112,7 @@ export async function prepareVideo(data: Buffer, mimeType: string, rules: { limi
       return { data, converted: false }; // já está pronto: vai como veio
     } catch { /* fora do padrão (HEVC, grande demais…): converte */ }
   }
-  const converted = await oneAtATime(() => convert(data));
+  const converted = await oneAtATime(() => convert(data, rules.limit));
   if (converted.length > rules.limit) throw Error('Mesmo convertido, o vídeo passou de 64 MB. Corte o vídeo ou envie um mais curto.');
   await rules.validateMp4(converted);
   return { data: converted, converted: true };
