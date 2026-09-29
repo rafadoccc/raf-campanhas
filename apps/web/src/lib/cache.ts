@@ -2,10 +2,15 @@
 // (sem esqueleto de carregamento) enquanto os dados novos chegam por trás. Some ao recarregar a
 // página e é apagado ao sair ou trocar de conta: dados de um usuário nunca aparecem para outro.
 const store = new Map<string, unknown>();
+let generation = 0;
 
 export const screenCache = {
   get: <T>(key: string | undefined) => (key ? store.get(key) as T | undefined : undefined),
   set: (key: string | undefined, value: unknown) => { if (key) store.set(key, value); },
+  generation: () => generation,
+  setIfCurrent: (key: string | undefined, value: unknown, expectedGeneration: number) => {
+    if (key && expectedGeneration === generation) store.set(key, value);
+  },
   delete: (key: string) => store.delete(key),
-  clear: () => store.clear(),
+  clear: () => { generation++; store.clear(); },
 };

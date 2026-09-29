@@ -64,7 +64,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     broadcast('entrou');
   }
   async function signOut() {
-    await api('/auth/logout', { method: 'POST', json: {} }).catch(() => undefined);
+    // Sem confirmação do servidor, o cookie pode continuar válido. Não finja que a sessão acabou.
+    await api('/auth/logout', { method: 'POST', json: {} });
     setUser(null);
     broadcast('saiu');
   }

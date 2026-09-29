@@ -22,10 +22,13 @@ export function useInfiniteList<T extends { id: string }>(
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const loadRef = useRef(loadPage);
+  const listGeneration = useRef(0);
   loadRef.current = loadPage;
 
   // Primeira página: ao montar, quando as dependências mudam e a cada `refreshMs`.
   useEffect(() => {
+    const generation = screenCache.generation();
+    const requestGeneration = ++listGeneration.current;
     const controller = new AbortController();
     let timer: number | undefined;
     let first = true;
@@ -34,8 +37,8 @@ export function useInfiniteList<T extends { id: string }>(
       if (!first && document.visibilityState !== 'visible') { timer = window.setTimeout(run, refreshMs); return; }
       try {
         const page = await loadRef.current(null, controller.signal);
-        if (controller.signal.aborted) return;
-        screenCache.set(cacheKey, page);
+        if (controller.signal.aborted || screenCache.generation() !== generation || listGeneration.current !== requestGeneration) return;
+        screenCache.setIfCurrent(cacheKey, page, generation);
         setError(null);
         if (first) {
           setItems(page.items);
@@ -51,30 +54,34 @@ export function useInfiniteList<T extends { id: string }>(
         }
         first = false;
       } catch (e) {
-        if (!controller.signal.aborted) setError(errorMessage(e));
+        if (!controller.signal.aborted && screenCache.generation() === generation && listGeneration.current === requestGeneration) setError(errorMessage(e));
       }
       if (!controller.signal.aborted && refreshMs > 0) timer = window.setTimeout(run, refreshMs);
     };
     const cached = screenCache.get<PageResult<T>>(cacheKey);
     setItems(cached?.items ?? null);
     setNext(cached?.next ?? null);
+    setLoadingMore(false);
     void run();
-    return () => { controller.abort(); window.clearTimeout(timer); };
+    return () => { listGeneration.current++; controller.abort(); window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version, refreshMs, cacheKey]);
 
   const loadMore = useCallback(async () => {
     if (!next || loadingMore) return;
+    const generation = screenCache.generation();
+    const requestGeneration = listGeneration.current;
     setLoadingMore(true);
     try {
       const page = await loadRef.current(next, new AbortController().signal);
+      if (screenCache.generation() !== generation || listGeneration.current !== requestGeneration) return;
       setItems(current => {
         const known = new Set((current ?? []).map(item => item.id));
         return [...(current ?? []), ...page.items.filter(item => !known.has(item.id))];
       });
       setNext(page.next);
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setLoadingMore(false); }
+    } catch (e) { if (screenCache.generation() === generation && listGeneration.current === requestGeneration) setError(errorMessage(e)); }
+    finally { if (screenCache.generation() === generation && listGeneration.current === requestGeneration) setLoadingMore(false); }
   }, [next, loadingMore]);
 
   /** Remove da lista local (ex.: depois de excluir), sem recarregar tudo. */

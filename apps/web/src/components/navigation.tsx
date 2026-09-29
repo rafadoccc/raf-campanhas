@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { errorMessage } from '../lib/api';
 import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, Menu } from '../design';
 
 const items = [
@@ -15,6 +17,8 @@ const linkClass = ({ isActive }: { isActive: boolean }) => itemClass(isActive);
 
 export function Navigation() {
   const { user, signOut } = useAuth();
+  const [logoutError, setLogoutError] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
   const navigate = useNavigate();
   const onAccount = useLocation().pathname === '/conta';
   const admin = user?.role === 'SUPER_ADMIN';
@@ -32,7 +36,11 @@ export function Navigation() {
         trigger={<><IconAccount className="h-4 w-4" aria-hidden /><span className="hidden max-w-[10rem] truncate lg:inline">{user?.name ?? 'Minha conta'}</span><IconChevron className="hidden h-3.5 w-3.5 text-slate-400 lg:block" aria-hidden /></>}
         header={<><p className="truncate text-sm font-medium text-ink">{user?.name}</p><p className="truncate text-2xs text-muted">{user?.email}</p></>}
         items={[{ label: 'Alterar senha', icon: IconPassword, onSelect: () => navigate('/conta') }]} />
-      <button type="button" onClick={() => void signOut()} className="inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-sm text-muted hover:bg-slate-50 hover:text-ink" title="Sair">
+      {logoutError && <span role="alert" className="max-w-44 text-xs text-red-700" title={logoutError}>Não foi possível sair. Tente novamente.</span>}
+      <button type="button" disabled={loggingOut} onClick={() => {
+        setLoggingOut(true); setLogoutError('');
+        void signOut().catch(error => setLogoutError(errorMessage(error))).finally(() => setLoggingOut(false));
+      }} className="inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-sm text-muted hover:bg-slate-50 hover:text-ink disabled:opacity-50" title="Sair">
         <IconLogout className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">Sair</span>
       </button>
     </div>

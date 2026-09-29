@@ -2332,6 +2332,10 @@ test('media (026): images get a dominant color and a small thumbnail; only the o
   assert.equal(thumb.statusCode, 200);
   assert.equal(thumb.headers['content-type'], 'image/webp');
   assert.match(String(thumb.headers['cache-control']), /private/);
+  assert.match(String(thumb.headers['cache-control']), /no-store/);
+  const full = await app.inject({ method: 'GET', url: `/api/media/${up.json().id}`, headers: auth() });
+  assert.equal(full.statusCode, 200);
+  assert.match(String(full.headers['cache-control']), /no-store/);
   assert.ok(thumb.rawPayload.length > 0);
   const intruso = await isoUser('midia-intruso@teste.local');
   assert.equal((await intruso.call('GET', `/media/${up.json().id}/thumb`)).statusCode, 404, 'miniatura de outro dono: 404');

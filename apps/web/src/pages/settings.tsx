@@ -22,18 +22,19 @@ export default function Settings() {
   const syncedAt = useRef<string | null | undefined>(undefined);
 
   async function refresh(signal?: AbortSignal) {
+    const generation = screenCache.generation();
     try {
       const data = await api<Connection>('/whatsapp/status', { signal });
-      if (!signal?.aborted) {
+      if (!signal?.aborted && screenCache.generation() === generation) {
         setConnection(data); setError('');
-        screenCache.set('whatsapp', { ...data, qr: undefined }); // QR vence em segundos: nunca reaproveitado
+        screenCache.setIfCurrent('whatsapp', { ...data, qr: undefined }, generation); // QR vence em segundos: nunca reaproveitado
         // Grupos sincronizados de novo: a lista do formulário de campanha é buscada outra vez.
         if (syncedAt.current !== undefined && data.groupsSync?.at !== syncedAt.current) screenCache.delete('grupos');
         syncedAt.current = data.groupsSync?.at ?? null;
       }
       return data;
     } catch (e) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || screenCache.generation() !== generation) return;
       setError(errorMessage(e, 'Conector indisponível.'));
       return { state: 'unavailable' } as Connection;
     }

@@ -13,18 +13,19 @@ export function usePolling<T>(load: (signal: AbortSignal) => Promise<T>, deps: u
   const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean }>(() => ({ data: screenCache.get<T>(cacheKey) ?? null, error: null, loading: true }));
   const [version, setVersion] = useState(0);
   useEffect(() => {
+    const generation = screenCache.generation();
     // Com chave, o dado anterior só continua na tela se for do mesmo recurso (outra campanha não).
     setState(current => ({ ...current, data: cacheKey ? screenCache.get<T>(cacheKey) ?? null : current.data, loading: true }));
     let first = true;
     return startVisiblePolling(async signal => {
       try {
         const data = await load(signal);
-        if (!signal.aborted) {
-          screenCache.set(cacheKey, data);
+        if (!signal.aborted && screenCache.generation() === generation) {
+          screenCache.setIfCurrent(cacheKey, data, generation);
           setState({ data, error: null, loading: false });
         }
       } catch (error) {
-        if (!signal.aborted) setState(current => ({ data: current.data, error: errorMessage(error), loading: false }));
+        if (!signal.aborted && screenCache.generation() === generation) setState(current => ({ data: current.data, error: errorMessage(error), loading: false }));
       }
       return intervalMs;
     }, {

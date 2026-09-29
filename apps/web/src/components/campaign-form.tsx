@@ -54,20 +54,28 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const [initial, setInitial] = useState({ name: '', startsAt: '', endsAt: '', messages: [''] });
   useEffect(() => {
     if (!campaignId) return;
-    api<CampaignDraft>(`/campaigns/${campaignId}`).then(data => {
+    const controller = new AbortController();
+    const generation = screenCache.generation();
+    api<CampaignDraft>(`/campaigns/${campaignId}`, { signal: controller.signal }).then(data => {
+      if (controller.signal.aborted || screenCache.generation() !== generation) return;
       if (data.status !== 'DRAFT') throw Error('Somente rascunhos podem ser editados.');
       setMedia(data.media ?? null);
       setInitial({ name: data.name, startsAt: data.startsAt.slice(0, 10), endsAt: data.endsAt.slice(0, 10), messages: data.messages.map(m => m.content) });
       setSelected(data.groups.map(g => g.groupId)); setMode(data.mode === 'SCHEDULED' ? 'SCHEDULED' : 'IMMEDIATE'); setIntervalValue(data.intervalSeconds / 60); setMentionAll(data.mentionAll ?? false);
       setTimes(data.schedules.length ? data.schedules.map(s => s.time) : ['09:00']); setLoaded(true);
-    }).catch(e => setError(e instanceof Error ? e.message : 'Não foi possível carregar a campanha.'));
+    }).catch(e => { if (!controller.signal.aborted && screenCache.generation() === generation) setError(e instanceof Error ? e.message : 'Não foi possível carregar a campanha.'); });
+    return () => controller.abort();
   }, [campaignId]);
   useEffect(() => {
-    api<Group[]>('/groups').then(data => {
+    const controller = new AbortController();
+    const generation = screenCache.generation();
+    api<Group[]>('/groups', { signal: controller.signal }).then(data => {
+      if (controller.signal.aborted || screenCache.generation() !== generation) return;
       const active = data.filter(g => g.active);
-      screenCache.set('grupos', active);
+      screenCache.setIfCurrent('grupos', active, generation);
       setGroups(active); setGroupsLoaded(true);
-    }).catch(() => setError('Não foi possível carregar os grupos.'));
+    }).catch(() => { if (!controller.signal.aborted && screenCache.generation() === generation) setError('Não foi possível carregar os grupos.'); });
+    return () => controller.abort();
   }, []);
   function move(index: number, delta: number) { setSelected(current => { const copy = [...current]; [copy[index], copy[index + delta]] = [copy[index + delta], copy[index]]; return copy; }); }
   async function submit(event: FormEvent<HTMLFormElement>) {

@@ -46,8 +46,9 @@ export async function backfillMediaPreviews(limit = 200) {
   return pending.length;
 }
 
-// Mídia nunca muda depois de salva (o id identifica o conteúdo): pode ficar em cache no navegador.
-const PRIVATE_CACHE = 'private, max-age=86400, immutable';
+// Mídia pertence a uma sessão. Mesmo imutável, não deve reaparecer do cache após logout/troca
+// de conta no mesmo navegador (inclusive miniaturas e respostas parciais de vídeo).
+const PRIVATE_CACHE = 'private, no-store';
 // Pedido aberto (bytes=N-) de vídeo recebe no máximo este pedaço; o navegador pede o resto.
 const MAX_CHUNK = 2 * 1024 * 1024;
 
