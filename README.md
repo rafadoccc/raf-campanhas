@@ -123,6 +123,8 @@ a fila: o servidor varre o banco a cada 5 segundos, sem serviço externo. Ele va
 ordem e intervalo sob lock da campanha, então uma varredura atrasada não contorna
 pausa/encerramento. Um lease em WorkerLease garante um processador por vez. PROCESSING encontrado
 ao reiniciar vira FAILED com aviso de resultado incerto e nunca é repetido automaticamente.
+Se o despachante perder o lease, o processo encerra com erro para o gerenciador reiniciá-lo.
+`/api/health` informa `dispatcher` e responde 503 enquanto a fila não está ativa.
 Não existe promessa de exactly-once através do WhatsApp: uma queda entre o envio e a
 resposta pode deixar o resultado desconhecido. Por isso "Tentar de novo" trata as duas
 situações de formas diferentes: falha **certa** (nada chegou a sair) tenta de novo sem

@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-09-29T01:13Z · codex
+
+**Fiz:** endureci autenticação, concorrência de retentativas, posse exclusiva da sessão do
+WhatsApp e do despachante, cache e logout do painel, limite de memória de mídia, limpeza de
+recibos pendentes antigos e backup. Adicionei CI, melhor foco do diálogo de confirmação e
+documentação operacional. Commits `e8401c6` a `85c0933`, sem migration e sem envio real.
+**Arquivos:** apps/server/src/, apps/web/src/, packages/database/src/, scripts/,
+.github/workflows/verify.yml, README.md, docs/deploy-vps.md, .ai/DECISIONS.md
+**Tarefas:** T-125 e T-006 concluídas; T-126 depende de autorização para nova tabela.
+**Estado:** build e lint passam; 73 testes unitários + 3 de polling e 123 de integração passam
+com MySQL de teste isolado. CI ainda precisa rodar no GitHub; script Bash de backup só teve
+verificação estática prevista no CI, não restauração real.
+**Armadilhas:** a branch `dev` em `C:\Users\rafad\raf-campanhas-dev` tem mudanças de outro
+agente e não foi tocada. A dependência transitiva `deepmerge-ts` do Prisma segue a decisão de
+risco aceito das ADR-023/034; não forcei override. Eventos de entrega/recusa que chegam antes do
+registro do envio ainda ficam somente na memória e pedem migration aditiva. Não publicar ou
+reconectar uma segunda instância com a mesma sessão.
+**Próximo passo sugerido:** obter aprovação da migration para eventos pendentes, implementar
+e testar reinício; depois validar backup/restauração numa VPS de teste e ensaio com WhatsApp real.
+
+---
+
 ## 2026-09-28T06:10Z · claude
 
 **Fiz:** corrigi a tela que continuava mostrando "Nova campanha" e a lista de grupos depois de o

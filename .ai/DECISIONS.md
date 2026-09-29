@@ -990,3 +990,29 @@ cima desta implementação:
   máquina, em 3 min.
 - Correção de um teste instável: o `attempts` sobe já na reserva.
 O resto daquela branch duplica esta ADR (armazenamento atômico, regras de queda) e ficou de fora.
+
+---
+
+## ADR-037 · Falha fechada na posse da fila e na confirmação da sessão
+
+**Data:** 2026-09-29 · **Status:** aceita (revisão de robustez aprovada pelo dono) · **Autor:** codex · **Branch:** hardening-20260928
+
+Sem alterar a ordem nem o intervalo dos envios, uma perda do lease do despachante agora encerra o
+processo com erro após liberar seus recursos. A resposta existente de `/api/health` ganhou o
+campo `dispatcher` e retorna 503 se a fila não estiver ativa; o monitor não deve interpretar uma
+API disponível como envio saudável. Uma falha na partida também libera o lease obtido.
+
+Retentativas concorrentes do mesmo envio são serializadas e verificam novamente o estado sob
+transação; rodadas distintas do mesmo grupo mantêm seu `scheduledAt` original. Isso impede que
+uma retentativa crie duas posições na fila ou troque a identidade de uma rodada. A sessão do
+WhatsApp usa trava atômica de diretório com heartbeat, mantida até terminar a gravação das
+credenciais. Um segundo processo não pode abrir a mesma pasta de sessão em paralelo.
+
+Ao sair da conta no painel, o cache só é apagado após confirmação do servidor; uma falha na
+requisição mantém o estado e apresenta erro. Arquivos de mídia autenticados retornam
+`Cache-Control: private, no-store`, inclusive miniaturas e respostas parciais.
+
+Não houve migration nesta revisão. A versão de `deepmerge-ts` transitiva do Prisma permanece como
+risco aceito nas ADR-023/034; substituí-la por override de versão principal requer decisão
+separada. Eventos de entrega/recusa recebidos antes da gravação do envio ainda aguardam uma
+migration aditiva para persistência, dependente de autorização explícita para alterar o banco.

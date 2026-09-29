@@ -12,7 +12,8 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
-[~] T-125  Corrigir achados críticos de autenticação, concorrência e sessão; validar regressões  owner: codex   since: 2026-09-29T00:24Z
+[x] T-125  Corrigir achados críticos de autenticação, concorrência e sessão; validar regressões  owner: —   since: —
+[!] T-126  Persistir eventos de entrega/recusa anteriores ao envio; aguarda aprovação da migration  owner: —   since: —
 ```
 
 ## Urgente — achados da auditoria de 2026-09-20
@@ -47,7 +48,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-003  Auditoria de segurança da superfície atual             owner: —        since: —      
 [ ] T-004  Validação declarativa com Zod em apps/api              owner: —        since: —
 [ ] T-005  Logs estruturados (pino) + request id nos 3 serviços   owner: —        since: —
-[ ] T-006  CI no GitHub Actions: lint + test + build              owner: —        since: —
+[x] T-006  CI no GitHub Actions: lint + test + build              owner: —        since: —
 [ ] T-007  Quebrar linhas de 400+ chars nos arquivos tocados      owner: —        since: —
 ```
 
