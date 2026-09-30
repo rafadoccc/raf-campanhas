@@ -149,6 +149,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-118  Conversão automática de vídeo (MOV/HEVC/WebM → MP4 H.264)  owner: —        since: —
 [x] T-119  @todos oficial do WhatsApp: capturar o formato real na dev  owner: —        since: —
 [ ] T-127  Validar o @todos nativo num grupo de teste real (ADR-039)     owner: —        since: —
+[x] T-128  Revisão de segurança: login não travável por terceiros        owner: —        since: —
 [x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
 [x] T-121  Desempenho, limites contra abuso, VPS pequena (ADR-034)      owner: —        since: —
 [x] T-122  Sync automático, 2 min, previsão sem falso "Atrasado", UI     owner: —        since: —
