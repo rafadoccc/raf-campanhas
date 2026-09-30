@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-30T16:00Z · claude
+
+**Fiz:** nome **DocDrop** no painel e LGPD (ADR-040).
+- Páginas públicas `/privacidade` e `/termos`, links no login e no menu da conta.
+- Tela de aceite no primeiro acesso (`components/terms-gate.tsx`), com o aceite gravado no banco.
+- Minha conta: **Baixar meus dados** (JSON) e **Excluir minha conta** (com senha).
+  Administração: **Excluir conta** de um usuário.
+- Limpeza automática: campanhas excluídas e encerradas há 6 meses, mídias órfãs, grupos que saíram.
+- Documentos `docs/lgpd/registro-operacoes.md` e `docs/lgpd/plano-incidentes.md`; `CONTACT_EMAIL` no .env.
+- Plano do anti-banimento em `docs/plano-anti-banimento.md` (T-131 a T-135, não implementado).
+
+**Arquivos:** apps/server/src/{legal,auth,app,config,main,integration.test}.ts, packages/database/prisma/{schema.prisma,migrations/20260930000000_terms_acceptance}, apps/web/src/{main.tsx,lib/auth.tsx,pages/{legal,account,login,admin}.tsx,components/{terms-gate,navigation}.tsx,design/icons.ts}, apps/web/index.html, README.md, .env.example, docs/lgpd/*, docs/plano-anti-banimento.md
+**Tarefas:** T-129 e T-130 (concluídas); T-131 a T-135 criadas (anti-banimento).
+**Estado:** compila · lint ok · unitários ok · integração ok (4 testes novos de LGPD). Conferido no
+navegador (dev, porta 3001): login com o nome novo, aceite, download, exclusão pela tela, termos a 375 px.
+**Armadilhas:**
+- `user.termsPending` é novo no /auth/me: contas existentes veem a tela de aceite no próximo acesso.
+- A exclusão de campanha continua lógica na hora e vira física na limpeza (até 6 h).
+- O nome do inicializador local (`Central de Campanhas.exe`) e o `Description` do systemd
+  ficaram como estavam, para não quebrar o atalho da máquina do dono.
+- `CONTACT_EMAIL` vazio: as páginas mostram um texto genérico no lugar do e-mail. Definir antes de vender.
+**Próximo passo sugerido:** o dono cria o e-mail e define `CONTACT_EMAIL` no Railway/VPS; depois T-131.
+
+---
+
 ## 2026-09-30T12:00Z · claude
 
 **Fiz:** revisão de segurança geral (sem falha crítica encontrada) e duas correções. (1) O login

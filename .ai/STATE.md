@@ -31,6 +31,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
+| 5h | Nome DocDrop e LGPD: termos, aceite, baixar/excluir dados, 6 meses (ADR-040) | ✅ concluída (T-129, T-130) |
 | 5g | Revisão do codex (ADR-037), animações (ADR-038), @todos nativo (ADR-039) | ✅ código pronto · @todos falta validar num grupo real (T-127) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
@@ -159,7 +160,7 @@ verificações de senha, uploads simultâneos.
 | 2 | Validação declarativa (Zod) | Validação manual e espalhada; funciona, mas divergir é fácil (T-004). |
 | 3 | Logs estruturados, métricas externas, tracing | O painel de admin cobre métricas operacionais básicas; não há exportação para uma ferramenta externa (T-005). |
 | 4 | CI (GitHub Actions) | Nada impede um merge quebrado além da disciplina manual (T-006). |
-| 5 | Mídia como `Bytes` no MySQL, sem cota nem exclusão de órfãos | Cresce sem limite (T-030/T-052). |
+| 5 | Mídia como `Bytes` no MySQL, sem cota (órfãs saem em 1 dia desde a ADR-040) | Cresce sem limite (T-030/T-052). |
 
 ---
 

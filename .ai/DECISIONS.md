@@ -1057,3 +1057,39 @@ destacado.
   vinculado. O sistema guarda **só o formato**, nunca o texto: as palavras depois de "@" que não
   são números, e os campos de menção. Isso vai para `mencao-todos.json`, ao lado da pasta da
   sessão, e o envio passa a usar o mesmo marcador. Sem captura, vale o padrão `@all`.
+
+---
+
+## ADR-040 · LGPD: termos com aceite, direitos do titular e prazo de guarda de 6 meses
+
+**Data:** 2026-09-30 · **Status:** aceita · **Autor:** claude · **Branch:** dev
+
+O sistema passa a ser vendido para donos de festa (pessoa física como mantenedora, sem CNPJ). O
+nome do produto passa a ser **DocDrop**. O dono pediu adequação à LGPD, com prazo de guarda de 6
+meses.
+
+- **Papéis:** o DocDrop é controlador dos dados da conta e operador dos dados das campanhas
+  (grupos, mensagens, membros), que são do cliente. Os Termos de Uso trazem a cláusula de
+  operador; não há contrato separado.
+- **Páginas públicas** `/privacidade` e `/termos` (sem login), com o contato de `CONTACT_EMAIL`
+  vindo de `GET /api/legal` (rota pública nova).
+- **Aceite:** colunas aditivas `User.termsAcceptedAt` e `User.termsVersion` (migration
+  `20260930000000_terms_acceptance`). `/api/auth/me` e o login passam a devolver
+  `user.termsPending` (campo novo, aditivo). Enquanto pendente, o painel mostra só a tela de
+  aceite; o servidor não bloqueia a API (o registro do aceite é o que importa). Mudou o texto de
+  forma relevante: troque `TERMS_VERSION` em `auth.ts` e todos aceitam de novo.
+- **Direitos do titular:** `GET /api/account/export` (JSON com conta, acessos, grupos, mídias e
+  campanhas; nunca a senha) e `POST /api/account/delete` (exige a senha). A exclusão apaga
+  campanhas (cascata: mensagens, horários, envios, leituras), mídias, grupos, recibos pendentes,
+  o ritmo do número (se nenhuma outra conta o usou), o usuário (cascata: sessões e registro do
+  WhatsApp), faz logout do WhatsApp e remove `users/<id>` da pasta de sessões. Trava número e
+  campanhas na mesma ordem do despachante e recusa com envio em andamento. Administrador não se
+  exclui (evita ficar sem admin e a ponte da sessão legada); `DELETE /api/admin/users/:id`
+  atende pedido recebido por e-mail, só para contas USER.
+- **Prazo de guarda** (`purgeExpiredData`, na partida + 2 min e a cada 6 h): apaga de vez as
+  campanhas excluídas (a exclusão continua lógica na hora, e vira física em até 6 h), as
+  COMPLETED/CANCELLED sem mudança há 180 dias, mídias fora de qualquer campanha há mais de 1 dia
+  e grupos inativos há 180 dias sem campanha nem envio. Cada campanha sai numa transação com
+  `lockCampaign`, conferindo de novo o estado e sem PENDING/PROCESSING.
+- **Cookies:** só o de sessão, essencial; sem banner.
+- **Documentos internos:** `docs/lgpd/registro-operacoes.md` e `docs/lgpd/plano-incidentes.md`.
