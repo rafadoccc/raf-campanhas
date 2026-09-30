@@ -17,13 +17,14 @@ com renovação da conexão, confirmação de resposta atrasada e faxina de envi
 - **A partir de agora o dono pediu: push só na `dev`; ele mesmo leva para a `main`.** Não fazer fast-forward da main.
 - Nada lê as mensagens de log do Railway daqui: a causa foi deduzida pelo código do Baileys
   (`messages.js` passa `options.mediaUploadTimeoutMs` ao upload; sem ele não há timeout).
+- Corrigi o horário das 3 entradas anteriores (tinham 2026-10-01, no futuro; os reais são os dos commits 322ea8c, 0412cb8 e 7995b2b).
 - O envio encerrado pelo vigia é INCERTO (pode ter saído): nunca reenviado sozinho.
 **Próximo passo sugerido:** o dono leva a dev para a main fora de campanha; conferir no Railway
 se aparece "[Fila] Envio sem resposta" ou "Envios travados liberados" nos logs.
 
 ---
 
-## 2026-10-01T04:00Z · claude
+## 2026-09-30T20:51Z · claude
 
 **Fiz:** aquecimento de número novo (ADR-043). Ao conectar um número sem resposta, a tela WhatsApp
 pergunta "Este número é novo?"; sim = 30 envios/dia nos dias 1-3, 80 nos dias 4-7, depois o
@@ -39,7 +40,7 @@ navegador (precisa de WhatsApp conectado de verdade); coberta pelos testes de in
 
 ---
 
-## 2026-10-01T03:00Z · claude
+## 2026-09-30T20:32Z · claude
 
 **Fiz:** intervalo entre envios sorteado a cada envio entre 1:45 e 3:00 (ADR-042), a pedido do
 dono. O campo de intervalo saiu do formulário (vira "Automático: 1 min 45 s a 3 min"); a campanha
@@ -57,7 +58,7 @@ mostra "Próximo: grupo, por volta das HH:MM (em N min)" e a duração aproximad
 
 ---
 
-## 2026-10-01T02:00Z · claude
+## 2026-09-30T19:53Z · claude
 
 **Fiz:** proteção do número (ADR-041): janela de silêncio 22h-8h, limite de 150 envios/dia por
 número, 2 h entre envios ao mesmo grupo e pausa automática por sinal de restrição. Bloco
