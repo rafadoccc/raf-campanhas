@@ -161,6 +161,12 @@ async function createSession(db: Prisma.TransactionClient, userId: string, reque
   return token;
 }
 
+/** A conta tem sessão aberta a partir deste IP (aparelho que já entrou com a senha certa)? */
+async function knownDevice(email: string, ip: string | undefined) {
+  if (!ip || !EMAIL.test(email)) return false;
+  return Boolean(await prisma.authSession.findFirst({ where: { ip: ip.slice(0, 64), user: { email } }, select: { id: true } }));
+}
+
 // Valida o cookie. Renova a sessão quando passou da metade da validade (expiração
 // deslizante): quem usa o painel com frequência não é deslogado no meio do trabalho.
 async function resolveSession(request: FastifyRequest, reply: FastifyReply, config: AppConfig) {
@@ -225,7 +231,14 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
     const email = normalizeEmail(body?.email);
     const password = typeof body?.password === 'string' ? body.password : '';
     const keys = [`ip:${request.ip}`, `email:${email}`];
-    const wait = limiter.blockedFor(keys);
+    // Bloqueio por e-mail sozinho deixaria qualquer um que saiba o e-mail travar o dono fora da
+    // conta, errando a senha de outro lugar. De um IP onde esta conta já tem sessão (o próprio
+    // computador ou celular), vale só o limite por IP, que continua segurando força bruta.
+    let wait = limiter.blockedFor([keys[0]]);
+    if (!wait) {
+      const emailWait = limiter.blockedFor([keys[1]]);
+      if (emailWait && !await knownDevice(email, request.ip)) wait = emailWait;
+    }
     if (wait) return reply.code(429).send({ error: `Muitas tentativas. Aguarde ${wait} minuto${wait > 1 ? 's' : ''} e tente de novo.` });
     if (!EMAIL.test(email) || !password || password.length > 200) {
       limiter.fail(keys);

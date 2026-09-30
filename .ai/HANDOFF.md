@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-09-30T12:00Z · claude
+
+**Fiz:** revisão de segurança geral (sem falha crítica encontrada) e duas correções. (1) O login
+não trava mais o dono fora da conta quando alguém erra a senha do e-mail dele de outro lugar: de
+um IP onde a conta já tem sessão vale só o limite por IP; de IP desconhecido o bloqueio por
+e-mail continua. (2) `/api/deliveries` com parâmetro repetido (`?campaignId=a&campaignId=b`)
+não dá mais 500.
+**Arquivos:** apps/server/src/auth.ts, apps/server/src/app.ts, apps/server/src/integration.test.ts
+**Tarefas:** T-128 (concluída)
+**Estado:** lint ok · unit 78/78 · integração 124/124
+**Armadilhas:** o "aparelho conhecido" depende do `request.ip` correto; no Railway isso vem de
+`TRUSTED_PROXIES` (100.64.0.0/10). Ponto aberto, não corrigido: a ponte da sessão legada
+(legacy-session.ts) passa ao único SUPER_ADMIN ativo; se o dono for desativado por outro admin,
+o outro herda a sessão do PC. Só afeta a pasta legada local; decisão do humano.
+**Próximo passo sugerido:** T-127 (validar o @todos num grupo real).
+
+---
+
 ## 2026-09-29T01:13Z · codex
 
 **Fiz:** endureci autenticação, concorrência de retentativas, posse exclusiva da sessão do

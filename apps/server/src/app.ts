@@ -136,7 +136,10 @@ app.get('/api/campaigns', async request => {
 });
 
 app.get('/api/deliveries', async (request) => {
-  const query = request.query as { status?: string; campaignId?: string; page?: string };
+  const raw = request.query as { status?: unknown; campaignId?: unknown; page?: unknown };
+  // Parâmetro repetido (?campaignId=a&campaignId=b) chega como lista: ignora em vez de dar erro 500.
+  const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
+  const query = { status: text(raw.status), campaignId: text(raw.campaignId), page: text(raw.page) };
   const statuses = ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'CANCELLED'] as const;
   const status = statuses.find(item => item === query.status);
   const page = Math.max(0, Math.min(10000, parseInt(query.page ?? '0') || 0));

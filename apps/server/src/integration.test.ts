@@ -509,6 +509,22 @@ test('login sets a hardened cookie, logout and expiry end the session, wrong pas
   } finally { await probe.close(); }
 });
 
+test('someone who knows the e-mail cannot lock the owner out from the device already logged in', async () => {
+  await prisma.user.create({ data: { email: 'trava-login@teste.local', name: 'Dono', passwordHash: await hashPassword('senha-do-dono-123') } });
+  const probe = buildApp(fakeProvider);
+  const login = (password: string, remoteAddress: string) => probe.inject({ method: 'POST', url: '/api/auth/login', headers: anon, remoteAddress, payload: { email: 'trava-login@teste.local', password } });
+  try {
+    assert.equal((await login('senha-do-dono-123', '198.51.100.7')).statusCode, 200, 'o dono entra do celular');
+    // Atacante erra de vários IPs até travar o e-mail.
+    for (let i = 0; i < 10; i++) await login('chute-' + i, `203.0.113.${i + 1}`);
+    assert.equal((await login('senha-do-dono-123', '203.0.113.99')).statusCode, 429, 'IP desconhecido segue bloqueado, mesmo com a senha certa');
+    assert.equal((await login('senha-do-dono-123', '198.51.100.7')).statusCode, 200, 'o aparelho do dono continua entrando');
+    // Do aparelho conhecido, o limite por IP ainda segura força bruta.
+    for (let i = 0; i < 10; i++) await login('chute-local-' + i, '198.51.100.7');
+    assert.equal((await login('senha-do-dono-123', '198.51.100.7')).statusCode, 429);
+  } finally { await probe.close(); }
+});
+
 test('health reports an inactive dispatcher instead of advertising a healthy system', async () => {
   const probe = buildApp(fakeProvider, undefined, undefined, () => false);
   try {
