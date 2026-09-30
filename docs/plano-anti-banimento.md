@@ -1,7 +1,11 @@
 # Plano: proteção contra banimento do número (T-131 a T-135)
 
-**Status:** planejado, nada implementado. Mexe no ritmo da fila (`packages/database/src/queue.ts`),
-que o AGENTS.md exige registrar em ADR antes de mudar: a implementação abre a **ADR-041**.
+**Status:** T-131, T-132, T-135 e o intervalo por grupo (T-136) **implementados** (ADR-041, 2026-10-01).
+T-133 (variações de texto) e T-134 (intervalo aleatório e aquecimento) aguardam decisão do dono.
+
+Decisões do dono: silêncio a partir das 22:00; limite diário de 150; intervalo de 2 h no mesmo
+grupo, configurável de 30 min a 24 h; o limite diário conta envios (mandar 5 vezes para 20 grupos
+= 100 envios); o mesmo flyer pode continuar.
 
 ## Por que
 

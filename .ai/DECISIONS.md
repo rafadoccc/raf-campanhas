@@ -1093,3 +1093,41 @@ meses.
   `lockCampaign`, conferindo de novo o estado e sem PENDING/PROCESSING.
 - **Cookies:** só o de sessão, essencial; sem banner.
 - **Documentos internos:** `docs/lgpd/registro-operacoes.md` e `docs/lgpd/plano-incidentes.md`.
+
+---
+
+## ADR-041 · Proteção do número: silêncio, limite diário, intervalo por grupo e pausa automática
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev
+
+O maior risco do negócio é o WhatsApp restringir o número de um cliente. O dono aprovou, além
+do intervalo mínimo entre envios (ADR-006/035), regras por conta com padrões seguros. Variações de
+texto e intervalo aleatório (T-133/T-134) ficaram para depois, a pedido do dono.
+
+- **Regras** (`SendingPolicy`, uma linha por conta; sem linha valem `DEFAULT_RULES`; null desliga):
+  janela de silêncio **22:00 às 08:00** (horário de São Paulo, pode virar a meia-noite), **150
+  envios por dia por número** (10 a 1000), **2 h entre envios ao mesmo grupo** (30 min a 24 h) e
+  **pausa automática** ligada. Editadas na tela WhatsApp (`GET/PUT /api/sending-policy`).
+- **Onde valem:** em `claimDelivery`, depois do intervalo do número e sob o mesmo lock do número,
+  só para envio real (`paceKey` não nulo). Barrado não falha nem muda nada no banco: o envio
+  continua PENDING e sai quando a regra libera. Não mexe em `nextAvailableAt` da campanha (a conta
+  de pausar/retomar, `resumeAt`, continua a mesma).
+- **Limite diário** conta cada envio do número no dia (`attemptedAt` desde 00:00 de São Paulo, de
+  todas as campanhas do número): tentativa que falhou também conta, porque pode ter saído.
+  Índice novo `Delivery(attemptedAt)`.
+- **Intervalo por grupo** conta do último envio que saiu (`SENT`) para o mesmo `groupId`, de
+  qualquer campanha da conta. Como a fila é em ordem, a cabeça segurada segura a campanha; as
+  outras campanhas do número seguem.
+- **Custo:** `claimDelivery` avisa o motivo por um callback opcional (`onBlocked`); o despachante
+  guarda "segurado até" em memória (no máximo 5 min) e não repete a transação a cada varredura.
+  Salvar as regras solta tudo na hora (`releaseRuleHolds`).
+- **Previsão:** `forecastQueue` recebe as regras, o uso do dia e o último envio por grupo e aplica
+  a mesma `ruleBlock`. Envio segurado por regra mostra o motivo ("Horário de silêncio · sai amanhã
+  às 08:00") e nunca aparece como "Atrasado".
+- **Pausa automática** (`safety.ts`): desconexão 403, erro de limite do WhatsApp (429 /
+  rate-overlimit) no envio, ou **3 recusas do servidor em 1 hora** (conferido a cada minuto, só as
+  recusas depois da última pausa). Pausa todas as campanhas reais ativas da conta, grava
+  `WhatsAppSession.safetyPausedAt/safetyReason` e o aviso aparece no Início e na tela WhatsApp
+  (`status.safety`) até "Entendi" (`POST /api/whatsapp/safety/dismiss`). Retomar é manual.
+- **Testes:** no banco de teste descartável os padrões ficam desligados (como o piso de
+  intervalo): os testes de fila rodam a qualquer hora. As regras são testadas com linha explícita.

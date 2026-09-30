@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-10-01T02:00Z · claude
+
+**Fiz:** proteção do número (ADR-041): janela de silêncio 22h-8h, limite de 150 envios/dia por
+número, 2 h entre envios ao mesmo grupo e pausa automática por sinal de restrição. Bloco
+"Proteção do número" na tela WhatsApp e aviso vermelho de pausa no Início e na tela WhatsApp.
+**Arquivos:** packages/database/src/{sending-policy,queue,client}.ts, packages/database/prisma/{schema.prisma,migrations/20261001000000_number_protection}, apps/server/src/{safety,number-protection-routes,dispatcher,queue-forecast,app,whatsapp,sending-policy.test,integration.test}.ts, apps/web/src/{components/number-protection.tsx,pages/settings.tsx,pages/dashboard.tsx,lib/api.ts}, package.json (teste novo na lista), .ai/*, docs/plano-anti-banimento.md
+**Tarefas:** T-131, T-132, T-135 e T-136 (concluídas). T-133 e T-134 abertas, esperando o dono.
+**Estado:** compila · lint ok · unitários 84/84 · integração 134/134. Conferido no navegador (dev,
+porta 3001): salvar as regras, aviso de pausa com "Entendi" no Início, tela a 375 px sem estouro.
+**Armadilhas:**
+- `claimDelivery` mudou (ADR-041, regra do AGENTS.md sobre a fila): as regras entram depois do
+  intervalo do número, sob o mesmo lock. Barrado = `null` + `onBlocked`; nada muda no banco.
+- No banco de teste as regras padrão ficam DESLIGADAS (`defaultRules`); teste de regra cria a linha.
+- Dois testes antigos que listam as colunas de `WhatsAppSession` passaram a incluir
+  `safetyPausedAt`/`safetyReason` (não são credenciais).
+- 3 recusas do servidor em 1 hora pausam tudo. Se der falso positivo (grupos onde a conta não pode
+  mandar), ajustar `REJECTIONS_TO_PAUSE` em safety.ts.
+**Próximo passo sugerido:** o dono decide T-133/T-134; depois, contagem regressiva ou relatório.
+
+---
+
 ## 2026-09-30T16:00Z · claude
 
 **Fiz:** nome **DocDrop** no painel e LGPD (ADR-040).

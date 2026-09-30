@@ -152,11 +152,12 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-128  Revisão de segurança: login não travável por terceiros        owner: —        since: —
 [x] T-129  Nome DocDrop no painel e na documentação                     owner: —        since: —
 [x] T-130  LGPD: termos, aceite, baixar/excluir dados, 6 meses        owner: —        since: —
-[ ] T-131  Anti-banimento: janela de horário (sem madrugada) por número   owner: —        since: —
-[ ] T-132  Anti-banimento: limite diário de envios por número            owner: —        since: —
+[x] T-131  Anti-banimento: janela de horário (sem madrugada) por número   owner: —        since: —
+[x] T-132  Anti-banimento: limite diário de envios por número            owner: —        since: —
+[x] T-136  Anti-banimento: intervalo mínimo no mesmo grupo (2 h)           owner: —        since: —
 [ ] T-133  Anti-banimento: variações de texto {a|b|c} por grupo          owner: —        since: —
 [ ] T-134  Anti-banimento: aquecimento e intervalo aleatório            owner: —        since: —
-[ ] T-135  Anti-banimento: pausa automática com sinal de bloqueio       owner: —        since: —
+[x] T-135  Anti-banimento: pausa automática com sinal de bloqueio       owner: —        since: —
 [x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
 [x] T-121  Desempenho, limites contra abuso, VPS pequena (ADR-034)      owner: —        since: —
 [x] T-122  Sync automático, 2 min, previsão sem falso "Atrasado", UI     owner: —        since: —
