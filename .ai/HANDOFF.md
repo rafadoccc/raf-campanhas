@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-09-30T23:50Z · claude
+
+**Fiz:** corrigi o travamento da fila visto em produção (envio "Enviando há 158 min", 40 esperando)
+(ADR-044): teto de 3 min no upload de mídia (o Baileys não tinha nenhum), vigia de 5 min no envio
+com renovação da conexão, confirmação de resposta atrasada e faxina de envios órfãos.
+**Arquivos:** apps/server/src/{dispatcher,whatsapp,whatsapp.test,integration.test}.ts, packages/database/src/{queue,client}.ts
+**Tarefas:** T-138 (concluída).
+**Estado:** compila · lint ok · unitários 87/87 · integração 139/139.
+**Armadilhas:**
+- **A partir de agora o dono pediu: push só na `dev`; ele mesmo leva para a `main`.** Não fazer fast-forward da main.
+- Nada lê as mensagens de log do Railway daqui: a causa foi deduzida pelo código do Baileys
+  (`messages.js` passa `options.mediaUploadTimeoutMs` ao upload; sem ele não há timeout).
+- O envio encerrado pelo vigia é INCERTO (pode ter saído): nunca reenviado sozinho.
+**Próximo passo sugerido:** o dono leva a dev para a main fora de campanha; conferir no Railway
+se aparece "[Fila] Envio sem resposta" ou "Envios travados liberados" nos logs.
+
+---
+
 ## 2026-10-01T04:00Z · claude
 
 **Fiz:** aquecimento de número novo (ADR-043). Ao conectar um número sem resposta, a tela WhatsApp

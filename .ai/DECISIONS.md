@@ -1182,3 +1182,26 @@ comprar um chip só para divulgação). O sistema não sabe a idade de um númer
   mostra "Aquecendo o número (dia 2 de 7): limite de 30 envios hoje · continua amanhã às 08:00".
 - **Status:** `GET /api/whatsapp/status` traz `warmup` quando conectado; `GET /api/sending-policy`
   traz `todayLimit` e `warmup`. Migration aditiva `20261001100000_number_warmup`.
+
+---
+
+## ADR-044 · Envio sem resposta nunca trava a fila
+
+**Data:** 2026-09-30 · **Status:** aceita · **Autor:** claude · **Branch:** dev
+
+Em produção (30/09, ~18:00, depois de uma sequência de deploys), um envio com flyer ficou
+"Enviando" por mais de 2 h e 40 envios esperaram atrás dele. Causa: o `sock.sendMessage` do
+Baileys sobe a mídia **sem limite de tempo** se não receber `mediaUploadTimeoutMs` (o padrão é
+nenhum); um upload pendurado (típico logo após reconectar) nunca volta, e a faixa do número fica
+ocupada para sempre.
+
+- **Upload com teto:** `sendMessage(jid, content, { mediaUploadTimeoutMs: 3 min })`.
+- **Vigia do envio** (dispatcher): `provider.send` corre contra 5 min (`SEND_TIMEOUT_MS`). Sem
+  resposta: FAILED **incerto** (`errorCode = envio:sem-resposta`, sem reenvio automático, ADR-014),
+  a conexão é renovada sem logout (`WhatsAppProvider.recycle`, o fluxo de queda reconecta com a
+  mesma sessão) e a fila do número segue.
+- **Resposta atrasada:** se o envio abandonado ainda responder, `confirmLateSend` transforma o
+  FAILED com esse código em SENT com o id da mensagem (recibos passam a casar).
+- **Faxina** (a cada minuto): PROCESSING com `attemptedAt` há mais de 7 min que não está saindo
+  neste processo vira o mesmo FAILED incerto (`releaseStuckSends`). Pega qualquer caso que
+  escape do vigia. A partida continua marcando todo PROCESSING como incerto.
