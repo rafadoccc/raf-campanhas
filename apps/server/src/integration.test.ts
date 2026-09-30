@@ -18,6 +18,7 @@ import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
 import { purgeExpiredData } from './legal';
+import { checkRejections, safetyPause, SAFETY_REASONS, REJECTIONS_TO_PAUSE } from './safety';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -1511,7 +1512,8 @@ test('whatsapp session (4A): one per user, and a paired number belongs to a sing
 
 test('whatsapp session (4A): stores no credentials, and goes away with the user', async () => {
   const columns = (await prisma.$queryRawUnsafe<{ COLUMN_NAME: string }[]>("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'WhatsAppSession'")).map(c => c.COLUMN_NAME).sort();
-  assert.deepEqual(columns, ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'state', 'updatedAt', 'userId'], 'nenhuma coluna de QR, creds ou chave do Baileys');
+  // safetyPausedAt/safetyReason: aviso da pausa automática (ADR-041), não é credencial.
+  assert.deepEqual(columns, ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'safetyPausedAt', 'safetyReason', 'state', 'updatedAt', 'userId'], 'nenhuma coluna de QR, creds ou chave do Baileys');
   const temp = await prisma.user.create({ data: { email: `wa-temp-${Date.now()}@teste.local`, name: 'Temp', passwordHash: 'x' } });
   await prisma.whatsAppSession.create({ data: { userId: temp.id } });
   await prisma.user.delete({ where: { id: temp.id } }); // usuário sem dados pode ser apagado
@@ -1701,7 +1703,7 @@ test('lifecycle (4B): session row keeps only lifecycle data; disconnect clears t
     await manager.for(user.id).connect();
     await manager.persistState(user.id);
     const row = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } });
-    assert.deepEqual(Object.keys(row).sort(), ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'state', 'updatedAt', 'userId'], 'nenhum campo de QR ou credencial');
+    assert.deepEqual(Object.keys(row).sort(), ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'safetyPausedAt', 'safetyReason', 'state', 'updatedAt', 'userId'], 'nenhum campo de QR ou credencial');
     assert.equal(row.state, 'connected');
     // Número já pareado em outra conta: registra o motivo, sem quebrar a partida.
     await prisma.whatsAppSession.update({ where: { userId: user.id }, data: { accountJid: null } });
@@ -3059,6 +3061,103 @@ test('LGPD: retention sweep erases deleted and 6-month-old finished campaigns, o
   assert.equal(await prisma.campaignMedia.count({ where: { id: orphanOld.id } }), 0, 'mídia sem campanha, antiga, sai');
   assert.equal(await prisma.campaignMedia.count({ where: { id: orphanNew.id } }), 1, 'recém-enviada fica (o formulário pode estar aberto)');
   assert.equal(await prisma.group.count({ where: { id: gone.id } }), 0, 'grupo que saiu há 6 meses sai');
+});
+
+// ─── Proteção do número (ADR-041) ───────────────────────────────────────────────
+const spTime = (day: string, clock: string) => new Date(`${day}T${clock}:00-03:00`);
+async function protectedQueue(email: string, rules: { quietStart?: number | null; quietEnd?: number | null; dailyLimit?: number | null; groupGapMinutes?: number | null; autoPause?: boolean }) {
+  const user = await prisma.user.create({ data: { email, name: email.split('@')[0], passwordHash: 'x' } });
+  await prisma.sendingPolicy.create({ data: { userId: user.id, quietStart: null, quietEnd: null, dailyLimit: null, groupGapMinutes: null, autoPause: true, ...rules } });
+  const group = await prisma.group.create({ data: { userId: user.id, name: 'Protegido', externalId: `${user.id}@g.us` } });
+  const accountJid = `55${Date.now()}${Math.floor(Math.random() * 1000)}@s.whatsapp.net`;
+  const campaign = await prisma.campaign.create({ data: { userId: user.id, name: 'Protegida', startsAt: new Date(0), endsAt: new Date(0), status: 'ACTIVE', provider: 'baileys', accountJid, groups: { create: [{ groupId: group.id, position: 0 }] } } });
+  const delivery = (sequence: number, data: { scheduledAt: Date; status?: 'PENDING' | 'SENT'; sentAt?: Date; attemptedAt?: Date }) =>
+    prisma.delivery.create({ data: { campaignId: campaign.id, groupId: group.id, messageBody: 'oi', provider: 'baileys', sequence, status: data.status ?? 'PENDING', scheduledAt: data.scheduledAt, sentAt: data.sentAt, attemptedAt: data.attemptedAt } });
+  return { user, group, campaign, delivery };
+}
+
+test('number protection: quiet hours hold the queue without failing and release at the end', async () => {
+  const { delivery } = await protectedQueue('silencio@teste.local', { quietStart: 22 * 60, quietEnd: 8 * 60 });
+  const night = spTime('2026-10-01', '23:00');
+  const row = await delivery(0, { scheduledAt: new Date(night.getTime() - 60_000) });
+  const blocks: string[] = [];
+  assert.equal(await claimDelivery(prisma, row.id, night, block => blocks.push(`${block.reason}@${block.until.toISOString()}`)), null, 'de noite não sai');
+  assert.deepEqual(blocks, [`quiet@${spTime('2026-10-02', '08:00').toISOString()}`]);
+  assert.equal((await prisma.delivery.findUniqueOrThrow({ where: { id: row.id } })).status, 'PENDING', 'espera, não falha');
+  assert.ok(await claimDelivery(prisma, row.id, spTime('2026-10-02', '08:00')), 'às 08:00 sai');
+});
+
+test('number protection: the daily limit counts every attempt of the number that day', async () => {
+  const { delivery } = await protectedQueue('limite@teste.local', { dailyLimit: 1 });
+  const at = spTime('2026-10-01', '15:00');
+  await delivery(0, { scheduledAt: new Date(at.getTime() - 3_600_000), status: 'SENT', attemptedAt: new Date(at.getTime() - 3_600_000), sentAt: new Date(at.getTime() - 3_600_000) });
+  const next = await delivery(1, { scheduledAt: new Date(at.getTime() - 60_000) });
+  let reason = '';
+  assert.equal(await claimDelivery(prisma, next.id, at, block => { reason = block.reason; }), null);
+  assert.equal(reason, 'daily');
+  assert.ok(await claimDelivery(prisma, next.id, spTime('2026-10-02', '00:01')), 'no dia seguinte volta');
+});
+
+test('number protection: the same group waits the group interval', async () => {
+  const { delivery } = await protectedQueue('grupo@teste.local', { groupGapMinutes: 120 });
+  const at = spTime('2026-10-01', '11:00');
+  await delivery(0, { scheduledAt: spTime('2026-10-01', '10:00'), status: 'SENT', attemptedAt: spTime('2026-10-01', '10:00'), sentAt: spTime('2026-10-01', '10:00') });
+  const next = await delivery(1, { scheduledAt: new Date(at.getTime() - 60_000) });
+  let reason = '';
+  assert.equal(await claimDelivery(prisma, next.id, at, block => { reason = block.reason; }), null);
+  assert.equal(reason, 'group');
+  assert.ok(await claimDelivery(prisma, next.id, spTime('2026-10-01', '12:00')), '2 h depois sai');
+});
+
+test('number protection: rules are per account, validated, and saving them never touches another account', async () => {
+  const a = await lgpdUser('regras-a@teste.local');
+  const b = await lgpdUser('regras-b@teste.local');
+  const initial = (await a.call('GET', '/api/sending-policy')).json();
+  assert.deepEqual(initial.defaults, { quiet: { enabled: true, start: '22:00', end: '08:00' }, dailyLimit: 150, groupGapMinutes: 120, autoPause: true });
+  const body = { quiet: { enabled: true, start: '23:00', end: '07:30' }, dailyLimit: 200, groupGapMinutes: 180, autoPause: false };
+  for (const bad of [{ ...body, dailyLimit: 5 }, { ...body, groupGapMinutes: 10 }, { ...body, quiet: { enabled: true, start: '25:00', end: '07:00' } }, { ...body, quiet: { enabled: true, start: '08:00', end: '08:00' } }]) {
+    assert.equal((await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: bad, headers: as(a.session) })).statusCode, 400, JSON.stringify(bad));
+  }
+  const saved = await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: body, headers: as(a.session) });
+  assert.equal(saved.statusCode, 200, saved.body);
+  const stored = await prisma.sendingPolicy.findUniqueOrThrow({ where: { userId: a.user.id } });
+  assert.deepEqual([stored.quietStart, stored.quietEnd, stored.dailyLimit, stored.groupGapMinutes, stored.autoPause], [23 * 60, 7 * 60 + 30, 200, 180, false]);
+  assert.deepEqual((await a.call('GET', '/api/sending-policy')).json().quiet, body.quiet);
+  const off = await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: { quiet: { enabled: false }, dailyLimit: null, groupGapMinutes: null, autoPause: true }, headers: as(a.session) });
+  assert.equal(off.statusCode, 200, 'cada regra pode ser desligada');
+  assert.equal(await prisma.sendingPolicy.count({ where: { userId: b.user.id } }), 0, 'a outra conta não muda');
+});
+
+test('number protection: a restriction signal pauses every active campaign of that account only, until resumed by hand', async () => {
+  const { user, campaign, delivery } = await protectedQueue('restricao@teste.local', {});
+  const other = await protectedQueue('restricao-outra@teste.local', {});
+  const now = new Date();
+  for (let i = 0; i < REJECTIONS_TO_PAUSE; i++) {
+    const row = await delivery(i, { scheduledAt: new Date(now.getTime() - 600_000 - i * 1000), status: 'SENT', sentAt: new Date(now.getTime() - 600_000) });
+    await prisma.delivery.update({ where: { id: row.id }, data: { serverRejectedAt: new Date(now.getTime() - 60_000) } });
+  }
+  assert.ok(await checkRejections(now) >= 1);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'PAUSED');
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: other.campaign.id } })).status, 'ACTIVE', 'outra conta segue');
+  const session = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } });
+  assert.match(session.safetyReason ?? '', /recusou 3 mensagens/);
+  // A pessoa retoma: as mesmas recusas não pausam de novo.
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'ACTIVE', pausedAt: null } });
+  await checkRejections(new Date(now.getTime() + 1000));
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE');
+  // Com a pausa automática desligada, o sinal não pausa.
+  await prisma.sendingPolicy.update({ where: { userId: other.user.id }, data: { autoPause: false } });
+  assert.equal(await safetyPause(other.user.id, SAFETY_REASONS.forbidden), 0);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: other.campaign.id } })).status, 'ACTIVE');
+});
+
+test('number protection: the pause notice shows in the WhatsApp status until dismissed', async () => {
+  const { user, session } = await lgpdUser('aviso@teste.local');
+  await prisma.whatsAppSession.create({ data: { userId: user.id, safetyPausedAt: new Date(), safetyReason: SAFETY_REASONS.rateLimited } });
+  const status = await app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: as(session) });
+  assert.equal(status.json().safety?.reason, SAFETY_REASONS.rateLimited);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/whatsapp/safety/dismiss', payload: {}, headers: as(session) })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: as(session) })).json().safety, undefined);
 });
 
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {

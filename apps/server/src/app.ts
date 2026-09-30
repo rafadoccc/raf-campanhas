@@ -1,7 +1,7 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey, MIN_INTERVAL_SECONDS, effectiveInterval } from '@campaign/database';
-import { forecastQueue } from './queue-forecast';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey, MIN_INTERVAL_SECONDS, effectiveInterval, rulesFor, sendsToday } from '@campaign/database';
+import { forecastQueue, type ForecastRules } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
 import { registerMediaRoutes } from './media';
@@ -15,6 +15,7 @@ import { registerAdminRoutes } from './admin-routes';
 import { usesLegacySession } from './legacy-session';
 import { wakeDispatcher } from './dispatcher';
 import { registerLegalRoutes } from './legal';
+import { registerNumberProtectionRoutes, safetyNotice } from './number-protection-routes';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -51,7 +52,9 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
         // Junto do estado, a última sincronização de grupos (a automática, feita ao conectar).
         if (path === 'status') {
           const groupsSync = legacy ? null : manager.syncInfo(owner.id);
-          return { ...connection.status(), ...(groupsSync ? { groupsSync } : {}), ...(sessionsPersistent() ? {} : { ephemeralSession: true }) };
+          // Aviso de pausa automática por sinal de restrição (ADR-041), até a pessoa dispensar.
+          const safety = await safetyNotice(owner.id);
+          return { ...connection.status(), ...(groupsSync ? { groupsSync } : {}), ...(safety ? { safety } : {}), ...(sessionsPersistent() ? {} : { ephemeralSession: true }) };
         }
         if (path === 'connect') {
           const status = await connection.connect();
@@ -101,6 +104,8 @@ registerMediaRoutes(app);
 registerCampaignRoutes(app);
 // LGPD (ADR-040): páginas públicas, aceite dos termos, baixar e excluir os dados da conta.
 registerLegalRoutes(app, config, manager);
+// Proteção do número (ADR-041): regras de envio da conta e aviso de pausa automática.
+registerNumberProtectionRoutes(app, async userId => (await sending.forOwner(userId))?.status().accountJid ?? null);
 // Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
 registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
 // Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de
@@ -163,7 +168,20 @@ app.get('/api/deliveries', async (request) => {
   const paced = campaign ? { ...campaign, nextAvailableAt: new Date(Math.max(campaign.nextAvailableAt?.getTime() ?? 0, numberFreeAt)) } : null;
   // Conectado = a conexão DO DONO da campanha (a mesma que envia, ADR-022), nunca a global legada.
   const ownerConnection = campaign ? await sending.forOwner(campaign.userId) : null;
-  const forecast = paced ? forecastQueue(deliveries, paced, await currentTime(), ownerConnection?.status().state === 'connected', MAX_SEND_ATTEMPTS) : null;
+  const now = await currentTime();
+  // Regras da conta (ADR-041) só pesam em envio real, pelo número da campanha.
+  let limits: ForecastRules | undefined;
+  if (campaign && accountId) {
+    const rules = await rulesFor(prisma, campaign.userId);
+    const groupIds = [...new Set(deliveries.filter(d => d.status === 'PENDING').map(d => d.groupId))];
+    const [usedToday, lastSent] = await Promise.all([
+      rules.dailyLimit ? sendsToday(prisma, accountId, now) : 0,
+      rules.groupGapMinutes && groupIds.length ? prisma.delivery.groupBy({ by: ['groupId'], where: { groupId: { in: groupIds }, status: 'SENT', provider: 'baileys' }, _max: { sentAt: true } }) : [],
+    ]);
+    const lastSentByGroup = new Map(lastSent.flatMap(row => row._max.sentAt ? [[row.groupId, row._max.sentAt] as const] : []));
+    limits = { rules, usedToday, lastSentByGroup };
+  }
+  const forecast = paced ? forecastQueue(deliveries, paced, now, ownerConnection?.status().state === 'connected', MAX_SEND_ATTEMPTS, limits) : null;
   return deliveries.map(delivery => ({ ...delivery, wait: forecast?.get(delivery.id) ?? null }));
 });
 

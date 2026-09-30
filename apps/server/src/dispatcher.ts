@@ -15,6 +15,7 @@ import {
 import type { WhatsAppProvider } from './whatsapp';
 import type { SendingRouter } from './sending-router';
 import { isNotSent, notSent } from './send-context';
+import { checkRejections, isRateLimit, safetyPause, SAFETY_REASONS } from './safety';
 
 // O que o despachante usa do conector. Permite testar o fluxo inteiro com um conector falso.
 export type SendingProvider = Pick<WhatsAppProvider, 'status' | 'send' | 'flushReads' | 'flushDeliveryEvents'>;
@@ -48,6 +49,13 @@ export const laneOf = (delivery: { provider: string }, campaign: { accountJid: s
 let wake: (() => void) | null = null;
 export function wakeDispatcher() { wake?.(); }
 
+// Envio segurado pelas regras da conta (ADR-041: silêncio, limite do dia, intervalo do grupo):
+// o despachante não tenta de novo antes de a regra liberar (no máximo 5 min, para uma mudança nas
+// regras valer logo). Salvar as regras solta tudo na hora.
+const RULE_HOLD_MAX_MS = 5 * 60_000;
+let releaseHolds: (() => void) | null = null;
+export function releaseRuleHolds() { releaseHolds?.(); wake?.(); }
+
 export type Dispatcher = {
   isActive(): boolean;
   stop(): Promise<void>;
@@ -68,6 +76,9 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
   // Faixas trabalhando agora (uma por número). Uma faixa ocupada não recebe outro lote.
   const busyLanes = new Set<string>();
   const activeLanes = new Set<Promise<void>>();
+  const holds = new Map<string, number>();
+  let lastRejectionCheck = 0;
+  releaseHolds = () => holds.clear();
 
   async function send(id: string, lane: string) {
     if (stopping) return;
@@ -76,8 +87,9 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     if (!pending) return;
     const provider = pending.provider === 'baileys' ? await router.forOwner(pending.campaign.userId) : null;
     if (pending.provider === 'baileys' && provider?.status().state !== 'connected') return; // espera o dono conectar
-    const delivery = await claimDelivery(prisma, id);
+    const delivery = await claimDelivery(prisma, id, undefined, block => holds.set(id, Math.min(block.until.getTime(), Date.now() + RULE_HOLD_MAX_MS)));
     if (!delivery) return;
+    holds.delete(id);
     lastSendAt.set(lane, Date.now());
     try {
       if (!delivery.group.active) throw notSent(new Error('Grupo inativo. Sincronize os grupos.'));
@@ -110,11 +122,14 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
       const message = error instanceof Error ? error.message : 'Falha no envio.';
       // Só o que comprovadamente não saiu volta para a fila (ADR-014); o resto é incerto.
       const retryable = isNotSent(error);
+      const code = errorCodeOf(error);
       await finishDelivery(prisma, id, {
         error: retryable ? message : `${message} Resultado incerto: confira no celular. Sem reenvio automático para não duplicar.`,
-        code: errorCodeOf(error),
+        code,
         retryable,
       });
+      // O WhatsApp limitou o número: parar tudo agora, antes do próximo envio (ADR-041).
+      if (delivery.provider === 'baileys' && isRateLimit(error, code)) await safetyPause(pending.campaign.userId, SAFETY_REASONS.rateLimited).catch(() => undefined);
     }
   }
 
@@ -122,7 +137,13 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     if (working || stopping) return;
     working = true;
     try {
+      for (const [id, until] of holds) if (until <= Date.now()) holds.delete(id);
       await completeFinished(prisma);
+      // Recusas do servidor em série = sinal de restrição (ADR-041). Uma conferência por minuto.
+      if (Date.now() - lastRejectionCheck >= 60_000) {
+        lastRejectionCheck = Date.now();
+        await checkRejections().catch(error => console.warn('[Proteção] Falha ao conferir recusas:', error instanceof Error ? error.message : error));
+      }
       // Recibos e eventos de CADA conexão, aplicados só aos dados do dono dela.
       for (const { ownerId, provider: connection } of await router.entries()) {
         await connection.flushReads().catch(() => {
@@ -178,6 +199,7 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
       if (stopping) break;
       // Sem conexão do dono, este envio espera; os das outras campanhas seguem.
       if (delivery.provider === 'baileys' && (await router.forOwner(ownerId))?.status().state !== 'connected') continue;
+      if ((holds.get(delivery.id) ?? 0) > Date.now()) continue;
       const wait = SEND_SPACING_MS - (Date.now() - (lastSendAt.get(lane) ?? 0));
       if (wait > 0) await delay(wait);
       if (stopping) break;
@@ -243,6 +265,7 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     if (stopping) return;
     stopping = true;
     wake = null;
+    releaseHolds = null;
     if (scanTimer) clearInterval(scanTimer);
     if (leaseTimer) clearInterval(leaseTimer);
     // Espera os envios em andamento de TODOS os números (até 30 s). Cada faixa confere

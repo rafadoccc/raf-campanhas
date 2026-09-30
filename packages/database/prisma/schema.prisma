@@ -157,6 +157,8 @@ model Delivery {
   @@unique([campaignId, groupId, scheduledAt])
   @@unique([campaignId, sequence])
   @@index([status, scheduledAt])
+  // Limite diário por número (ADR-041): conta as tentativas do dia.
+  @@index([attemptedAt])
   @@index([campaignId, scheduledAt])
   @@index([providerId])
 }
@@ -236,6 +238,24 @@ model User {
   campaigns    Campaign[]
   groups       Group[]
   media        CampaignMedia[]
+  sendingPolicy SendingPolicy?
+}
+
+// Proteção do número (ADR-041): regras de envio da conta. Sem linha = padrões seguros
+// (DEFAULT_RULES em sending-policy.ts). null em uma regra = regra desligada.
+model SendingPolicy {
+  userId          String   @id
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Janela de silêncio, em minutos desde 00:00 no horário de São Paulo (ex.: 1320 = 22:00).
+  quietStart      Int?
+  quietEnd        Int?
+  // Envios por número por dia.
+  dailyLimit      Int?
+  // Espera mínima antes de mandar de novo para o mesmo grupo.
+  groupGapMinutes Int?
+  // Pausar as campanhas ao ver sinal de restrição do WhatsApp.
+  autoPause       Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
 }
 
 // Sessão de login. O cookie leva um token aleatório; aqui fica só o hash SHA-256 dele,
@@ -287,6 +307,10 @@ model WhatsAppSession {
   lastError       String?   @db.VarChar(255)
   // Reconectar sozinho na partida (Fase 4B). Usuário desativado não reconecta.
   autoConnect     Boolean   @default(true)
+  // Pausa automática por sinal de restrição (ADR-041): quando e por quê. safetyReason fica
+  // até a pessoa dispensar o aviso; safetyPausedAt fica para não contar de novo os mesmos sinais.
+  safetyPausedAt  DateTime?
+  safetyReason    String?   @db.VarChar(255)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }

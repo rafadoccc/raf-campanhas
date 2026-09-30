@@ -7,3 +7,4 @@ export { claimDelivery, finishDelivery, completeFinished, lockCampaign, resumeAt
 export { acquireLease, renewLease, releaseLease } from './lease';
 export { applyServerEvent, REJECTED_MESSAGE, type ServerEvent } from './delivery-events';
 export type { SendOutcome } from './queue';
+export { DEFAULT_RULES, RULE_LIMITS, defaultRules, rulesFor, ruleBlock, inQuietHours, quietEndAfter, localAt, localDay, localMinute, sendsToday, lastGroupSend, type SendingRules, type RuleBlock } from './sending-policy';

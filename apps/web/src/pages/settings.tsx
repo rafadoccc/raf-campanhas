@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, errorMessage } from '../lib/api';
+import { api, errorMessage, type SafetyNotice } from '../lib/api';
+import { NumberProtection, SafetyAlert } from '../components/number-protection';
 import { startVisiblePolling, connectionPollDelay } from '../lib/visible-polling';
 import { screenCache } from '../lib/cache';
 import { Alert, Button, Card, Dot, Page, PageHeader, IconOpen, IconRefresh, IconWhatsApp, IconDisable, hora, useConfirm } from '../design';
 
 type GroupsSync = { running: boolean; auto: boolean; at: string | null; count: number | null; error: string | null };
-type Connection = { state: string; qr?: string; accountJid?: string; error?: string; groupsSync?: GroupsSync | null; ephemeralSession?: boolean };
+type Connection = { state: string; qr?: string; accountJid?: string; error?: string; groupsSync?: GroupsSync | null; ephemeralSession?: boolean; safety?: SafetyNotice };
 const labels: Record<string, string> = { disconnected: 'Desconectado', connecting: 'Conectando…', qr: 'Aguardando leitura do QR Code', connected: 'Conectado', reconnecting: 'Reconectando…', error: 'Conexão interrompida' };
 // Limite suave do botão: o servidor recusa sincronizar de novo antes disso.
 const SYNC_COOLDOWN_MS = 30_000;
@@ -77,6 +78,7 @@ export default function Settings() {
   return <Page>
     <div className="mx-auto w-full max-w-2xl space-y-4">
       <PageHeader title="WhatsApp" subtitle="A conexão é sua: outros usuários conectam o próprio número." />
+      {connection?.safety && <SafetyAlert notice={connection.safety} onDismissed={() => void refresh()} />}
       <Card className="space-y-4 p-5">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded bg-brand-50 text-brand-700"><IconWhatsApp className="h-5 w-5" aria-hidden /></span>
@@ -113,6 +115,7 @@ export default function Settings() {
           {connected && cooldown > 0 && <p className="tabular text-2xs text-slate-400" aria-live="polite">Sincronizar de novo disponível em {Math.ceil(cooldown / 1000)} s.</p>}
         </div>
       </Card>
+      <NumberProtection />
       <p className="text-2xs text-muted">As campanhas rodam com o navegador fechado, desde que o sistema fique ligado.</p>
     </div>
   </Page>;

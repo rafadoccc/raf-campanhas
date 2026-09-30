@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, connectionState } from '../lib/api';
+import { api, connectionSummary } from '../lib/api';
+import { SafetyAlert } from '../components/number-protection';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, ButtonLink, Card, CardHeader, Dot, EmptyState, Page, PageHeader, ScrollArea, Skeleton, Stat,
@@ -40,11 +42,13 @@ function WeekBars({ days }: { days: Dashboard['last7Days'] }) {
 
 export default function DashboardPage() {
   const { data: loaded, error } = usePolling(async signal => {
-    const [dashboard, connection] = await Promise.all([api<Dashboard>('/dashboard', { signal }), connectionState(signal)]);
-    return { dashboard, connection };
+    const [dashboard, { state: connection, safety }] = await Promise.all([api<Dashboard>('/dashboard', { signal }), connectionSummary(signal)]);
+    return { dashboard, connection, safety };
   }, [], 15_000, 'inicio');
   const d = loaded?.dashboard ?? null;
   const connected = loaded?.connection === 'connected';
+  // Aviso de pausa automática (ADR-041): some aqui na hora ao clicar em Entendi.
+  const [dismissed, setDismissed] = useState(false);
   const metric = (value: number | null | undefined, suffix = '') => (d ? `${numero(value ?? 0)}${suffix}` : '—');
 
   return <Page className="lg:overflow-hidden">
@@ -54,6 +58,7 @@ export default function DashboardPage() {
       action={<ButtonLink to="/nova-campanha" variant="primary" icon={IconAdd}>Nova campanha</ButtonLink>}
     />
     {error && <Alert tone="warning">Não foi possível atualizar os dados. Confira se o sistema está ligado.</Alert>}
+    {loaded?.safety && !dismissed && <SafetyAlert notice={loaded.safety} onDismissed={() => setDismissed(true)} />}
 
     <Card className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-6">
       <Stat icon={IconCampaigns} label="Campanhas ativas" value={metric(d?.activeCampaigns)} />

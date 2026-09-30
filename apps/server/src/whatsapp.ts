@@ -6,7 +6,8 @@ import { describeGroupForSend, mentionTargets, notSent, mentionAllMode, withMent
 import { writeAtomic } from './auth-state';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
-import { closeAction, retryDelay } from './connection-policy';
+import { closeAction, retryDelay, CODE } from './connection-policy';
+import { safetyPause, SAFETY_REASONS } from './safety';
 import { useDurableAuthState } from './auth-state';
 import { SessionLock } from './session-lock';
 import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
@@ -290,6 +291,8 @@ export class WhatsAppProvider {
               }
               await this.lock?.release().catch(() => undefined);
               this.data = action.kind === 'stop' ? { state: 'error', error: action.error } : { state: 'disconnected' };
+              // Número recusado pelo WhatsApp: pode ser restrição. Pausa as campanhas (ADR-041).
+              if (code === CODE.forbidden && this.ownerId) void safetyPause(this.ownerId, SAFETY_REASONS.forbidden).catch(() => undefined);
               return;
             }
             this.scheduleReconnect(action.delayMs, action.countsAsRetry);

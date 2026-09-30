@@ -1,5 +1,6 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { currentTime } from './clock';
+import { rulesFor, ruleBlock, sendsToday, lastGroupSend, type RuleBlock } from './sending-policy';
 
 export function resumeAt(next: Date | null, pausedAt: Date | null, now: Date) {
   return new Date(now.getTime() + (next && pausedAt ? Math.max(0, next.getTime() - pausedAt.getTime()) : 0));
@@ -82,7 +83,8 @@ export const dueOrRunning = (at: Date) => ({
 });
 
 // One durable claim per delivery. A crash after this point is deliberately NOT retried.
-export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
+// onBlocked: chamado quando só as regras da conta (ADR-041) seguram o envio, com até quando.
+export async function claimDelivery(db: PrismaClient, id: string, now?: Date, onBlocked?: (block: RuleBlock) => void) {
   now ??= await currentTime();
   const at = now;
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -101,6 +103,15 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date) {
     if (!head || head.id !== id || head.status !== 'PENDING' || head.scheduledAt > at) return null;
     const interval = effectiveInterval(campaign.intervalSeconds);
     if (account && !await accountAllows(tx, account, interval, at)) return null;
+    // Proteção do número (ADR-041): janela de silêncio, limite diário e intervalo por grupo.
+    // Conferidas sob o lock do número, como o intervalo: dois envios nunca furam o limite juntos.
+    if (account) {
+      const rules = await rulesFor(tx, campaign.userId);
+      const used = rules.dailyLimit ? await sendsToday(tx, account, at, id) : 0;
+      const lastToGroup = rules.groupGapMinutes ? await lastGroupSend(tx, head.groupId) : null;
+      const block = ruleBlock(rules, at, used, lastToGroup);
+      if (block) { onBlocked?.(block); return null; }
+    }
     const claimed = await tx.delivery.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'PROCESSING', attemptedAt: at, updatedAt: at, error: null, attempts: { increment: 1 } } });
     if (!claimed.count) return null;
     const next = new Date(at.getTime() + interval * 1000);

@@ -37,11 +37,19 @@ export const errorMessage = (error: unknown, fallback = 'Algo deu errado.') => e
 
 /** Estado da conexão do WhatsApp usado nos avisos das telas. */
 export async function connectionState(signal?: AbortSignal): Promise<'connected' | 'disconnected' | 'unavailable'> {
+  return (await connectionSummary(signal)).state;
+}
+
+/** Aviso de pausa automática por sinal de restrição do WhatsApp (ADR-041). */
+export type SafetyNotice = { reason: string; at: string | null };
+
+/** Estado da conexão e, se houver, o aviso de pausa automática. */
+export async function connectionSummary(signal?: AbortSignal): Promise<{ state: 'connected' | 'disconnected' | 'unavailable'; safety: SafetyNotice | null }> {
   try {
-    const data = await api<{ state: string }>('/whatsapp/status', { signal });
-    return data.state === 'connected' ? 'connected' : 'disconnected';
+    const data = await api<{ state: string; safety?: SafetyNotice }>('/whatsapp/status', { signal });
+    return { state: data.state === 'connected' ? 'connected' : 'disconnected', safety: data.safety ?? null };
   } catch (error) {
     if ((error as Error).name === 'AbortError') throw error;
-    return 'unavailable';
+    return { state: 'unavailable', safety: null };
   }
 }
