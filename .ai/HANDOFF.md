@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-10-01T03:00Z · claude
+
+**Fiz:** intervalo entre envios sorteado a cada envio entre 1:45 e 3:00 (ADR-042), a pedido do
+dono. O campo de intervalo saiu do formulário (vira "Automático: 1 min 45 s a 3 min"); a campanha
+mostra "Próximo: grupo, por volta das HH:MM (em N min)" e a duração aproximada da rodada.
+**Arquivos:** packages/database/src/{queue,client}.ts, apps/server/src/{schedule,app,schedule.test,queue-forecast.test,sending-policy.test,integration.test}.ts, apps/web/src/{design/format.ts,components/campaign-form.tsx,components/campaign-actions.tsx,pages/campaign-detail.tsx,pages/campaigns.tsx}
+**Tarefas:** T-137 (concluída). T-134 ficou só com o aquecimento de número novo.
+**Estado:** compila · lint ok · unitários 85/85 · integração 135/135.
+**Armadilhas:**
+- `effectiveInterval` agora é a MÉDIA (143 s) para previsões; para o ritmo real use
+  `drawInterval` / `minimumInterval` / `maximumInterval`.
+- `Campaign.intervalSeconds` é ignorado pela fila de produção (compatibilidade da API). No banco
+  de teste com `SEND_INTERVAL_FLOOR_SECONDS` ele ainda vale, para os testes de ritmo.
+- 1:45 fica abaixo do piso antigo de 2 min (ADR-035): decisão do dono, a média sobe para ~2:23.
+**Próximo passo sugerido:** o dono decide T-133/T-134; depois, contagem regressiva ou relatório.
+
+---
+
 ## 2026-10-01T02:00Z · claude
 
 **Fiz:** proteção do número (ADR-041): janela de silêncio 22h-8h, limite de 150 envios/dia por

@@ -1131,3 +1131,30 @@ texto e intervalo aleatório (T-133/T-134) ficaram para depois, a pedido do dono
   (`status.safety`) até "Entendi" (`POST /api/whatsapp/safety/dismiss`). Retomar é manual.
 - **Testes:** no banco de teste descartável os padrões ficam desligados (como o piso de
   intervalo): os testes de fila rodam a qualquer hora. As regras são testadas com linha explícita.
+
+---
+
+## ADR-042 · Intervalo entre envios sorteado (1:45 a 3:00), sem escolha do cliente
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev
+**Substitui:** o piso fixo de 2 min da ADR-035 (e a escolha do intervalo por campanha da ADR-028), por decisão explícita do dono.
+
+Um ritmo sempre igual é o padrão mais fácil de o WhatsApp reconhecer como robô. O dono pediu um
+intervalo aleatório entre **1 min 45 s e 3 min**, decidido pelo sistema, e que a tela diga
+"mais ou menos" quando sai o próximo envio.
+
+- **Sorteio a cada envio** (`drawInterval`, queue.ts): `finishDelivery` sorteia um inteiro entre
+  105 e 180 s e grava `nextAvailableAt` do número e da campanha (e `lastIntervalSeconds`).
+  `claimDelivery` reserva o número pelo máximo (180 s) enquanto o envio está em andamento, e
+  `accountAllows` exige ao menos o mínimo (105 s) desde `lastSendEndedAt`. Depois de uma queda,
+  `holdInterruptedAccounts` usa o máximo.
+- **Média 143 s** (`TYPICAL_INTERVAL_SECONDS`): a previsão usa o intervalo real já sorteado para o
+  próximo envio e a média para os seguintes; a tela mostra "por volta das HH:MM (em N min)".
+- **Planejador:** horários planejados espaçados pelo mínimo (105 s). São só o "não antes de";
+  espaçar pelo máximo anularia o sorteio.
+- **`Campaign.intervalSeconds`** continua na tabela e a API ainda o aceita (120 a 3600, padrão 120),
+  só por compatibilidade: a fila de produção o ignora e o formulário não o envia mais (sem
+  migration destrutiva). O painel mostra "1 min 45 s a 3 min" e a duração aproximada da rodada.
+- **Testes:** no banco de teste com `SEND_INTERVAL_FLOOR_SECONDS` definido, vale o intervalo da
+  campanha com esse piso (os testes de ritmo medem em segundos), como antes. O sorteio tem teste
+  de unidade e um de integração que remove o piso.
