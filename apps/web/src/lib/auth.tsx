@@ -2,12 +2,16 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { api, ApiError, setUnauthorizedHandler } from './api';
 import { screenCache } from './cache';
 
-export type User = { id: string; email: string; name: string; role: string };
+/** termsPending: falta aceitar a versão atual dos Termos e da Política (LGPD, ADR-040). */
+export type User = { id: string; email: string; name: string; role: string; termsPending?: boolean };
 type AuthState = {
   /** undefined enquanto confere a sessão; null quando não há login. */
   user: User | null | undefined;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>;
+  acceptTerms(): Promise<void>;
+  /** A conta foi excluída: sai do painel aqui e nas outras abas. */
+  accountDeleted(): void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -27,7 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const check = () => api<{ user: User }>('/auth/me')
       // Mesma conta: não mexe no estado (a tela não é redesenhada a cada conferência).
       .then(r => setCurrentUser(current => {
-        if (current && r.user && current.id === r.user.id && current.role === r.user.role && current.name === r.user.name) return current;
+        if (current && r.user && current.id === r.user.id && current.role === r.user.role && current.name === r.user.name && current.termsPending === r.user.termsPending) return current;
         if (!r.user || r.user.id !== current?.id) screenCache.clear();
         return r.user;
       }))
@@ -69,7 +73,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     broadcast('saiu');
   }
-  return <AuthContext.Provider value={{ user, signIn, signOut }}>{children}</AuthContext.Provider>;
+  async function acceptTerms() {
+    const r = await api<{ user: User }>('/account/terms', { method: 'POST', json: {} });
+    setUser(r.user);
+    broadcast('entrou'); // as outras abas conferem e liberam o painel também
+  }
+  function accountDeleted() {
+    setUser(null);
+    broadcast('saiu');
+  }
+  return <AuthContext.Provider value={{ user, signIn, signOut, acceptTerms, accountDeleted }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

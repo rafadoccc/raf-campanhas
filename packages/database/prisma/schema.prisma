@@ -225,6 +225,10 @@ model User {
   passwordHash String        @db.VarChar(255)
   role         UserRole      @default(USER)
   disabledAt   DateTime?
+  // Aceite dos Termos de Uso e da Política de Privacidade (ADR-040): quando e qual versão.
+  // Versão diferente da atual = o painel pede o aceite de novo.
+  termsAcceptedAt DateTime?
+  termsVersion    String?   @db.VarChar(20)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sessions     AuthSession[]

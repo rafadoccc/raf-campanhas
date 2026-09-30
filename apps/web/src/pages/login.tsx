@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Alert, Button, Field, PasswordInput, inputClass } from '../design';
@@ -28,7 +28,7 @@ export default function LoginPage() {
   return <main className="flex min-h-full items-center justify-center p-6">
     <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-white p-6 shadow-card">
       <header>
-        <p className="text-2xs font-medium uppercase tracking-wide text-muted">Central de Campanhas</p>
+        <p className="text-2xs font-medium uppercase tracking-wide text-muted">DocDrop</p>
         <h1 className="text-lg font-semibold leading-tight">Entrar</h1>
       </header>
       {!hasUsers && <Alert tone="warning">Nenhum usuário cadastrado ainda. Defina <code>ADMIN_EMAIL</code> e <code>ADMIN_PASSWORD</code> e reinicie o sistema, ou rode <code>npm run user:create</code>.</Alert>}
@@ -36,6 +36,11 @@ export default function LoginPage() {
       <Field label="E-mail"><input name="email" type="email" required autoComplete="username" autoFocus className={inputClass} /></Field>
       <Field label="Senha"><PasswordInput name="password" required autoComplete="current-password" /></Field>
       <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
+      <p className="text-center text-2xs text-muted">
+        <Link className="hover:text-ink hover:underline" to="/termos">Termos de Uso</Link>
+        <span aria-hidden> · </span>
+        <Link className="hover:text-ink hover:underline" to="/privacidade">Privacidade</Link>
+      </p>
     </form>
   </main>;
 }

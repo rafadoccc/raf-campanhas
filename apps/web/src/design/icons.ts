@@ -54,4 +54,7 @@ export {
   Activity as IconActivity,
   Server as IconServer,
   MessageSquareText as IconMessage,
+  Download as IconDownload,
+  FileText as IconDocument,
+  Lock as IconPrivacy,
 } from 'lucide-react';

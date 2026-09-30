@@ -10,6 +10,7 @@ import { legacySessionOwnerId } from './legacy-session';
 import { legacyWhatsappSessionDir } from './session-paths';
 import { migrateLegacySession } from './session-migration';
 import { backfillMediaPreviews } from './media';
+import { startRetentionSweep } from './legal';
 
 async function main() {
   const config = loadConfig(process.env);
@@ -76,6 +77,8 @@ async function main() {
   for (const item of reconnected.filter(r => r.outcome === 'falhou')) console.warn('[WhatsApp] Reconexão falhou para', item.userId, item.error);
   // Imagens antigas ganham cor e miniatura em segundo plano (ADR-026); não atrasa a partida.
   void backfillMediaPreviews().catch(() => undefined);
+  // Prazo de guarda da LGPD (ADR-040): campanhas excluídas ou encerradas há 6 meses saem de vez.
+  startRetentionSweep();
   if (!sessionsPersistent()) console.warn('[WhatsApp] ATENÇÃO: as sessões estão em', defaultSessionsDir(), 'que é apagado a cada deploy. Adicione um Volume no Railway (ex.: /data): o sistema passa a usá-lo sozinho e o WhatsApp não pede QR a cada atualização.');
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);

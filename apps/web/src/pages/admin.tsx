@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, Button, ButtonLink, Card, CardHeader, Dot, EmptyState, Field, Menu, Page, PageHeader, PasswordInput, Segmented, Select, Skeleton, Stat,
-  IconActivity, IconAddUser, IconAdmin, IconCampaigns, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
+  IconActivity, IconAddUser, IconAdmin, IconCampaigns, IconDelete, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
   IconLogout, IconPassword, IconQueue, IconSearch, IconSent, IconServer, IconSystem, IconWhatsApp,
   dataHora, horaSeg, inputClass, numero, useConfirm, type MenuItem,
 } from '../design';
@@ -186,6 +186,12 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
       await api(`/admin/users/${user.id}/whatsapp/stop`, { method: 'POST', json: {} });
     }
   });
+  // Pedido de exclusão recebido pelo canal de contato (LGPD, ADR-040).
+  const removeAccount = () => run(async () => {
+    if (await confirm({ title: `Excluir a conta de ${user.name}?`, description: 'Apaga de vez a conta, as campanhas, as mídias, os grupos e a conexão do WhatsApp. Não dá para desfazer.', confirmLabel: 'Excluir para sempre', danger: true })) {
+      await api(`/admin/users/${user.id}`, { method: 'DELETE' });
+    }
+  });
   const resetPassword = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const password = new FormData(event.currentTarget).get('password');
@@ -202,6 +208,8 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
     disabled
       ? { label: 'Reativar conta', icon: IconEnable, onSelect: () => void toggle() }
       : { label: 'Desativar conta', icon: IconDisable, danger: true, onSelect: () => void toggle() },
+    // Administrador não é excluído: primeiro vira usuário (o servidor também recusa).
+    ...(user.role === 'USER' ? [{ label: 'Excluir conta', icon: IconDelete, danger: true, onSelect: () => void removeAccount() }] : []),
   ];
   const counts = [['Campanhas', user.counts.campaigns, user.counts.activeCampaigns ? plural(user.counts.activeCampaigns, 'ativa', 'ativas') : ''], ['Grupos', user.counts.groups, ''], ['Enviados', user.counts.sent, ''], ['Falhas', user.counts.failed, '']] as const;
 

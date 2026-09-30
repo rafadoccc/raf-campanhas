@@ -14,6 +14,7 @@ import { createSendingRouter } from './sending-router';
 import { registerAdminRoutes } from './admin-routes';
 import { usesLegacySession } from './legacy-session';
 import { wakeDispatcher } from './dispatcher';
+import { registerLegalRoutes } from './legal';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -98,6 +99,8 @@ app.post('/api/groups', async (request, reply) => {
 
 registerMediaRoutes(app);
 registerCampaignRoutes(app);
+// LGPD (ADR-040): páginas públicas, aceite dos termos, baixar e excluir os dados da conta.
+registerLegalRoutes(app, config, manager);
 // Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
 registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
 // Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de

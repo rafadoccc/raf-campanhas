@@ -7,6 +7,7 @@ import { Navigation } from './components/navigation';
 import { ConfirmProvider } from './design';
 import DashboardPage from './pages/dashboard';
 import LoginPage from './pages/login';
+import { TermsGate } from './components/terms-gate';
 
 // Aba aberta antes de uma atualização do sistema: os arquivos antigos da tela já não existem.
 // Recarrega UMA vez para pegar a versão nova, em vez de ficar em branco. Se recarregou há
@@ -53,6 +54,8 @@ const SettingsPage = page(() => import('./pages/settings'));
 const HistoryPage = page(() => import('./pages/history'));
 const AccountPage = page(() => import('./pages/account'));
 const AdminPage = page(() => import('./pages/admin'));
+// Privacidade e Termos: públicas (abrem sem login), carregadas só quando alguém abre.
+const LegalPage = lazy(() => import('./pages/legal'));
 
 function preloadPages() {
   const run = () => { for (const p of pages) void p.preload().catch(() => undefined); };
@@ -76,6 +79,8 @@ function RequireAuth() {
   useEffect(() => { if (signedIn) preloadPages(); }, [signedIn]);
   if (user === undefined) return <Pending />;
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  // LGPD (ADR-040): o painel só abre depois do aceite da versão atual dos termos.
+  if (user.termsPending) return <TermsGate />;
   // relative + overflow-hidden: nada escapa da moldura e o documento nunca rola (o menu fica fixo).
   return <div className="relative flex h-dvh flex-col overflow-hidden">
     <Navigation />
@@ -103,6 +108,8 @@ createRoot(document.getElementById('root')!).render(
         <ConfirmProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/privacidade" element={<Suspense fallback={<Pending />}><LegalPage kind="privacy" /></Suspense>} />
+            <Route path="/termos" element={<Suspense fallback={<Pending />}><LegalPage kind="terms" /></Suspense>} />
             <Route element={<RequireAuth />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/campanhas" element={<CampaignsPage />} />

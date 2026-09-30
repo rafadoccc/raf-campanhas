@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
+import { purgeExpiredData } from './legal';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -2961,6 +2962,105 @@ test('retry: two simultaneous requests can requeue a failed delivery only once',
 });
 
 // Por último: apaga os usuários deste banco de teste para simular a primeira subida.
+// ─── LGPD (ADR-040) ─────────────────────────────────────────────────────────────
+async function lgpdUser(email: string, role: 'USER' | 'SUPER_ADMIN' = 'USER') {
+  const user = await prisma.user.create({ data: { email, name: email.split('@')[0], role, passwordHash: await hashPassword('senha-de-teste-123') } });
+  const { cookie: session } = await loginAs(app, email);
+  const call = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: object) => app.inject({ method, url, payload, headers: as(session) });
+  return { user, session, call };
+}
+async function lgpdCampaign(userId: string, name: string, data: { status?: 'DRAFT' | 'COMPLETED' | 'CANCELLED' | 'ACTIVE'; deletedAt?: Date; mediaId?: string } = {}) {
+  const group = await prisma.group.create({ data: { name: `${name} grupo`, userId } });
+  return prisma.campaign.create({ data: {
+    userId, name, startsAt: new Date(), endsAt: new Date(), status: data.status ?? 'DRAFT', deletedAt: data.deletedAt, mediaId: data.mediaId,
+    groups: { create: [{ groupId: group.id, position: 0 }] }, messages: { create: [{ content: `texto de ${name}`, position: 0 }] },
+  } });
+}
+
+test('LGPD: public legal info, terms acceptance is required once per version', async () => {
+  const legal = await app.inject({ method: 'GET', url: '/api/legal', headers: { host: 'localhost' } });
+  assert.equal(legal.statusCode, 200, 'abre sem login');
+  assert.equal(legal.json().product, 'DocDrop');
+  assert.equal(legal.json().retentionDays, 180);
+  const { call } = await lgpdUser('termos@teste.local');
+  assert.equal((await call('GET', '/api/auth/me')).json().user.termsPending, true, 'conta nova precisa aceitar');
+  const accepted = await call('POST', '/api/account/terms', {});
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal((await call('GET', '/api/auth/me')).json().user.termsPending, false);
+  const stored = await prisma.user.findUniqueOrThrow({ where: { email: 'termos@teste.local' } });
+  assert.ok(stored.termsAcceptedAt, 'guarda quando aceitou');
+  assert.ok(stored.termsVersion, 'e qual versão');
+});
+
+test('LGPD: export brings only the account own data, as a download', async () => {
+  const a = await lgpdUser('exporta-a@teste.local');
+  const b = await lgpdUser('exporta-b@teste.local');
+  await lgpdCampaign(a.user.id, 'Festa da A');
+  await lgpdCampaign(b.user.id, 'Festa da B');
+  const r = await a.call('GET', '/api/account/export');
+  assert.equal(r.statusCode, 200, r.body);
+  assert.match(String(r.headers['content-disposition']), /attachment; filename="docdrop-meus-dados-/);
+  const data = r.json();
+  assert.equal(data.conta.email, 'exporta-a@teste.local');
+  assert.equal(data.conta.passwordHash, undefined, 'nunca a senha, nem cifrada');
+  assert.deepEqual(data.campanhas.map((c: { name: string }) => c.name), ['Festa da A']);
+  assert.deepEqual(data.campanhas[0].mensagens, ['texto de Festa da A']);
+  assert.doesNotMatch(r.body, /Festa da B/);
+});
+
+test('LGPD: deleting the account needs the password and erases everything of that account only', async () => {
+  const a = await lgpdUser('exclui-a@teste.local');
+  const b = await lgpdUser('exclui-b@teste.local');
+  const media = await prisma.campaignMedia.create({ data: { userId: a.user.id, name: 'arte.png', mimeType: 'image/png', kind: 'image', size: 1, data: Buffer.from([1]) } });
+  await lgpdCampaign(a.user.id, 'Some', { mediaId: media.id });
+  const other = await lgpdCampaign(b.user.id, 'Fica');
+  const dir = whatsappSessionDir(a.user.id, suiteSessions);
+  mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'creds.json'), '{}');
+
+  assert.equal((await a.call('POST', '/api/account/delete', { password: 'errada-123456' })).statusCode, 400, 'senha errada não exclui');
+  const deleted = await a.call('POST', '/api/account/delete', { password: 'senha-de-teste-123' });
+  assert.equal(deleted.statusCode, 200, deleted.body);
+  assert.match(String(deleted.headers['set-cookie']), /Max-Age=0/, 'apaga o cookie');
+  assert.equal(await prisma.user.count({ where: { id: a.user.id } }), 0);
+  for (const count of [prisma.campaign.count({ where: { userId: a.user.id } }), prisma.group.count({ where: { userId: a.user.id } }), prisma.campaignMedia.count({ where: { userId: a.user.id } }), prisma.authSession.count({ where: { userId: a.user.id } })]) assert.equal(await count, 0);
+  assert.equal(existsSync(dir), false, 'pasta do WhatsApp apagada');
+  assert.equal((await a.call('GET', '/api/auth/me')).statusCode, 401);
+  assert.ok(await prisma.campaign.findUnique({ where: { id: other.id } }), 'a outra conta fica intacta');
+
+  const admin = await lgpdUser('exclui-admin@teste.local', 'SUPER_ADMIN');
+  assert.equal((await admin.call('POST', '/api/account/delete', { password: 'senha-de-teste-123' })).statusCode, 400, 'administrador não se exclui');
+  // Pedido recebido pelo canal de contato: o administrador exclui a conta de um usuário.
+  assert.equal((await b.call('DELETE', `/api/admin/users/${admin.user.id}`)).statusCode, 403, 'usuário comum não usa a rota do admin');
+  const byAdmin = await admin.call('DELETE', `/api/admin/users/${b.user.id}`);
+  assert.equal(byAdmin.statusCode, 200, byAdmin.body);
+  assert.equal(await prisma.campaign.count({ where: { id: other.id } }), 0);
+  await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'USER', disabledAt: new Date() } });
+});
+
+test('LGPD: retention sweep erases deleted and 6-month-old finished campaigns, orphan media and old gone groups', async () => {
+  const { user } = await lgpdUser('prazo@teste.local');
+  const now = new Date();
+  const old = new Date(now.getTime() - 200 * 86_400_000);
+  const expired = await lgpdCampaign(user.id, 'Velha', { status: 'COMPLETED' });
+  const recent = await lgpdCampaign(user.id, 'Recente', { status: 'COMPLETED' });
+  const removed = await lgpdCampaign(user.id, 'Excluída', { status: 'CANCELLED', deletedAt: now });
+  const running = await lgpdCampaign(user.id, 'Rodando', { status: 'ACTIVE' });
+  await prisma.$executeRaw`UPDATE \`Campaign\` SET updatedAt = ${old} WHERE id IN (${expired.id}, ${running.id})`;
+  const orphanOld = await prisma.campaignMedia.create({ data: { userId: user.id, name: 'velha.png', mimeType: 'image/png', kind: 'image', size: 1, data: Buffer.from([1]), createdAt: old } });
+  const orphanNew = await prisma.campaignMedia.create({ data: { userId: user.id, name: 'nova.png', mimeType: 'image/png', kind: 'image', size: 1, data: Buffer.from([1]) } });
+  const gone = await prisma.group.create({ data: { userId: user.id, name: 'Saiu', externalId: 'saiu@g.us', active: false } });
+  await prisma.$executeRaw`UPDATE \`Group\` SET updatedAt = ${old} WHERE id = ${gone.id}`;
+
+  const result = await purgeExpiredData(now, { userId: user.id });
+  assert.equal(result.campaigns, 2, JSON.stringify(result));
+  const left = (await prisma.campaign.findMany({ where: { userId: user.id }, select: { id: true } })).map(c => c.id).sort();
+  assert.deepEqual(left, [recent.id, running.id].sort(), 'ativa e recente ficam; velha e excluída saem');
+  assert.equal(await prisma.campaign.count({ where: { id: removed.id } }), 0);
+  assert.equal(await prisma.campaignMedia.count({ where: { id: orphanOld.id } }), 0, 'mídia sem campanha, antiga, sai');
+  assert.equal(await prisma.campaignMedia.count({ where: { id: orphanNew.id } }), 1, 'recém-enviada fica (o formulário pode estar aberto)');
+  assert.equal(await prisma.group.count({ where: { id: gone.id } }), 0, 'grupo que saiu há 6 meses sai');
+});
+
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
   await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto

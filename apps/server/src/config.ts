@@ -17,6 +17,8 @@ export type AppConfig = {
   sessionTtlMs: number;
   /** Pasta do painel compilado (apps/web/dist); null se ainda não foi compilado. */
   webDist: string | null;
+  /** E-mail de contato para privacidade e suporte (CONTACT_EMAIL), mostrado nas páginas públicas. */
+  contactEmail: string | null;
 };
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
@@ -79,6 +81,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const ttlHours = Number(env.SESSION_TTL_HOURS ?? 168);
   if (!Number.isFinite(ttlHours) || ttlHours < 1 || ttlHours > 720) throw new Error('SESSION_TTL_HOURS deve ficar entre 1 e 720 horas.');
 
+  const contactEmail = env.CONTACT_EMAIL?.trim() || null;
+  if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new Error(`CONTACT_EMAIL inválido: "${contactEmail}".`);
+
   const dist = path.resolve(env.WEB_DIST ?? path.join(__dirname, '..', '..', 'web', 'dist'));
 
   return {
@@ -96,5 +101,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     trustProxy: trustProxyFrom(env.TRUST_PROXY?.trim(), deployed),
     sessionTtlMs: ttlHours * 3_600_000,
     webDist: existsSync(path.join(dist, 'index.html')) ? dist : null,
+    contactEmail,
   };
 }

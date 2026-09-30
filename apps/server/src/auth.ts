@@ -10,12 +10,20 @@ const scrypt = promisify(scryptCallback) as (password: string, salt: Buffer, key
 
 export const SESSION_COOKIE = 'campanhas_sessao';
 // Rotas da API acessíveis sem login. Todo o resto exige sessão (negar por padrão).
-const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup']);
+// /api/legal: contato e versão dos Termos, que as páginas públicas de Privacidade e Termos mostram.
+const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup', '/api/legal']);
 
 // Papéis (ADR-016). O papel vem SEMPRE do banco, pela sessão validada no servidor; nada que o
 // navegador envie (corpo, cabeçalho, cookie próprio) decide permissão.
 export type Role = 'SUPER_ADMIN' | 'USER';
-export type SessionUser = { id: string; email: string; name: string; role: Role };
+/** termsPending: ainda não aceitou a versão atual dos Termos e da Política (ADR-040). */
+export type SessionUser = { id: string; email: string; name: string; role: Role; termsPending: boolean };
+
+// Versão vigente dos Termos de Uso e da Política de Privacidade (ADR-040). Mudou o texto de
+// forma relevante? Troque a data: todo mundo aceita de novo no próximo acesso.
+export const TERMS_VERSION = '2026-09-30';
+const publicSessionUser = (user: { id: string; email: string; name: string; role: Role; termsVersion: string | null }): SessionUser =>
+  ({ id: user.id, email: user.email, name: user.name, role: user.role, termsPending: user.termsVersion !== TERMS_VERSION });
 declare module 'fastify' {
   interface FastifyRequest { user: SessionUser | null }
 }
@@ -151,6 +159,9 @@ function setSessionCookie(reply: FastifyReply, config: AppConfig, token: string,
   reply.header('Set-Cookie', attrs.join('; '));
 }
 
+/** Apaga o cookie de sessão no navegador (logout e exclusão da conta). */
+export const clearSessionCookie = (reply: FastifyReply, config: AppConfig) => setSessionCookie(reply, config, '', 0);
+
 async function createSession(db: Prisma.TransactionClient, userId: string, request: FastifyRequest, config: AppConfig) {
   const token = randomBytes(32).toString('base64url');
   const now = new Date();
@@ -188,8 +199,7 @@ async function resolveSession(request: FastifyRequest, reply: FastifyReply, conf
   } else if (now - session.lastSeenAt.getTime() > 5 * 60_000) {
     await prisma.authSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date(now) } });
   }
-  const { id, email, name, role } = session.user;
-  return { id, email, name, role };
+  return publicSessionUser(session.user);
 }
 
 // ─── Autorização ────────────────────────────────────────────────────────────────
@@ -271,7 +281,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
     }
     limiter.succeed(keys);
     setSessionCookie(reply, config, token, config.sessionTtlMs);
-    return { user: { id: user.id, email: user.email, name: user.name, role: user.role } };
+    return { user: publicSessionUser(user) };
   });
 
   app.post('/api/auth/logout', async (request, reply) => {

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/api';
-import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, Menu } from '../design';
+import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, Menu } from '../design';
 
 const items = [
   { label: 'Início', to: '/', icon: IconHome },
@@ -25,7 +25,7 @@ export function Navigation() {
   // No celular o nome do sistema sai: sem ele, todos os ícones cabem (antes WhatsApp e
   // Administração ficavam escondidos numa rolagem lateral). Só ícone = rótulo em aria-label.
   return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-2 sm:px-4">
-    <Link to="/" className="mr-3 hidden shrink-0 truncate font-semibold tracking-tight sm:block">Central de Campanhas</Link>
+    <Link to="/" className="mr-3 hidden shrink-0 truncate font-semibold tracking-tight sm:block">DocDrop</Link>
     <div className="scroll-area flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden">
       {/* Rótulo só a partir do lg (1024 px): entre 640 e 1023 (tablet e telas médias) só ícone
           cabe sem forçar uma rolagem lateral escondida no meio do menu. */}
@@ -37,7 +37,11 @@ export function Navigation() {
       <Menu label="Minha conta" triggerClassName={itemClass(onAccount)}
         trigger={<><IconAccount className="h-4 w-4" aria-hidden /><span className="hidden max-w-[10rem] truncate lg:inline">{user?.name ?? 'Minha conta'}</span><IconChevron className="hidden h-3.5 w-3.5 text-slate-400 lg:block" aria-hidden /></>}
         header={<><p className="truncate text-sm font-medium text-ink">{user?.name}</p><p className="truncate text-2xs text-muted">{user?.email}</p></>}
-        items={[{ label: 'Alterar senha', icon: IconPassword, onSelect: () => navigate('/conta') }]} />
+        items={[
+          { label: 'Minha conta e senha', icon: IconPassword, onSelect: () => navigate('/conta') },
+          { label: 'Privacidade', icon: IconPrivacy, onSelect: () => navigate('/privacidade') },
+          { label: 'Termos de Uso', icon: IconDocument, onSelect: () => navigate('/termos') },
+        ]} />
       {logoutError && <span role="alert" className="max-w-44 text-xs text-red-700" title={logoutError}>Não foi possível sair. Tente novamente.</span>}
       <button type="button" disabled={loggingOut} onClick={() => {
         setLoggingOut(true); setLogoutError('');

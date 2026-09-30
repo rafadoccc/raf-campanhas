@@ -1,6 +1,6 @@
-# Central de Campanhas
+# DocDrop
 
-Gerenciador de campanhas para grupos de WhatsApp. **Um único processo Node** entrega o
+Gerenciador de campanhas para grupos de WhatsApp (antes chamado Central de Campanhas). **Um único processo Node** entrega o
 painel (React + Vite) e a API (Fastify) na mesma porta, roda a fila de envios e mantém a
 conexão com o WhatsApp (Baileys). Os dados ficam no **MySQL 8**, que também é a fila: não há
 Docker nem Redis.
@@ -9,6 +9,11 @@ Para publicar: numa VPS própria (mesmo pequena, 1 vCPU e 1 GB), veja
 **[docs/deploy-vps.md](docs/deploy-vps.md)**; no Railway,
 **[docs/deploy-railway.md](docs/deploy-railway.md)**; na Hostinger (deploy anterior),
 **[docs/deploy-hostinger.md](docs/deploy-hostinger.md)**.
+
+**Privacidade (LGPD):** o painel tem Política de Privacidade (`/privacidade`) e Termos de Uso
+(`/termos`) públicos, pede o aceite no primeiro acesso, deixa cada conta baixar e excluir os
+próprios dados e apaga sozinho o conteúdo de campanhas encerradas há 6 meses. Defina
+`CONTACT_EMAIL`. Registro das operações e plano de incidentes: [docs/lgpd/](docs/lgpd/).
 
 ## Iniciar no Windows
 
