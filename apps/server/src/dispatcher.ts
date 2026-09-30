@@ -11,6 +11,10 @@ import {
   releaseLease,
   dueOrRunning,
   holdInterruptedAccounts,
+  confirmLateSend,
+  releaseStuckSends,
+  SEND_TIMEOUT_CODE,
+  SEND_TIMEOUT_ERROR,
 } from '@campaign/database';
 import type { WhatsAppProvider } from './whatsapp';
 import type { SendingRouter } from './sending-router';
@@ -53,6 +57,17 @@ export function wakeDispatcher() { wake?.(); }
 // o despachante não tenta de novo antes de a regra liberar (no máximo 5 min, para uma mudança nas
 // regras valer logo). Salvar as regras solta tudo na hora.
 const RULE_HOLD_MAX_MS = 5 * 60_000;
+
+// Vigia do envio (ADR-044). 5 min cobre o upload de um vídeo grande (teto de 3 min) mais as
+// consultas do grupo; passou disso, o WhatsApp não vai responder. A faxina pega o que escapar.
+export const SEND_TIMEOUT_MS = 5 * 60_000;
+const STUCK_GRACE_MS = 2 * 60_000;
+const TIMED_OUT = Symbol('sem resposta');
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: NodeJS.Timeout | undefined;
+  const limit = new Promise<typeof TIMED_OUT>(resolve => { timer = setTimeout(() => resolve(TIMED_OUT), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 let releaseHolds: (() => void) | null = null;
 export function releaseRuleHolds() { releaseHolds?.(); wake?.(); }
 
@@ -66,7 +81,7 @@ export type Dispatcher = {
  * conexão DO DONO da campanha (ADR-022). Sem conexão do dono, o envio espera — nunca sai por
  * outro número e nunca é marcado como enviado.
  */
-export async function startDispatcher(router: SendingRouter, options: { scanIntervalMs?: number; leaseRenewMs?: number; onLeaseLost?: (reason: string) => void } = {}): Promise<Dispatcher> {
+export async function startDispatcher(router: SendingRouter, options: { scanIntervalMs?: number; leaseRenewMs?: number; sendTimeoutMs?: number; onLeaseLost?: (reason: string) => void } = {}): Promise<Dispatcher> {
   const owner = randomUUID();
   let stopping = false;
   let working = false;
@@ -77,6 +92,9 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
   const busyLanes = new Set<string>();
   const activeLanes = new Set<Promise<void>>();
   const holds = new Map<string, number>();
+  const sendTimeoutMs = options.sendTimeoutMs ?? SEND_TIMEOUT_MS;
+  // Envios saindo agora neste processo (a faxina não mexe neles).
+  const inFlight = new Set<string>();
   let lastRejectionCheck = 0;
   releaseHolds = () => holds.clear();
 
@@ -91,6 +109,7 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     if (!delivery) return;
     holds.delete(id);
     lastSendAt.set(lane, Date.now());
+    inFlight.add(id);
     try {
       if (!delivery.group.active) throw notSent(new Error('Grupo inativo. Sincronize os grupos.'));
       let providerId: string;
@@ -103,7 +122,7 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
         const media = delivery.campaign.mediaId
           ? await prisma.campaignMedia.findUniqueOrThrow({ where: { id: delivery.campaign.mediaId } })
           : null;
-        const sent = await provider.send(
+        const sending = provider.send(
           delivery.group.externalId ?? '',
           delivery.messageBody,
           delivery.campaign.accountJid,
@@ -111,6 +130,18 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
           delivery.groupId, // selo/metadata só deste grupo (ADR-022)
           { mentionAll: delivery.campaign.mentionAll },
         );
+        // Vigia (ADR-044): sem resposta a tempo, o envio vira incerto e a fila do número anda. A
+        // conexão emperrada é renovada; se a resposta chegar depois, o envio vira "enviado".
+        const sent = await withTimeout(sending, sendTimeoutMs);
+        if (sent === TIMED_OUT) {
+          console.warn('[Fila] Envio sem resposta do WhatsApp em', Math.round(sendTimeoutMs / 1000), 's:', id);
+          await finishDelivery(prisma, id, { error: SEND_TIMEOUT_ERROR, code: SEND_TIMEOUT_CODE, retryable: false });
+          void sending.then(late => confirmLateSend(prisma, id, late.messageId, late.context)).then(ok => {
+            if (ok) console.info('[Fila] Resposta atrasada do WhatsApp: o envio saiu.', id);
+          }).catch(() => undefined);
+          (provider as { recycle?: (reason: string) => void }).recycle?.('envio sem resposta do WhatsApp');
+          return;
+        }
         providerId = sent.messageId;
         context = sent.context;
       } else {
@@ -130,6 +161,8 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
       });
       // O WhatsApp limitou o número: parar tudo agora, antes do próximo envio (ADR-041).
       if (delivery.provider === 'baileys' && isRateLimit(error, code)) await safetyPause(pending.campaign.userId, SAFETY_REASONS.rateLimited).catch(() => undefined);
+    } finally {
+      inFlight.delete(id);
     }
   }
 
@@ -142,6 +175,10 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
       // Recusas do servidor em série = sinal de restrição (ADR-041). Uma conferência por minuto.
       if (Date.now() - lastRejectionCheck >= 60_000) {
         lastRejectionCheck = Date.now();
+        // Faxina (ADR-044): "em andamento" órfão (travou fora do vigia, ou de outro processo) não
+        // pode segurar a fila para sempre.
+        const released = await releaseStuckSends(prisma, sendTimeoutMs + STUCK_GRACE_MS, inFlight).catch(() => 0);
+        if (released) console.warn('[Fila] Envios travados liberados:', released);
         await checkRejections().catch(error => console.warn('[Proteção] Falha ao conferir recusas:', error instanceof Error ? error.message : error));
       }
       // Recibos e eventos de CADA conexão, aplicados só aos dados do dono dela.

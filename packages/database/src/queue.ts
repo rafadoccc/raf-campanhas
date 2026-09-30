@@ -191,6 +191,42 @@ export async function finishDelivery(db: PrismaClient, id: string, outcome: Send
   }, LOCKING_TRANSACTION);
 }
 
+// ─── Envio sem resposta (ADR-044) ───────────────────────────────────────────────
+// Um envio que não volta nunca pode segurar a fila do número. O despachante desiste depois de
+// um tempo e grava FAILED incerto com este código; se a resposta chegar depois, vira SENT.
+export const SEND_TIMEOUT_CODE = 'envio:sem-resposta';
+export const SEND_TIMEOUT_ERROR = 'O WhatsApp não respondeu a tempo. Resultado incerto: confira no celular. Sem reenvio automático para não duplicar.';
+
+/** Resposta que chegou depois de o despachante desistir: o envio saiu de verdade. */
+export async function confirmLateSend(db: PrismaClient, id: string, providerId: string, context?: string, now = new Date()) {
+  const { count } = await db.delivery.updateMany({
+    where: { id, status: 'FAILED', errorCode: SEND_TIMEOUT_CODE },
+    data: { status: 'SENT', providerId, sentAt: now, sendReturnedAt: now, error: null, errorCode: null, updatedAt: now, ...(context ? { sendContext: context.slice(0, 160) } : {}) },
+  });
+  return count > 0;
+}
+
+/**
+ * Faxina: envio "em andamento" há mais de `olderThanMs` que não está saindo neste processo (o
+ * envio travou ou ficou órfão) vira FAILED incerto, e a fila anda. `running` = ids que este
+ * processo está enviando agora.
+ */
+export async function releaseStuckSends(db: PrismaClient, olderThanMs: number, running: Set<string>, now = new Date()) {
+  const stuck = await db.delivery.findMany({
+    where: { status: 'PROCESSING', OR: [{ attemptedAt: null }, { attemptedAt: { lt: new Date(now.getTime() - olderThanMs) } }] },
+    select: { id: true },
+  });
+  let released = 0;
+  for (const { id } of stuck) {
+    if (running.has(id)) continue;
+    released += (await db.delivery.updateMany({
+      where: { id, status: 'PROCESSING' },
+      data: { status: 'FAILED', error: SEND_TIMEOUT_ERROR, errorCode: SEND_TIMEOUT_CODE, sendReturnedAt: now, updatedAt: now },
+    })).count;
+  }
+  return released;
+}
+
 // Na partida, antes de marcar como incertos os envios que ficaram em andamento: não se sabe
 // quando a mensagem interrompida saiu (pode ter sido um instante antes da queda), então o
 // número espera um intervalo inteiro contado a partir de agora.

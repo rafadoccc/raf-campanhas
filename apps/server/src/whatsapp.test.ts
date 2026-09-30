@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { WhatsAppProvider, defaultSessionsDir, resolveWebVersion, groupName } from './whatsapp';
+import { WhatsAppProvider, defaultSessionsDir, resolveWebVersion, groupName, MEDIA_UPLOAD_TIMEOUT_MS } from './whatsapp';
 
 test('uses a verified protocol version', async () => {
   assert.deepEqual(await resolveWebVersion(async () => ({ version: [2, 3000, 123], isLatest: true })), [2, 3000, 123]);
@@ -16,11 +16,13 @@ test('rejects an invalid protocol version', async () => {
 function fake() {
   const provider = new WhatsAppProvider();
   const sent: unknown[] = [];
+  const options: unknown[] = [];
   Object.assign(provider, {
     data: { state: 'connected', accountJid: '5511000000000@s.whatsapp.net' },
-    socket: { groupMetadata: async () => ({}), sendMessage: async (...args: unknown[]) => { sent.push(args); return { key: { id: 'fake-id' } }; } }
+    // sent: destino e conteúdo; options: o 3º argumento (limite de tempo do upload, ADR-044).
+    socket: { groupMetadata: async () => ({}), sendMessage: async (...args: unknown[]) => { sent.push(args.slice(0, 2)); options.push(args[2]); return { key: { id: 'fake-id' } }; } }
   });
-  return { provider, sent };
+  return { provider, sent, options };
 }
 test('connector starts disconnected and never connects automatically', () => assert.equal(new WhatsAppProvider().status().state, 'disconnected'));
 test('rejects disconnected sends', async () => { await assert.rejects(new WhatsAppProvider().send('a@g.us', 'test', null), /desconectado/); });
@@ -31,9 +33,11 @@ test('rejects a different account and individual destinations', async () => {
   assert.equal(sent.length, 0);
 });
 test('submits text to the selected group through provider adapter', async () => {
-  const { provider, sent } = fake();
+  const { provider, sent, options } = fake();
   assert.deepEqual(await provider.send('a@g.us', 'Hello', '5511000000000@s.whatsapp.net'), { messageId: 'fake-id', context: 'membro=? admin=? so-admins=nao participantes=?' });
   assert.deepEqual(sent, [['a@g.us', { text: 'Hello' }]]);
+  // Upload de mídia sempre com limite de tempo: sem ele o Baileys pode esperar para sempre (ADR-044).
+  assert.deepEqual(options, [{ mediaUploadTimeoutMs: MEDIA_UPLOAD_TIMEOUT_MS }]);
 });
 test('admin-only group without admin rights fails before anything is sent', async () => {
   const { provider, sent } = fake();

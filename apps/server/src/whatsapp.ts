@@ -68,6 +68,8 @@ export function defaultSessionsDir() {
 
 // Participantes buscados no preparo de um envio valem para o próprio envio logo em seguida.
 const GROUP_CACHE_MS = 60_000;
+/** Teto do upload de uma mídia (vídeo de até 64 MB numa conexão ruim). */
+export const MEDIA_UPLOAD_TIMEOUT_MS = 3 * 60_000;
 type GroupMetadata = Awaited<ReturnType<WASocket['groupMetadata']>>;
 
 export class WhatsAppProvider {
@@ -403,7 +405,9 @@ export class WhatsAppProvider {
     // Tudo até o sendMessage: uma falha aqui garante que nada saiu (reenvio permitido, ADR-014).
     const { sock, content, group } = await this.prepareSend(groupJid, text, accountJid, media, groupId, options).catch(error => { throw notSent(error); });
     // Daqui em diante o resultado pode ser incerto: nunca é reenviado automaticamente.
-    const result = await sock.sendMessage(groupJid, content);
+    // Sem mediaUploadTimeoutMs o Baileys sobe a mídia SEM limite de tempo: um upload pendurado
+    // (comum logo após uma reconexão) segurava o envio para sempre e travava a fila do número.
+    const result = await sock.sendMessage(groupJid, content, { mediaUploadTimeoutMs: MEDIA_UPLOAD_TIMEOUT_MS });
     if (!result?.key.id) throw new Error('Resultado do envio desconhecido. Confira no celular antes de reenviar.');
     // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
     return { messageId: result.key.id, context: group.context };
@@ -459,6 +463,15 @@ export class WhatsAppProvider {
     const tokens = (this.mentionSample?.tokens ?? []).filter(token => /^@[\p{L}_]+$/u.test(token));
     const known = tokens.find(token => /^@(todos|all|everyone)$/i.test(token));
     return known ?? (tokens.length === 1 ? tokens[0] : DEFAULT_MENTION_ALL_TOKEN);
+  }
+  /**
+   * Renova a conexão sem logout e sem QR: encerra o socket atual e o fluxo normal de queda
+   * reconecta com a mesma sessão. Usado quando um envio não teve resposta (socket emperrado).
+   */
+  recycle(reason: string) {
+    if (!this.socket || !this.wanted) return;
+    console.warn('[WhatsApp] Renovando a conexão:', reason);
+    this.socket.end(new Error(reason));
   }
   async stop() {
     this.wanted = false; ++this.generation; clearTimeout(this.timer); this.socket?.end(undefined);

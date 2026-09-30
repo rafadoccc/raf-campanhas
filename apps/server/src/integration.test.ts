@@ -1,6 +1,6 @@
 import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { prisma, rulesFor, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, rulesFor, releaseStuckSends, SEND_TIMEOUT_CODE, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
 import { hashPassword, requireSuperAdmin, bootstrapAdmin, SESSION_MAX_AGE_MS } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
@@ -730,6 +730,41 @@ test('sendMessage throwing: failed with the technical code, one attempt, never r
     await sleep(400); // vários ciclos do despachante
     assert.equal(wa.calls.length, 1, 'falha não é repetida');
   } finally { await dispatcher.stop(); }
+});
+
+test('stuck send (044): no answer from WhatsApp never blocks the queue; the connection is renewed and a late answer marks it sent', async () => {
+  const { campaign, rows: [first, second] } = await realCampaign(2);
+  let answerFirst: (result: SendResult) => void = () => undefined;
+  // 1º envio: o WhatsApp nunca responde (como o upload pendurado de 30/09). 2º: normal.
+  const wa = fakeWhatsApp(async (_jid, call) => call === 1 ? new Promise<SendResult>(resolve => { answerFirst = resolve; }) : { messageId: '3EB0SEGUNDO', context: '' });
+  let recycled = 0;
+  (wa.provider as unknown as { recycle: () => void }).recycle = () => { recycled++; };
+  const dispatcher = await startDispatcher(wa.router, { scanIntervalMs: 50, sendTimeoutMs: 300 });
+  try {
+    const failed = await waitFor(async () => { const d = await fresh(first.id); return d.status === 'FAILED' && d; }, 'envio sem resposta encerrado');
+    assert.equal(failed.errorCode, SEND_TIMEOUT_CODE);
+    assert.match(failed.error ?? '', /incerto/, 'sem reenvio automático: pode ter saído');
+    assert.equal(recycled, 1, 'a conexão emperrada é renovada');
+    await releaseNext(campaign.id, second.id);
+    await waitFor(async () => (await fresh(second.id)).status === 'SENT', 'a fila andou');
+    // A resposta do 1º chega atrasada: ele saiu de verdade.
+    answerFirst({ messageId: '3EB0ATRASADO', context: '' });
+    const late = await waitFor(async () => { const d = await fresh(first.id); return d.status === 'SENT' && d; }, 'resposta atrasada vira enviado');
+    assert.equal(late.providerId, '3EB0ATRASADO');
+    assert.equal(late.errorCode, null);
+  } finally { await dispatcher.stop(); }
+});
+
+test('stuck send (044): the cleanup releases an orphan "sending" row, never one this process is sending', async () => {
+  const { rows: [orphan, running] } = await realCampaign(2);
+  const longAgo = new Date(Date.now() - 60 * 60_000);
+  for (const row of [orphan, running]) await prisma.delivery.update({ where: { id: row.id }, data: { status: 'PROCESSING', attemptedAt: longAgo } });
+  assert.ok(await releaseStuckSends(prisma, 7 * 60_000, new Set([running.id])) >= 1);
+  const released = await fresh(orphan.id);
+  assert.equal(released.status, 'FAILED');
+  assert.equal(released.errorCode, SEND_TIMEOUT_CODE);
+  assert.equal((await fresh(running.id)).status, 'PROCESSING', 'o que está saindo agora não é mexido');
+  await prisma.delivery.update({ where: { id: running.id }, data: { status: 'FAILED' } });
 });
 
 test('send accepted locally but refused by the server afterwards: goes back to the queue for a later retry, even if the refusal arrives first', async () => {
