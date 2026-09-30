@@ -15,7 +15,7 @@ import { registerAdminRoutes } from './admin-routes';
 import { usesLegacySession } from './legacy-session';
 import { wakeDispatcher } from './dispatcher';
 import { registerLegalRoutes } from './legal';
-import { registerNumberProtectionRoutes, safetyNotice } from './number-protection-routes';
+import { registerNumberProtectionRoutes, safetyNotice, warmupStatus } from './number-protection-routes';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -54,7 +54,10 @@ export function buildApp(provider: WhatsAppConnection, config: AppConfig = loadC
           const groupsSync = legacy ? null : manager.syncInfo(owner.id);
           // Aviso de pausa automática por sinal de restrição (ADR-041), até a pessoa dispensar.
           const safety = await safetyNotice(owner.id);
-          return { ...connection.status(), ...(groupsSync ? { groupsSync } : {}), ...(safety ? { safety } : {}), ...(sessionsPersistent() ? {} : { ephemeralSession: true }) };
+          const status = connection.status();
+          // Aquecimento (ADR-043): "este número é novo?", uma vez por número conectado.
+          const warmup = status.state === 'connected' ? await warmupStatus(owner.id, status.accountJid ?? null, await currentTime()) : null;
+          return { ...status, ...(groupsSync ? { groupsSync } : {}), ...(safety ? { safety } : {}), ...(warmup ? { warmup } : {}), ...(sessionsPersistent() ? {} : { ephemeralSession: true }) };
         }
         if (path === 'connect') {
           const status = await connection.connect();
@@ -172,10 +175,10 @@ app.get('/api/deliveries', async (request) => {
   // Regras da conta (ADR-041) só pesam em envio real, pelo número da campanha.
   let limits: ForecastRules | undefined;
   if (campaign && accountId) {
-    const rules = await rulesFor(prisma, campaign.userId);
+    const rules = await rulesFor(prisma, campaign.userId, accountId);
     const groupIds = [...new Set(deliveries.filter(d => d.status === 'PENDING').map(d => d.groupId))];
     const [usedToday, lastSent] = await Promise.all([
-      rules.dailyLimit ? sendsToday(prisma, accountId, now) : 0,
+      rules.dailyLimit || rules.warmupStartedAt ? sendsToday(prisma, accountId, now) : 0,
       rules.groupGapMinutes && groupIds.length ? prisma.delivery.groupBy({ by: ['groupId'], where: { groupId: { in: groupIds }, status: 'SENT', provider: 'baileys' }, _max: { sentAt: true } }) : [],
     ]);
     const lastSentByGroup = new Map(lastSent.flatMap(row => row._max.sentAt ? [[row.groupId, row._max.sentAt] as const] : []));

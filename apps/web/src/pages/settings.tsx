@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, type SafetyNotice } from '../lib/api';
-import { NumberProtection, SafetyAlert } from '../components/number-protection';
+import { NumberProtection, SafetyAlert, WarmupPanel, type Warmup } from '../components/number-protection';
 import { startVisiblePolling, connectionPollDelay } from '../lib/visible-polling';
 import { screenCache } from '../lib/cache';
 import { Alert, Button, Card, Dot, Page, PageHeader, IconOpen, IconRefresh, IconWhatsApp, IconDisable, hora, useConfirm } from '../design';
 
 type GroupsSync = { running: boolean; auto: boolean; at: string | null; count: number | null; error: string | null };
-type Connection = { state: string; qr?: string; accountJid?: string; error?: string; groupsSync?: GroupsSync | null; ephemeralSession?: boolean; safety?: SafetyNotice };
+type Connection = { state: string; qr?: string; accountJid?: string; error?: string; groupsSync?: GroupsSync | null; ephemeralSession?: boolean; safety?: SafetyNotice; warmup?: Warmup };
 const labels: Record<string, string> = { disconnected: 'Desconectado', connecting: 'Conectando…', qr: 'Aguardando leitura do QR Code', connected: 'Conectado', reconnecting: 'Reconectando…', error: 'Conexão interrompida' };
 // Limite suave do botão: o servidor recusa sincronizar de novo antes disso.
 const SYNC_COOLDOWN_MS = 30_000;
@@ -99,6 +99,7 @@ export default function Settings() {
         {connected && !sync?.running && !sync?.error && sync?.at && <Alert tone="brand">
           {sync.count} {sync.count === 1 ? 'grupo sincronizado' : 'grupos sincronizados'}{sync.auto ? ' automaticamente ao conectar' : ''}, às {hora(sync.at)}.
         </Alert>}
+        {connected && connection?.warmup && <WarmupPanel warmup={connection.warmup} onChanged={() => void refresh()} />}
         {/* Sempre uma linha: ação principal à esquerda, "Desconectar" à direita. Os rótulos têm
             tamanho fixo (a contagem da espera fica numa legenda embaixo, não no botão) e no
             celular "Sincronizar grupos" vira "Sincronizar" — cabe inteiro em 360 px. */}

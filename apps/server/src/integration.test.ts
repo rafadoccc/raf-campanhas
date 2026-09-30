@@ -1,6 +1,6 @@
 import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { prisma, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, rulesFor, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
 import { hashPassword, requireSuperAdmin, bootstrapAdmin, SESSION_MAX_AGE_MS } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
@@ -1512,8 +1512,9 @@ test('whatsapp session (4A): one per user, and a paired number belongs to a sing
 
 test('whatsapp session (4A): stores no credentials, and goes away with the user', async () => {
   const columns = (await prisma.$queryRawUnsafe<{ COLUMN_NAME: string }[]>("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'WhatsAppSession'")).map(c => c.COLUMN_NAME).sort();
-  // safetyPausedAt/safetyReason: aviso da pausa automática (ADR-041), não é credencial.
-  assert.deepEqual(columns, ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'safetyPausedAt', 'safetyReason', 'state', 'updatedAt', 'userId'], 'nenhuma coluna de QR, creds ou chave do Baileys');
+  // safetyPausedAt/safetyReason: aviso da pausa automática (ADR-041); warmup*: aquecimento
+  // (ADR-043). Nenhuma é credencial.
+  assert.deepEqual(columns, ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'safetyPausedAt', 'safetyReason', 'state', 'updatedAt', 'userId', 'warmupJid', 'warmupStartedAt'], 'nenhuma coluna de QR, creds ou chave do Baileys');
   const temp = await prisma.user.create({ data: { email: `wa-temp-${Date.now()}@teste.local`, name: 'Temp', passwordHash: 'x' } });
   await prisma.whatsAppSession.create({ data: { userId: temp.id } });
   await prisma.user.delete({ where: { id: temp.id } }); // usuário sem dados pode ser apagado
@@ -1703,7 +1704,7 @@ test('lifecycle (4B): session row keeps only lifecycle data; disconnect clears t
     await manager.for(user.id).connect();
     await manager.persistState(user.id);
     const row = await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } });
-    assert.deepEqual(Object.keys(row).sort(), ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'safetyPausedAt', 'safetyReason', 'state', 'updatedAt', 'userId'], 'nenhum campo de QR ou credencial');
+    assert.deepEqual(Object.keys(row).sort(), ['accountJid', 'autoConnect', 'createdAt', 'id', 'lastConnectedAt', 'lastError', 'safetyPausedAt', 'safetyReason', 'state', 'updatedAt', 'userId', 'warmupJid', 'warmupStartedAt'], 'nenhum campo de QR ou credencial');
     assert.equal(row.state, 'connected');
     // Número já pareado em outra conta: registra o motivo, sem quebrar a partida.
     await prisma.whatsAppSession.update({ where: { userId: user.id }, data: { accountJid: null } });
@@ -3181,6 +3182,56 @@ test('number protection: the pause notice shows in the WhatsApp status until dis
   assert.equal(status.json().safety?.reason, SAFETY_REASONS.rateLimited);
   assert.equal((await app.inject({ method: 'POST', url: '/api/whatsapp/safety/dismiss', payload: {}, headers: as(session) })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: '/api/whatsapp/status', headers: as(session) })).json().safety, undefined);
+});
+
+// ─── Aquecimento de número novo (ADR-043) ───────────────────────────────────────
+test('warmup: asked once per number; reconnecting the same number does not ask again, another number does', async () => {
+  const world = whatsappApp();
+  try {
+    const { user, call } = await sessionFor(world.app, 'aquece@teste.local');
+    world.manager.for(user.id);
+    const [first, second] = ['5511900000001@s.whatsapp.net', '5511900000002@s.whatsapp.net'];
+    assert.equal((await call('POST', 'warmup', { isNew: true })).statusCode, 409, 'sem WhatsApp conectado não há o que responder');
+    world.perUser.get(user.id)!.state = { state: 'connected', accountJid: first };
+    assert.deepEqual((await call('GET', 'status')).json().warmup, { needsAnswer: true }, 'número novo no sistema: pergunta');
+
+    const answered = await call('POST', 'warmup', { isNew: true });
+    assert.equal(answered.statusCode, 200, answered.body);
+    assert.equal(answered.json().day, 1);
+    assert.equal(answered.json().limitToday, 30);
+    const startedAt = (await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } })).warmupStartedAt;
+    assert.ok(startedAt);
+    // Caiu e voltou com o MESMO número: não pergunta de novo, o aquecimento continua.
+    world.perUser.get(user.id)!.state = { state: 'reconnecting', accountJid: first };
+    world.perUser.get(user.id)!.state = { state: 'connected', accountJid: first };
+    assert.equal((await call('GET', 'status')).json().warmup.needsAnswer, false);
+    await call('POST', 'warmup', { isNew: true });
+    assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: user.id } })).warmupStartedAt?.getTime(), startedAt!.getTime(), '"sim" de novo não reinicia');
+
+    // Outro chip: pergunta de novo e não herda o aquecimento do anterior.
+    world.perUser.get(user.id)!.state = { state: 'connected', accountJid: second };
+    assert.deepEqual((await call('GET', 'status')).json().warmup, { needsAnswer: true });
+    assert.equal((await rulesFor(prisma, user.id, second)).warmupStartedAt, null);
+    const notNew = await call('POST', 'warmup', { isNew: false });
+    assert.equal(notNew.json().isNew, false);
+    assert.equal(notNew.json().limitToday, null);
+  } finally { await world.cleanup(); }
+});
+
+test('warmup: the queue holds the number at the warmup limit of the day', async () => {
+  const { user, campaign, delivery } = await protectedQueue('aquece-fila@teste.local', {});
+  const at = spTime('2026-10-02', '15:00');
+  await prisma.whatsAppSession.create({ data: { userId: user.id, warmupJid: campaign.accountJid, warmupStartedAt: spTime('2026-10-02', '09:00') } });
+  for (let i = 0; i < 30; i++) {
+    const sentAt = new Date(at.getTime() - (60 - i) * 60_000);
+    await delivery(i, { scheduledAt: sentAt, status: 'SENT', attemptedAt: sentAt, sentAt });
+  }
+  const next = await delivery(30, { scheduledAt: new Date(at.getTime() - 60_000) });
+  let reason = '';
+  assert.equal(await claimDelivery(prisma, next.id, at, block => { reason = block.reason; }), null, 'dia 1: 30 envios e para');
+  assert.equal(reason, 'daily');
+  await prisma.whatsAppSession.update({ where: { userId: user.id }, data: { warmupStartedAt: null } });
+  assert.ok(await claimDelivery(prisma, next.id, at), 'sem aquecimento (e sem limite diário nesta conta), sai');
 });
 
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {

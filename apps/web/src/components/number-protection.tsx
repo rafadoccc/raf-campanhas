@@ -6,12 +6,48 @@ import { Alert, Button, ButtonLink, Card, Checkbox, Select, IconAlert, IconCampa
 // Um envio segurado por uma regra não falha: espera, e a previsão da campanha diz até quando.
 
 type Rules = { quiet: { enabled: boolean; start: string; end: string }; dailyLimit: number | null; groupGapMinutes: number | null; autoPause: boolean };
-type Policy = Rules & { defaults: Rules; limits: { dailyLimit: { min: number; max: number } }; today: number | null };
+type Policy = Rules & { defaults: Rules; limits: { dailyLimit: { min: number; max: number } }; today: number | null; todayLimit: number | null };
 
 const GAPS = [30, 60, 90, 120, 180, 240, 360, 480, 720, 1440];
 // Campo curto, na mesma linha do texto (o inputClass padrão ocupa a largura toda).
 const shortInput = `${inputClass.replace('block w-full', 'inline-block')} w-32`;
 const gapLabel = (minutes: number) => (minutes < 60 ? `${minutes} min` : `${minutes / 60} h`) + (minutes === 120 ? ' (recomendado)' : '');
+
+export type Warmup = { needsAnswer: true } | { needsAnswer: false; isNew: boolean; day: number | null; days: number; limitToday: number | null };
+
+/**
+ * Aquecimento de número novo (ADR-043). A pergunta aparece uma vez por número: reconectar o
+ * mesmo número não pergunta de novo. Depois, dá para mudar a resposta aqui.
+ */
+export function WarmupPanel({ warmup, onChanged }: { warmup: Warmup; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  async function answer(isNew: boolean) {
+    setBusy(true); setError('');
+    try { await api('/whatsapp/warmup', { method: 'POST', json: { isNew } }); onChanged(); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(false); }
+  }
+  if (warmup.needsAnswer) return <div className="animate-fade-in space-y-3 rounded-md border border-brand-100 bg-brand-50 p-4 text-sm">
+    <p className="font-semibold text-ink">Este número é novo (criado há menos de 1 mês)?</p>
+    <p className="text-muted">Número novo que já sai mandando muito é o que o WhatsApp mais bane. Se for novo, o sistema começa devagar: <strong>30 envios por dia</strong> nos 3 primeiros dias, <strong>80</strong> até o 7º dia, e depois o limite normal.</p>
+    {error && <Alert>{error}</Alert>}
+    <div className="flex flex-wrap gap-2">
+      <Button variant="primary" size="sm" loading={busy} disabled={busy} onClick={() => void answer(true)}>Sim, é novo</Button>
+      <Button size="sm" disabled={busy} onClick={() => void answer(false)}>Não, já uso há tempo</Button>
+    </div>
+  </div>;
+  const link = 'text-2xs text-muted underline hover:text-ink disabled:opacity-50';
+  if (warmup.isNew && warmup.day) return <div className="space-y-1">
+    <Alert tone="brand">Aquecendo o número: dia {warmup.day} de {warmup.days} · até {warmup.limitToday} envios hoje. O limite sobe sozinho.</Alert>
+    {error && <Alert>{error}</Alert>}
+    <button type="button" className={link} disabled={busy} onClick={() => void answer(false)}>Não é um número novo? Parar o aquecimento</button>
+  </div>;
+  if (!warmup.isNew) return <div>
+    {error && <Alert>{error}</Alert>}
+    <button type="button" className={link} disabled={busy} onClick={() => void answer(true)}>Número novo? Ativar o aquecimento de 7 dias</button>
+  </div>;
+  return null; // aquecimento já terminou
+}
 
 /** Aviso de pausa automática: some quando a pessoa clica em "Entendi". */
 export function SafetyAlert({ notice, onDismissed }: { notice: SafetyNotice; onDismissed: () => void }) {
@@ -74,7 +110,7 @@ export function NumberProtection() {
         <input type="number" inputMode="numeric" min={min} max={max} aria-label="Envios por dia" value={draft.dailyLimit ?? ''} disabled={draft.dailyLimit === null}
           onChange={e => set({ dailyLimit: e.target.value === '' ? min : Number(e.target.value) })} className={shortInput} />
         envios por dia
-        {policy.today !== null && draft.dailyLimit !== null && <span className="tabular text-2xs text-muted">· hoje: {numero(policy.today)} de {numero(draft.dailyLimit)}</span>}
+        {policy.today !== null && policy.todayLimit !== null && <span className="tabular text-2xs text-muted">· hoje: {numero(policy.today)} de {numero(policy.todayLimit)}{policy.todayLimit !== policy.dailyLimit ? ' (aquecendo)' : ''}</span>}
       </div>
     </section>
 

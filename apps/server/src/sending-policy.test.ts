@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_RULES, inQuietHours, quietEndAfter, ruleBlock, localDay, drawInterval, minimumInterval, maximumInterval, SEND_INTERVAL, TYPICAL_INTERVAL_SECONDS, type SendingRules } from '@campaign/database';
+import { DEFAULT_RULES, inQuietHours, quietEndAfter, ruleBlock, localDay, drawInterval, minimumInterval, maximumInterval, SEND_INTERVAL, TYPICAL_INTERVAL_SECONDS, warmupDay, dailyLimitOn, type SendingRules } from '@campaign/database';
 import { forecastQueue, type ForecastItem } from './queue-forecast';
 
 // Horário de São Paulo (UTC-3): sp('2026-10-01', '23:30') = 2026-10-02T02:30Z.
@@ -56,6 +56,31 @@ test('intervalo sorteado a cada envio entre 1 min 45 s e 3 min, ignorando o que 
   assert.equal(minimumInterval(600), 105);
   assert.equal(maximumInterval(60), 180);
   assert.equal(TYPICAL_INTERVAL_SECONDS, 143, 'média usada nas previsões');
+});
+
+test('aquecimento: 30 envios/dia nos dias 1-3, 80 nos dias 4-7, depois o limite da conta', () => {
+  const warming = { ...rules, warmupStartedAt: sp('2026-10-01', '23:50') };
+  assert.equal(warmupDay(warming, sp('2026-10-01', '23:59')), 1, 'o dia em que começou é o dia 1');
+  assert.equal(warmupDay(warming, sp('2026-10-02', '00:10')), 2, 'virou o dia em São Paulo: dia 2');
+  assert.equal(dailyLimitOn(warming, sp('2026-10-03', '10:00')), 30, 'dia 3');
+  assert.equal(dailyLimitOn(warming, sp('2026-10-04', '10:00')), 80, 'dia 4');
+  assert.equal(dailyLimitOn(warming, sp('2026-10-07', '10:00')), 80, 'dia 7');
+  assert.equal(warmupDay(warming, sp('2026-10-08', '10:00')), null, 'acabou');
+  assert.equal(dailyLimitOn(warming, sp('2026-10-08', '10:00')), 150, 'volta ao limite da conta');
+  assert.equal(dailyLimitOn({ ...warming, dailyLimit: 20 }, sp('2026-10-04', '10:00')), 20, 'vale o menor dos dois');
+  assert.equal(dailyLimitOn({ ...warming, dailyLimit: null }, sp('2026-10-02', '10:00')), 30, 'aquece mesmo com o limite diário desligado');
+  const block = ruleBlock(warming, sp('2026-10-02', '15:00'), 30, null);
+  assert.equal(block?.reason, 'daily');
+  assert.equal(block?.until.getTime(), sp('2026-10-03', '08:00').getTime());
+  assert.equal(ruleBlock(warming, sp('2026-10-02', '15:00'), 29, null), null);
+});
+
+test('previsão mostra o aquecimento como motivo', () => {
+  const now = sp('2026-10-02', '15:00');
+  const warming = { ...rules, warmupStartedAt: sp('2026-10-01', '10:00') };
+  const item: ForecastItem = { id: 'a', sequence: 0, status: 'PENDING', provider: 'baileys', scheduledAt: now, attemptedAt: null, attempts: 0, groupId: 'g' };
+  const result = forecastQueue([item], { status: 'ACTIVE', nextAvailableAt: null, intervalSeconds: 120 }, now, true, 3, { rules: warming, usedToday: 30, lastSentByGroup: new Map() });
+  assert.equal(result.get('a')?.reason, 'Aquecendo o número (dia 2 de 7): limite de 30 envios hoje · continua amanhã às 08:00');
 });
 
 test('dia em São Paulo, não em UTC', () => {

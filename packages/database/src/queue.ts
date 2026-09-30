@@ -1,6 +1,6 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { currentTime } from './clock';
-import { rulesFor, ruleBlock, sendsToday, lastGroupSend, type RuleBlock } from './sending-policy';
+import { rulesFor, ruleBlock, sendsToday, lastGroupSend, dailyLimitOn, type RuleBlock } from './sending-policy';
 
 export function resumeAt(next: Date | null, pausedAt: Date | null, now: Date) {
   return new Date(now.getTime() + (next && pausedAt ? Math.max(0, next.getTime() - pausedAt.getTime()) : 0));
@@ -133,8 +133,8 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date, on
     // Proteção do número (ADR-041): janela de silêncio, limite diário e intervalo por grupo.
     // Conferidas sob o lock do número, como o intervalo: dois envios nunca furam o limite juntos.
     if (account) {
-      const rules = await rulesFor(tx, campaign.userId);
-      const used = rules.dailyLimit ? await sendsToday(tx, account, at, id) : 0;
+      const rules = await rulesFor(tx, campaign.userId, account);
+      const used = dailyLimitOn(rules, at) ? await sendsToday(tx, account, at, id) : 0;
       const lastToGroup = rules.groupGapMinutes ? await lastGroupSend(tx, head.groupId) : null;
       const block = ruleBlock(rules, at, used, lastToGroup);
       if (block) { onBlocked?.(block); return null; }

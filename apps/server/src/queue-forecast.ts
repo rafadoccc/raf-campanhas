@@ -1,4 +1,4 @@
-import { effectiveInterval, localDay, localMinute, ruleBlock, type RuleBlock, type SendingRules } from '@campaign/database';
+import { effectiveInterval, localDay, localMinute, ruleBlock, warmupDay, dailyLimitOn, WARMUP_DAYS, type RuleBlock, type SendingRules } from '@campaign/database';
 
 // Previsão dos envios pendentes de uma campanha: quando cada um deve sair e, se estiver
 // esperando ou atrasado, por quê. Reproduz a regra do despachante (ADR-003/014): um envio por
@@ -36,7 +36,12 @@ function when(at: Date, now: Date) {
 }
 function ruleReason(block: RuleBlock, rules: SendingRules, now: Date) {
   if (block.reason === 'quiet') return `Horário de silêncio · sai ${when(block.until, now)}`;
-  if (block.reason === 'daily') return `Limite de ${rules.dailyLimit} envios do dia atingido · continua ${when(block.until, now)}`;
+  if (block.reason === 'daily') {
+    const day = warmupDay(rules, now);
+    return day
+      ? `Aquecendo o número (dia ${day} de ${WARMUP_DAYS}): limite de ${dailyLimitOn(rules, now)} envios hoje · continua ${when(block.until, now)}`
+      : `Limite de ${dailyLimitOn(rules, now)} envios do dia atingido · continua ${when(block.until, now)}`;
+  }
   const gap = rules.groupGapMinutes ?? 0;
   const label = gap % 60 ? `${gap} min` : `${gap / 60} h`;
   return `Intervalo de ${label} neste grupo · sai ${when(block.until, now)}`;

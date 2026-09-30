@@ -311,6 +311,11 @@ model WhatsAppSession {
   // até a pessoa dispensar o aviso; safetyPausedAt fica para não contar de novo os mesmos sinais.
   safetyPausedAt  DateTime?
   safetyReason    String?   @db.VarChar(255)
+  // Aquecimento de número novo (ADR-043). warmupJid = número a que a resposta se refere (outro
+  // número conectado = pergunta de novo). warmupStartedAt = início do aquecimento; null = o dono
+  // disse que o número não é novo.
+  warmupJid       String?
+  warmupStartedAt DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }

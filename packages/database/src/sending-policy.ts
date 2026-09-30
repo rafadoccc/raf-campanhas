@@ -16,7 +16,30 @@ export type SendingRules = {
   groupGapMinutes: number | null;
   /** Pausar as campanhas ao ver sinal de restrição do WhatsApp (safety.ts). */
   autoPause: boolean;
+  /** Início do aquecimento do número que envia (ADR-043); null/ausente = sem aquecimento. */
+  warmupStartedAt?: Date | null;
 };
+
+// ─── Aquecimento de número novo (ADR-043) ───────────────────────────────────────
+// Número recém-criado que já sai mandando muito parece robô de spam. Nos primeiros dias o limite
+// diário é menor e sobe sozinho; depois vale o limite normal da conta.
+export const WARMUP_DAYS = 7;
+export const WARMUP_STEPS = [{ lastDay: 3, limit: 30 }, { lastDay: 7, limit: 80 }] as const;
+
+const dayNumber = (day: string) => Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10))) / 86_400_000;
+/** Dia do aquecimento em `at` (1 = dia em que começou, horário de São Paulo); null = não está aquecendo. */
+export function warmupDay(rules: SendingRules, at: Date) {
+  if (!rules.warmupStartedAt) return null;
+  const day = dayNumber(localDay(at)) - dayNumber(localDay(rules.warmupStartedAt)) + 1;
+  return day >= 1 && day <= WARMUP_DAYS ? day : null;
+}
+/** Limite de envios do número no dia de `at`: o menor entre o da conta e o do aquecimento. */
+export function dailyLimitOn(rules: SendingRules, at: Date) {
+  const day = warmupDay(rules, at);
+  if (day === null) return rules.dailyLimit;
+  const warmup = WARMUP_STEPS.find(step => day <= step.lastDay)!.limit;
+  return rules.dailyLimit === null ? warmup : Math.min(rules.dailyLimit, warmup);
+}
 
 /** Padrões de quem nunca mexeu nas regras (pedido do dono, 2026-09-30). */
 export const DEFAULT_RULES: SendingRules = { quietStart: 22 * 60, quietEnd: 8 * 60, dailyLimit: 150, groupGapMinutes: 120, autoPause: true };
@@ -29,11 +52,19 @@ const OFF: SendingRules = { quietStart: null, quietEnd: null, dailyLimit: null, 
  */
 export const defaultRules = () => (process.env.CAMPAIGN_TEST_DATABASE ? OFF : DEFAULT_RULES);
 
-export async function rulesFor(db: Prisma.TransactionClient, userId: string): Promise<SendingRules> {
-  const row = await db.sendingPolicy.findUnique({ where: { userId } });
-  if (!row) return defaultRules();
+/**
+ * Regras da conta. Com `accountJid`, inclui o aquecimento, que vale só se a resposta "é novo?"
+ * foi dada para ESTE número (outro número conectado não herda o aquecimento do anterior).
+ */
+export async function rulesFor(db: Prisma.TransactionClient, userId: string, accountJid?: string | null): Promise<SendingRules> {
+  const [row, session] = await Promise.all([
+    db.sendingPolicy.findUnique({ where: { userId } }),
+    accountJid ? db.whatsAppSession.findUnique({ where: { userId }, select: { warmupJid: true, warmupStartedAt: true } }) : null,
+  ]);
+  const warmupStartedAt = session?.warmupJid === accountJid ? session?.warmupStartedAt ?? null : null;
+  if (!row) return { ...defaultRules(), warmupStartedAt };
   const { quietStart, quietEnd, dailyLimit, groupGapMinutes, autoPause } = row;
-  return { quietStart, quietEnd, dailyLimit, groupGapMinutes, autoPause };
+  return { quietStart, quietEnd, dailyLimit, groupGapMinutes, autoPause, warmupStartedAt };
 }
 
 // ─── Relógio de São Paulo ───────────────────────────────────────────────────────
@@ -81,6 +112,7 @@ export function ruleBlock(rules: SendingRules, at: Date, usedToday: number, last
   let t = at.getTime();
   let reason: RuleBlock['reason'] | null = null;
   const day = localDay(at);
+  const limit = dailyLimitOn(rules, at); // com o aquecimento, se houver (ADR-043)
   // Uma regra pode empurrar para dentro de outra (ex.: fim do intervalo do grupo cai na
   // madrugada): repete até nenhuma mover o horário.
   for (let round = 0; round < 6; round++) {
@@ -88,7 +120,7 @@ export function ruleBlock(rules: SendingRules, at: Date, usedToday: number, last
     if (rules.groupGapMinutes && lastGroupSendAt && t < lastGroupSendAt.getTime() + rules.groupGapMinutes * 60_000) {
       t = lastGroupSendAt.getTime() + rules.groupGapMinutes * 60_000; reason ??= 'group'; moved = true;
     }
-    if (rules.dailyLimit && usedToday >= rules.dailyLimit && localDay(new Date(t)) === day) {
+    if (limit && usedToday >= limit && localDay(new Date(t)) === day) {
       t = localAt(at, 1, 0).getTime(); reason ??= 'daily'; moved = true;
     }
     const quietEnd = quietEndAfter(rules, new Date(t));
