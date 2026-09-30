@@ -26,19 +26,45 @@ export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
   await tx.$queryRaw`SELECT id FROM \`Campaign\` WHERE id = ${id} FOR UPDATE`;
 }
 
-// ─── Intervalo mínimo (ADR-028; 2 min desde a ADR-035) ──────────────────────────
-// Nenhum número envia mais rápido que 1 mensagem a cada 2 minutos, qualquer que seja o valor
-// gravado na campanha. A API já recusa menos que isso; este piso protege também dados antigos
-// e qualquer caminho que escreva no banco direto. Só o banco de teste descartável pode baixar o
-// piso (os testes de ritmo medem em segundos).
+// ─── Intervalo entre envios (ADR-042; antes ADR-028/035) ────────────────────────
+// Sorteado a CADA envio entre 1 min 45 s e 3 min: um ritmo sempre igual é o padrão mais fácil de
+// o WhatsApp reconhecer como robô. O cliente não escolhe mais; o `intervalSeconds` da campanha
+// fica gravado só por compatibilidade (a API ainda o aceita) e a fila de produção o ignora.
+export const SEND_INTERVAL = { min: 105, max: 180 } as const;
+/** Média do sorteio: é o que as previsões usam para os envios depois do próximo. */
+export const TYPICAL_INTERVAL_SECONDS = Math.round((SEND_INTERVAL.min + SEND_INTERVAL.max) / 2);
+/** Valor que a API aceita e grava em `Campaign.intervalSeconds` (compatibilidade, ADR-042). */
 export const MIN_INTERVAL_SECONDS = 120;
-export function intervalFloorSeconds() {
+
+/**
+ * Só o banco de teste descartável: os testes de ritmo medem em segundos, então lá vale o
+ * intervalo gravado na campanha, com este piso (SEND_INTERVAL_FLOOR_SECONDS).
+ */
+function testFloor() {
   const override = process.env.SEND_INTERVAL_FLOOR_SECONDS;
-  if (process.env.CAMPAIGN_TEST_DATABASE && override !== undefined && Number.isFinite(Number(override))) return Number(override);
-  return MIN_INTERVAL_SECONDS;
+  return process.env.CAMPAIGN_TEST_DATABASE && override !== undefined && Number.isFinite(Number(override)) ? Number(override) : null;
 }
-/** Intervalo efetivo de uma campanha: o configurado, nunca abaixo do piso. */
-export const effectiveInterval = (intervalSeconds: number) => Math.max(intervalSeconds, intervalFloorSeconds());
+/** Intervalo desta vez, sorteado entre o mínimo e o máximo. */
+export function drawInterval(campaignSeconds: number, random = Math.random) {
+  const floor = testFloor();
+  if (floor !== null) return Math.max(campaignSeconds, floor);
+  return SEND_INTERVAL.min + Math.floor(random() * (SEND_INTERVAL.max - SEND_INTERVAL.min + 1));
+}
+/** A menor espera possível entre dois envios do número. */
+export function minimumInterval(campaignSeconds: number) {
+  const floor = testFloor();
+  return floor !== null ? Math.max(campaignSeconds, floor) : SEND_INTERVAL.min;
+}
+/** A maior espera possível (usada quando não se sabe quanto já passou, ex.: após uma queda). */
+export function maximumInterval(campaignSeconds: number) {
+  const floor = testFloor();
+  return floor !== null ? Math.max(campaignSeconds, floor) : SEND_INTERVAL.max;
+}
+/** Intervalo típico para previsões (a média do sorteio). */
+export function effectiveInterval(campaignSeconds: number) {
+  const floor = testFloor();
+  return floor !== null ? Math.max(campaignSeconds, floor) : TYPICAL_INTERVAL_SECONDS;
+}
 
 // ─── Ritmo por número (ADR-006) ─────────────────────────────────────────────────
 // O intervalo protege o NÚMERO: campanhas diferentes no mesmo número dividem um único relógio
@@ -101,8 +127,9 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date, on
     if (paceKey(candidate.provider, campaign.accountJid) !== account) return null;
     const head = await tx.delivery.findFirst({ where: { campaignId: campaign.id, ...dueOrRunning(at) }, orderBy: { sequence: 'asc' }, include: { group: true } });
     if (!head || head.id !== id || head.status !== 'PENDING' || head.scheduledAt > at) return null;
-    const interval = effectiveInterval(campaign.intervalSeconds);
-    if (account && !await accountAllows(tx, account, interval, at)) return null;
+    // O número respeita pelo menos o menor intervalo possível desde o fim do último envio; o
+    // sorteio de verdade já está em nextAvailableAt (gravado por finishDelivery).
+    if (account && !await accountAllows(tx, account, minimumInterval(campaign.intervalSeconds), at)) return null;
     // Proteção do número (ADR-041): janela de silêncio, limite diário e intervalo por grupo.
     // Conferidas sob o lock do número, como o intervalo: dois envios nunca furam o limite juntos.
     if (account) {
@@ -114,7 +141,8 @@ export async function claimDelivery(db: PrismaClient, id: string, now?: Date, on
     }
     const claimed = await tx.delivery.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'PROCESSING', attemptedAt: at, updatedAt: at, error: null, attempts: { increment: 1 } } });
     if (!claimed.count) return null;
-    const next = new Date(at.getTime() + interval * 1000);
+    // Reserva o número enquanto este envio está em andamento; o fim do envio sorteia o intervalo real.
+    const next = new Date(at.getTime() + maximumInterval(campaign.intervalSeconds) * 1000);
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: next, updatedAt: at } });
     // Número ocupado enquanto este envio está em andamento (e se o processo cair no meio).
     if (account) await tx.whatsAppAccount.update({ where: { id: account }, data: { nextAvailableAt: next } });
@@ -151,8 +179,9 @@ export async function finishDelivery(db: PrismaClient, id: string, outcome: Send
     }
     const changed = await tx.delivery.updateMany({ where: { id, status: 'PROCESSING' }, data });
     if (!changed.count) return;
-    // Full interval after completion, even after a slow send or a restart.
-    const interval = effectiveInterval(campaign.intervalSeconds);
+    // Intervalo inteiro depois do fim, mesmo após um envio lento ou um reinício. Sorteado agora
+    // (ADR-042): cada envio do número espera um tempo diferente.
+    const interval = drawInterval(campaign.intervalSeconds);
     const next = new Date(at.getTime() + interval * 1000);
     await tx.campaign.update({ where: { id: campaign.id }, data: { nextAvailableAt: next, updatedAt: at, ...(campaign.status === 'PAUSED' ? { pausedAt: at } : {}) } });
     // O número também conta o intervalo a partir do fim desta tentativa (sucesso ou falha).
@@ -176,11 +205,11 @@ export async function holdInterruptedAccounts(db: PrismaClient, now: Date) {
     await db.$transaction(async tx => {
       await lockAccount(tx, account);
       const current = await tx.whatsAppAccount.findUniqueOrThrow({ where: { id: account } });
-      const until = new Date(now.getTime() + effectiveInterval(campaign.intervalSeconds) * 1000);
+      const until = new Date(now.getTime() + maximumInterval(campaign.intervalSeconds) * 1000);
       await tx.whatsAppAccount.update({ where: { id: account }, data: {
         nextAvailableAt: current.nextAvailableAt && current.nextAvailableAt > until ? current.nextAvailableAt : until,
         lastSendEndedAt: now,
-        lastIntervalSeconds: effectiveInterval(campaign.intervalSeconds),
+        lastIntervalSeconds: maximumInterval(campaign.intervalSeconds),
       } });
     }, LOCKING_TRANSACTION);
   }

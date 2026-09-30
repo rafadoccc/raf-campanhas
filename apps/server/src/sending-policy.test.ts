@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_RULES, inQuietHours, quietEndAfter, ruleBlock, localDay, type SendingRules } from '@campaign/database';
+import { DEFAULT_RULES, inQuietHours, quietEndAfter, ruleBlock, localDay, drawInterval, minimumInterval, maximumInterval, SEND_INTERVAL, TYPICAL_INTERVAL_SECONDS, type SendingRules } from '@campaign/database';
 import { forecastQueue, type ForecastItem } from './queue-forecast';
 
 // Horário de São Paulo (UTC-3): sp('2026-10-01', '23:30') = 2026-10-02T02:30Z.
@@ -46,6 +46,18 @@ test('intervalo por grupo: 2 h depois do último envio ao grupo; se cair no sil�
   assert.equal(ruleBlock({ ...rules, groupGapMinutes: null }, at, 0, sp('2026-10-01', '10:59')), null, 'desligado');
 });
 
+test('intervalo sorteado a cada envio entre 1 min 45 s e 3 min, ignorando o que a campanha tinha', () => {
+  assert.deepEqual(SEND_INTERVAL, { min: 105, max: 180 });
+  assert.equal(drawInterval(600, () => 0), 105, 'menor sorteio');
+  assert.equal(drawInterval(600, () => 0.9999), 180, 'maior sorteio');
+  const draws = new Set(Array.from({ length: 300 }, () => drawInterval(120)));
+  assert.ok([...draws].every(s => s >= 105 && s <= 180), 'sempre dentro da faixa');
+  assert.ok(draws.size > 20, 'varia de verdade (não é um ritmo fixo)');
+  assert.equal(minimumInterval(600), 105);
+  assert.equal(maximumInterval(60), 180);
+  assert.equal(TYPICAL_INTERVAL_SECONDS, 143, 'média usada nas previsões');
+});
+
 test('dia em São Paulo, não em UTC', () => {
   assert.equal(localDay(sp('2026-10-01', '23:30')), '2026-10-01', 'em UTC já seria dia 2');
 });
@@ -58,7 +70,7 @@ test('previsão: envio segurado pela regra mostra o motivo e nunca aparece como 
   assert.equal(result.get('a')?.expectedAt.getTime(), sp('2026-10-02', '08:00').getTime());
   assert.equal(result.get('a')?.lateMinutes, 0, 'horário de silêncio não é atraso');
   assert.equal(result.get('a')?.reason, 'Horário de silêncio · sai amanhã às 08:00');
-  assert.equal(result.get('b')?.expectedAt.getTime(), sp('2026-10-02', '08:02').getTime(), 'o seguinte, um intervalo depois');
+  assert.equal(result.get('b')?.expectedAt.getTime(), sp('2026-10-02', '08:00').getTime() + TYPICAL_INTERVAL_SECONDS * 1000, 'o seguinte, um intervalo depois');
 
   const group = forecastQueue([item('a', 0, 'g1', '10:30')], { status: 'ACTIVE', nextAvailableAt: null, intervalSeconds: 120 }, sp('2026-10-01', '11:00'), true, 3,
     { rules, usedToday: 0, lastSentByGroup: new Map([['g1', sp('2026-10-01', '10:00')]]) });

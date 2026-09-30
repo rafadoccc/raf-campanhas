@@ -8,11 +8,11 @@ import { MessageEditor } from './message-editor';
 import {
   Alert, Button, Card, Checkbox, Field, IconButton, Page, PageHeader, ScrollArea, Segmented,
   IconAdd, IconBack, IconMoveDown, IconMoveUp, IconRemove, IconSearch,
-  buttonClass, inputClass, membros, MIN_INTERVAL_MINUTES,
+  buttonClass, inputClass, membros, SEND_INTERVAL_LABEL, duracaoRodada,
 } from '../design';
 
 type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null; participants: number | null };
-type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; intervalSeconds: number; mentionAll: boolean; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
+type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; mentionAll: boolean; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
 // Só duas opções: lado a lado (Segmented), sem abrir menu.
 const modeOptions = [{ value: 'IMMEDIATE', label: 'Ao iniciar' }, { value: 'SCHEDULED', label: 'Em horários diários' }] as const;
 
@@ -40,7 +40,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const navigate = useNavigate();
   const [media, setMedia] = useState<CampaignMedia | null>(null);
   const [groups, setGroups] = useState<Group[]>(() => screenCache.get<Group[]>('grupos') ?? []); const [selected, setSelected] = useState<string[]>([]);
-  const [mode, setMode] = useState<'IMMEDIATE' | 'SCHEDULED'>('IMMEDIATE'); const [interval, setIntervalValue] = useState(MIN_INTERVAL_MINUTES);
+  const [mode, setMode] = useState<'IMMEDIATE' | 'SCHEDULED'>('IMMEDIATE');
   const [mentionAll, setMentionAll] = useState(false);
   const [times, setTimes] = useState(['09:00']); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(!campaignId);
@@ -62,7 +62,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
       if (data.status !== 'DRAFT') throw Error('Somente rascunhos podem ser editados.');
       setMedia(data.media ?? null);
       setInitial({ name: data.name, startsAt: data.startsAt.slice(0, 10), endsAt: data.endsAt.slice(0, 10), messages: data.messages.map(m => m.content) });
-      setSelected(data.groups.map(g => g.groupId)); setMode(data.mode === 'SCHEDULED' ? 'SCHEDULED' : 'IMMEDIATE'); setIntervalValue(data.intervalSeconds / 60); setMentionAll(data.mentionAll ?? false);
+      setSelected(data.groups.map(g => g.groupId)); setMode(data.mode === 'SCHEDULED' ? 'SCHEDULED' : 'IMMEDIATE'); setMentionAll(data.mentionAll ?? false);
       setTimes(data.schedules.length ? data.schedules.map(s => s.time) : ['09:00']); setLoaded(true);
     }).catch(e => { if (!controller.signal.aborted && screenCache.generation() === generation) setError(e instanceof Error ? e.message : 'Não foi possível carregar a campanha.'); });
     return () => controller.abort();
@@ -87,7 +87,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         const result = await api<CampaignMedia & { id: string }>(`/media?name=${encodeURIComponent(media.name)}`, { method: 'POST', headers: { 'Content-Type': media.mimeType }, body: media.file });
         mediaId = result.id; setMedia(result);
       }
-      const data = await api<{ id: string }>(`/campaigns${campaignId ? `/${campaignId}` : ''}`, { method: campaignId ? 'PATCH' : 'POST', json: { mediaId, name: form.get('name'), mode, intervalSeconds: interval * 60, mentionAll, startsAt: form.get('startsAt'), endsAt: form.get('endsAt'), groupIds: selected, messages: form.getAll('message'), times: mode === 'SCHEDULED' ? times : [] } });
+      const data = await api<{ id: string }>(`/campaigns${campaignId ? `/${campaignId}` : ''}`, { method: campaignId ? 'PATCH' : 'POST', json: { mediaId, name: form.get('name'), mode, mentionAll, startsAt: form.get('startsAt'), endsAt: form.get('endsAt'), groupIds: selected, messages: form.getAll('message'), times: mode === 'SCHEDULED' ? times : [] } });
       navigate(`/campanhas/${data.id}`);
     } catch (e) { setError(errorMessage(e, 'Não foi possível salvar a campanha.')); } finally { setSaving(false); }
   }
@@ -107,9 +107,12 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
               <Segmented label="Quando enviar" value={mode} onChange={setMode} options={modeOptions} />
               <span className="mt-1 block text-2xs text-slate-400">{mode === 'IMMEDIATE' ? 'Fila única: o 1º grupo recebe assim que você iniciar.' : 'Cada horário inicia uma rodada, todo dia do período.'}</span>
             </div>
-            <Field className="min-w-0" label="Intervalo entre grupos (min)" hint={`Mínimo de ${MIN_INTERVAL_MINUTES} min entre grupos (evita bloqueio do WhatsApp).`}>
-              <input type="number" required min={MIN_INTERVAL_MINUTES} max={60} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} className={inputClass} />
-            </Field>
+            {/* Intervalo entre grupos: sorteado pelo sistema a cada envio (ADR-042), não se escolhe. */}
+            <div className="min-w-0">
+              <span className="mb-1 block text-xs font-medium text-muted">Intervalo entre grupos</span>
+              <p className="rounded border border-line bg-slate-50 px-2.5 py-2 text-sm text-ink">Automático: {SEND_INTERVAL_LABEL}</p>
+              <span className="mt-1 block text-2xs text-slate-400">Sorteado a cada envio, para o WhatsApp não reconhecer um ritmo de robô.</span>
+            </div>
           </div>
           <Checkbox checked={mentionAll} onChange={setMentionAll}
             label="Marcar todos os membros (@todos)"
@@ -179,7 +182,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" variant="primary" loading={saving} disabled={saving || !selected.length}>{saving ? (media?.file && media.kind === 'video' ? 'Enviando e preparando o vídeo…' : 'Salvando…') : 'Salvar campanha'}</Button>
           {saving && media?.file && media.kind === 'video' && <span className="text-xs text-muted">Vídeo fora do padrão do WhatsApp é convertido agora; pode levar até alguns minutos.</span>}
-          {!!selected.length && <span className="text-xs text-muted">{selected.length} grupos · ~{Math.max(0, selected.length - 1) * interval} min por rodada</span>}
+          {!!selected.length && <span className="text-xs text-muted">{selected.length} grupos · {duracaoRodada(selected.length)} por rodada</span>}
         </div>
       </>}
     </form>

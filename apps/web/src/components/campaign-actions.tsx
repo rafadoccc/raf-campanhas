@@ -2,14 +2,14 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { editAction, editCampaign } from '../lib/campaign-ops';
-import { Alert, Button, IconEdit, IconPause, IconReschedule, IconReuse, IconStart, IconStop, MIN_INTERVAL_MINUTES, useConfirm } from '../design';
+import { Alert, Button, IconEdit, IconPause, IconReschedule, IconReuse, IconStart, IconStop, SEND_INTERVAL_LABEL, duracaoRodada, useConfirm } from '../design';
 
-type Props = { id: string; name: string; status: string; groupCount?: number; intervalSeconds?: number; connectionState?: string; onChanged?: () => void };
+type Props = { id: string; name: string; status: string; groupCount?: number; connectionState?: string; onChanged?: () => void };
 const editIcon = { edit: IconEdit, reuse: IconReuse, reschedule: IconReschedule } as const;
 
 // Ações dentro da campanha. O envio é sempre pelo WhatsApp de verdade (a simulação saiu da
 // tela). Excluir fica só no cartão da lista de campanhas, longe dos botões do dia a dia.
-export function CampaignActions({ id, name, status, groupCount = 0, intervalSeconds = MIN_INTERVAL_MINUTES * 60, connectionState = 'unavailable', onChanged }: Props) {
+export function CampaignActions({ id, name, status, groupCount = 0, connectionState = 'unavailable', onChanged }: Props) {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -24,10 +24,9 @@ export function CampaignActions({ id, name, status, groupCount = 0, intervalSeco
   }
   const update = (next: 'ACTIVE' | 'PAUSED' | 'CANCELLED') => run(async () => {
     if (next === 'ACTIVE') {
-      const minutes = Math.max(0, groupCount - 1) * intervalSeconds / 60;
       const ok = await confirm({
         title: status === 'PAUSED' ? 'Retomar a campanha?' : 'Iniciar a campanha?',
-        description: `${groupCount} grupos, um a cada ${intervalSeconds / 60} min (~${minutes} min por rodada). Confirmo que os grupos autorizaram estas mensagens.`,
+        description: `${groupCount} grupos, um a cada ${SEND_INTERVAL_LABEL} (${duracaoRodada(groupCount)} por rodada). Confirmo que os grupos autorizaram estas mensagens.`,
         confirmLabel: status === 'PAUSED' ? 'Retomar' : 'Iniciar',
       });
       if (!ok) return;

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TYPICAL_INTERVAL_SECONDS } from '@campaign/database';
 import { forecastQueue, type ForecastItem } from './queue-forecast';
 
 const T0 = new Date('2026-09-22T17:00:00Z');
@@ -15,12 +16,13 @@ test('em dia: cada envio sai no horário previsto e sem motivo de espera', () =>
 });
 
 test('o intervalo empurra a previsão, mas não é atraso', () => {
-  // O envio anterior terminou tarde: o próximo só sai 3 min depois dele. Previsão certa, sem 'Atrasado'.
+  // O envio anterior terminou tarde: o próximo só sai um intervalo depois dele. Previsão certa, sem
+  // 'Atrasado'. Depois do próximo, a previsão usa a média do intervalo sorteado (ADR-042).
   const result = forecastQueue([item('a', 0, 0), item('b', 1, 3)], { ...active, nextAvailableAt: at(2) }, T0, true, 3);
   assert.equal(result.get('a')?.expectedAt.getTime(), at(2).getTime());
   assert.equal(result.get('a')?.lateMinutes, 0);
   assert.equal(result.get('a')?.reason, 'Aguardando o intervalo entre envios do número');
-  assert.equal(result.get('b')?.expectedAt.getTime(), at(5).getTime());
+  assert.equal(result.get('b')?.expectedAt.getTime(), at(2).getTime() + TYPICAL_INTERVAL_SECONDS * 1000);
   assert.equal(result.get('b')?.lateMinutes, 0);
   assert.equal(result.get('b')?.reason, null);
 });
@@ -58,7 +60,7 @@ test('reenvio agendado não segura os seguintes: eles saem antes, na ordem', () 
   const result = forecastQueue([retry, item('b', 1, 0), item('c', 2, 3)], active, T0, true, 3);
   assert.equal(result.get('b')?.expectedAt.getTime(), T0.getTime());
   assert.equal(result.get('c')?.expectedAt.getTime(), at(3).getTime());
-  assert.equal(result.get('r')?.expectedAt.getTime(), at(6).getTime(), 'depois do intervalo do anterior');
+  assert.equal(result.get('r')?.expectedAt.getTime(), at(3).getTime() + TYPICAL_INTERVAL_SECONDS * 1000, 'depois do intervalo do anterior');
   assert.equal(result.get('r')?.reason, 'Nova tentativa (2 de 3)');
 });
 

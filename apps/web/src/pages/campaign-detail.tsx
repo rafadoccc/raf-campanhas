@@ -9,12 +9,12 @@ import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
   IconBack, IconChevron, IconClock, IconGroups, IconMention, IconMessage, IconRefresh, IconVideo,
-  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, useConfirm, useInfiniteList, type Wait,
+  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, tempoRelativo, useConfirm, useInfiniteList, SEND_INTERVAL_LABEL, type Wait,
 } from '../design';
 
 type Group = { name: string; participants: number | null };
 type Campaign = {
-  id: string; name: string; status: string; provider: string; intervalSeconds: number; mode: string; mentionAll: boolean;
+  id: string; name: string; status: string; provider: string; mode: string; mentionAll: boolean;
   media: (CampaignMedia & { color?: string | null }) | null; readsTotal: number; delivered: number; progress: Record<string, number>;
   readsByGroup: { groupId: string; name: string; participants: number | null; count: number }[];
   groups: { group: Group }[]; messages: { content: string }[]; schedules: { time: string }[];
@@ -139,7 +139,7 @@ export default function CampaignPage() {
                 <h1 className="truncate text-lg font-semibold" title={campaign.name}>{campaign.name}</h1>
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
                   <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groups.length} grupos</span>
-                  <span>· a cada {campaign.intervalSeconds / 60} min · {when}</span>
+                  <span>· um a cada {SEND_INTERVAL_LABEL} · {when}</span>
                   {campaign.status !== 'DRAFT' && campaign.provider === 'simulator' && <span>· simulação</span>}
                   {campaign.mentionAll && <span className="inline-flex items-center gap-1"><IconMention className="h-3.5 w-3.5" aria-hidden />marca todos</span>}
                 </p>
@@ -155,8 +155,8 @@ export default function CampaignPage() {
               </div>
               <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full transition-[width] duration-500 ease-out" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
             </>}
-            {next && <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded bg-slate-50 px-3 py-2 text-xs"><IconClock className="h-3.5 w-3.5 text-muted" aria-hidden /><span className="text-muted">Próximo:</span><strong>{next.group.name}</strong><span>às {hora(next.wait!.expectedAt)}</span>{next.wait!.reason && <span className="text-amber-700">· {next.wait!.reason}</span>}</p>}
-            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} intervalSeconds={campaign.intervalSeconds} groupCount={campaign.groups.length} />
+            {next && <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded bg-slate-50 px-3 py-2 text-xs"><IconClock className="h-3.5 w-3.5 text-muted" aria-hidden /><span className="text-muted">Próximo:</span><strong>{next.group.name}</strong><span>por volta das {hora(next.wait!.expectedAt)}{Date.parse(next.wait!.expectedAt) - Date.now() > 60_000 ? ` (${tempoRelativo(next.wait!.expectedAt)})` : ''}</span>{next.wait!.reason && <span className="text-amber-700">· {next.wait!.reason}</span>}</p>}
+            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} groupCount={campaign.groups.length} />
           </div>
         </Card>
 

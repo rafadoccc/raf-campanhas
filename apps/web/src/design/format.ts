@@ -8,8 +8,14 @@ export const dataHora = (at: string | Date) => new Intl.DateTimeFormat('pt-BR', 
 /** Datas de campanha são gravadas como meia-noite UTC do dia escolhido. */
 export const dia = (at: string | Date) => new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(new Date(at));
 export const numero = (n: number) => n.toLocaleString('pt-BR');
-/** Piso de intervalo entre grupos (ADR-028): o servidor recusa qualquer valor abaixo disso. */
-export const MIN_INTERVAL_MINUTES = 2;
+/** Intervalo entre grupos (ADR-042): o sistema sorteia a cada envio, ninguém escolhe. */
+export const SEND_INTERVAL_LABEL = '1 min 45 s a 3 min';
+const TYPICAL_INTERVAL_SECONDS = 143; // média do sorteio (TYPICAL_INTERVAL_SECONDS no servidor)
+/** Duração aproximada de uma rodada: "~24 min", "~1 h 12 min". */
+export const duracaoRodada = (groups: number) => {
+  const minutes = Math.round(Math.max(0, groups - 1) * TYPICAL_INTERVAL_SECONDS / 60);
+  return minutes < 60 ? `~${minutes} min` : `~${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+};
 export const tamanho = (bytes: number) => bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
 export const membros = (n?: number | null) => (n == null ? null : `${numero(n)} ${n === 1 ? 'membro' : 'membros'}`);
 export const tempoRelativo = (at: string | Date, agora = Date.now()) => {

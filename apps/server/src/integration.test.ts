@@ -2814,6 +2814,29 @@ test('minimum interval (028): the API refuses less than 2 minutes and the queue 
   }
 });
 
+test('random interval (042): outside the test floor, each send waits a drawn 1:45 to 3:00, whatever the campaign says', async () => {
+  const previous = process.env.SEND_INTERVAL_FLOOR_SECONDS;
+  delete process.env.SEND_INTERVAL_FLOOR_SECONDS; // como em produção
+  try {
+    const waits = new Set<number>();
+    for (let round = 0; round < 6; round++) {
+      await resetPace();
+      const { rows: [row] } = await realCampaign(1, 3600); // o intervalo gravado na campanha não conta mais
+      const at = new Date();
+      assert.ok(await claimDelivery(prisma, row.id, at));
+      await finishDelivery(prisma, row.id, { providerId: `3EBSORTEIO${round}`, context: '' }, at);
+      const number = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: ACCOUNT } });
+      const wait = (number.nextAvailableAt!.getTime() - at.getTime()) / 1000;
+      assert.ok(wait >= 105 && wait <= 180, `espera sorteada fora da faixa: ${wait} s`);
+      assert.equal(number.lastIntervalSeconds, wait);
+      waits.add(wait);
+    }
+    assert.ok(waits.size > 1, 'o intervalo muda de um envio para outro');
+  } finally {
+    if (previous === undefined) delete process.env.SEND_INTERVAL_FLOOR_SECONDS; else process.env.SEND_INTERVAL_FLOOR_SECONDS = previous;
+  }
+});
+
 test('migration (real MySQL): campaigns below 3 minutes are raised to 3 minutes, nothing else changes', async () => {
   await withLegacyDatabase(async (db, apply, names) => {
     const target = '20260924180000_min_interval';

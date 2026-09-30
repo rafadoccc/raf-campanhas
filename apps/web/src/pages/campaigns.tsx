@@ -5,12 +5,12 @@ import { deleteCampaign, editAction, editCampaign } from '../lib/campaign-ops';
 import {
   Alert, Badge, Button, ButtonLink, EmptyState, IconButton, LoadMoreSentinel, Page, PageHeader, ScrollArea, Segmented, Skeleton,
   IconAdd, IconCampaigns, IconDelete, IconEdit, IconGroups, IconMention, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
-  accent, campaignStatus, dia, inputClass, useConfirm, useInfiniteList,
+  accent, campaignStatus, dia, duracaoRodada, inputClass, useConfirm, useInfiniteList,
 } from '../design';
 
 type Campaign = {
   id: string; name: string; startsAt: string; endsAt: string; status: string; provider: string; createdAt: string;
-  intervalSeconds: number; mode: string; mentionAll: boolean; groupCount: number; schedules: { time: string }[];
+  mode: string; mentionAll: boolean; groupCount: number; schedules: { time: string }[];
   media: { id: string; kind: string; color: string | null } | null;
   progress: Record<string, number>;
 };
@@ -47,7 +47,7 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
           </div>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
             <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groupCount}</span>
-            <span>· a cada {campaign.intervalSeconds / 60} min</span>
+            <span>· {duracaoRodada(campaign.groupCount)} por rodada</span>
             <span>· {when}</span>
             {campaign.mode !== 'IMMEDIATE' && <span>· {dia(campaign.startsAt)}–{dia(campaign.endsAt)}</span>}
             {campaign.status !== 'DRAFT' && campaign.provider === 'simulator' && <span>· simulação</span>}

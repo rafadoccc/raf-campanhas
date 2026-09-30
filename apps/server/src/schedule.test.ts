@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { SEND_INTERVAL } from '@campaign/database';
 import { planDeliveries } from './schedule';
 const campaign = { id: 'test', provider: 'simulator', startsAt: new Date('2026-09-17'), endsAt: new Date('2026-09-18'), groups: [{ groupId: 'a' }, { groupId: 'b' }], messages: [{ content: 'one' }, { content: 'two' }], schedules: [{ time: '09:00', timezone: 'America/Sao_Paulo' }, { time: '18:00', timezone: 'America/Sao_Paulo' }] };
 
@@ -33,11 +34,12 @@ test('immediate queue begins now, preserves selected order and offsets each grou
   const rows = planDeliveries({ ...campaign, mode: 'IMMEDIATE', intervalSeconds: 180, schedules: [] }, now);
   assert.deepEqual(rows.map(r => r.groupId), ['a', 'b']);
   assert.equal(rows[0].scheduledAt.getTime(), now.getTime());
-  assert.equal(rows[1].scheduledAt.getTime() - now.getTime(), 180000);
+  // Horário planejado = "não antes de", com o menor intervalo possível (ADR-042): o ritmo é o sorteio.
+  assert.equal(rows[1].scheduledAt.getTime() - now.getTime(), SEND_INTERVAL.min * 1000);
   assert.deepEqual(rows.map(r => r.sequence), [0, 1]);
 });
 test('scheduled rounds serialize even if the configured times overlap', () => {
   const rows = planDeliveries({ ...campaign, intervalSeconds: 180, endsAt: campaign.startsAt, schedules: [{ time: '09:00', timezone: 'America/Sao_Paulo' }, { time: '09:01', timezone: 'America/Sao_Paulo' }] }, new Date('2026-09-16'));
   assert.equal(rows.length, 4);
-  for (let i = 1; i < rows.length; i++) assert.equal(rows[i].scheduledAt.getTime() - rows[i - 1].scheduledAt.getTime(), 180000);
+  for (let i = 1; i < rows.length; i++) assert.equal(rows[i].scheduledAt.getTime() - rows[i - 1].scheduledAt.getTime(), SEND_INTERVAL.min * 1000);
 });

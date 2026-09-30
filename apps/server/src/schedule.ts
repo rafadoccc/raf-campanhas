@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import { effectiveInterval } from '@campaign/database';
+import { minimumInterval } from '@campaign/database';
 
 export function planDeliveries(campaign: {
   id: string; startsAt: Date; endsAt: Date; provider: string;
@@ -8,9 +8,10 @@ export function planDeliveries(campaign: {
   schedules: { time: string; timezone: string }[];
 }, now = new Date()) {
   if (!campaign.messages.length || !campaign.groups.length) throw new Error('Campanha incompleta.');
-  // Horários planejados já respeitam o piso de 2 minutos (ADR-028/035); sem intervalo informado,
-  // vale 0 (compatibilidade com os testes antigos do planejador, que não passam intervalo).
-  const interval = campaign.intervalSeconds === undefined ? 0 : effectiveInterval(campaign.intervalSeconds);
+  // Horários planejados com o MENOR intervalo possível (ADR-042): são só o "não antes de"; o ritmo
+  // de verdade é o sorteio da fila, que espaçar pelo máximo deixaria sem efeito. Sem intervalo
+  // informado, vale 0 (compatibilidade com os testes antigos do planejador).
+  const interval = campaign.intervalSeconds === undefined ? 0 : minimumInterval(campaign.intervalSeconds);
   if (campaign.mode === 'IMMEDIATE') return campaign.groups.map((group, sequence) => ({ campaignId: campaign.id, groupId: group.groupId, messageBody: campaign.messages[sequence % campaign.messages.length].content, scheduledAt: new Date(now.getTime() + sequence * interval * 1000), provider: campaign.provider, sequence }));
   if (!campaign.schedules.length) throw new Error('Campanha incompleta.');
   const first = DateTime.fromISO(campaign.startsAt.toISOString().slice(0, 10), { zone: 'UTC' });

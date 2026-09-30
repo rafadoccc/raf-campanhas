@@ -1,6 +1,6 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey, MIN_INTERVAL_SECONDS, effectiveInterval, rulesFor, sendsToday } from '@campaign/database';
+import { prisma, completeFinished, resumeAt, currentTime, TIME_ZONE, clockStatus, lockCampaign, LOCKING_TRANSACTION, MAX_SEND_ATTEMPTS, paceKey, MIN_INTERVAL_SECONDS, minimumInterval, rulesFor, sendsToday } from '@campaign/database';
 import { forecastQueue, type ForecastRules } from './queue-forecast';
 import { registerCampaignRoutes } from './campaign-routes';
 import { planDeliveries } from './schedule';
@@ -164,7 +164,7 @@ app.get('/api/deliveries', async (request) => {
   // O número pode estar ocupado por outra campanha (ADR-006): a previsão parte do mais tarde dos dois relógios.
   const accountId = campaign ? paceKey(campaign.provider, campaign.accountJid) : null;
   const account = accountId ? await prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : null;
-  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + effectiveInterval(campaign?.intervalSeconds ?? 0) * 1000 : 0);
+  const numberFreeAt = Math.max(account?.nextAvailableAt?.getTime() ?? 0, account?.lastSendEndedAt ? account.lastSendEndedAt.getTime() + minimumInterval(campaign?.intervalSeconds ?? 0) * 1000 : 0);
   const paced = campaign ? { ...campaign, nextAvailableAt: new Date(Math.max(campaign.nextAvailableAt?.getTime() ?? 0, numberFreeAt)) } : null;
   // Conectado = a conexão DO DONO da campanha (a mesma que envia, ADR-022), nunca a global legada.
   const ownerConnection = campaign ? await sending.forOwner(campaign.userId) : null;
