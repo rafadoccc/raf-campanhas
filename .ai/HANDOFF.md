@@ -5,6 +5,22 @@
 
 ---
 
+## 2026-10-01T04:00Z · claude
+
+**Fiz:** aquecimento de número novo (ADR-043). Ao conectar um número sem resposta, a tela WhatsApp
+pergunta "Este número é novo?"; sim = 30 envios/dia nos dias 1-3, 80 nos dias 4-7, depois o
+normal. Uma vez por número; dá para ativar/parar depois na mesma tela.
+**Arquivos:** packages/database/src/{sending-policy,queue,client}.ts, packages/database/prisma/{schema.prisma,migrations/20261001100000_number_warmup}, apps/server/src/{number-protection-routes,app,queue-forecast,sending-policy.test,integration.test}.ts, apps/web/src/{components/number-protection.tsx,pages/settings.tsx}
+**Tarefas:** T-134 (concluída). Só T-133 (variações de texto) segue aberta, esperando o dono.
+**Estado:** compila · lint ok · unitários 87/87 · integração 137/137. A pergunta não foi vista no
+navegador (precisa de WhatsApp conectado de verdade); coberta pelos testes de integração.
+**Armadilhas:**
+- `rulesFor` sem `accountJid` NÃO inclui o aquecimento: passe o número sempre que for decidir envio.
+- Duas travas de colunas de `WhatsAppSession` nos testes agora incluem `warmupJid`/`warmupStartedAt`.
+**Próximo passo sugerido:** conferir a pergunta com o WhatsApp real no Railway; depois T-133 se o dono quiser.
+
+---
+
 ## 2026-10-01T03:00Z · claude
 
 **Fiz:** intervalo entre envios sorteado a cada envio entre 1:45 e 3:00 (ADR-042), a pedido do

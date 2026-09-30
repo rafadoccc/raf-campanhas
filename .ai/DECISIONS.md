@@ -1158,3 +1158,27 @@ intervalo aleatório entre **1 min 45 s e 3 min**, decidido pelo sistema, e que 
 - **Testes:** no banco de teste com `SEND_INTERVAL_FLOOR_SECONDS` definido, vale o intervalo da
   campanha com esse piso (os testes de ritmo medem em segundos), como antes. O sorteio tem teste
   de unidade e um de integração que remove o piso.
+
+---
+
+## ADR-043 · Aquecimento de número novo, perguntado uma vez por número
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev
+
+Chip novo que já sai mandando muito é o caso de maior risco de banimento (promoters costumam
+comprar um chip só para divulgação). O sistema não sabe a idade de um número, então pergunta.
+
+- **Pergunta** "Este número é novo (criado há menos de 1 mês)?" na tela WhatsApp, quando o número
+  conectado ainda não tem resposta. **Uma vez por número:** a resposta fica em
+  `WhatsAppSession.warmupJid` (o número) e `warmupStartedAt` (início; null = não é novo).
+  Reconectar o mesmo número não pergunta; outro número pergunta de novo e não herda o
+  aquecimento. Dá para mudar depois (`POST /api/whatsapp/warmup { isNew }`); "sim" de novo não
+  reinicia um aquecimento em andamento. Sem resposta, nada muda no ritmo.
+- **Limite:** dias 1 a 3: 30 envios/dia; dias 4 a 7: 80; depois o limite diário da conta. Vale o
+  menor entre o aquecimento e o limite da conta, e o aquecimento vale mesmo com o limite diário
+  desligado. Dias contados no horário de São Paulo (dia 1 = dia em que começou).
+- **Onde:** `rulesFor(db, userId, accountJid)` inclui `warmupStartedAt` só se a resposta é deste
+  número; `dailyLimitOn(rules, at)` dá o limite do dia e `ruleBlock` o usa (ADR-041). A previsão
+  mostra "Aquecendo o número (dia 2 de 7): limite de 30 envios hoje · continua amanhã às 08:00".
+- **Status:** `GET /api/whatsapp/status` traz `warmup` quando conectado; `GET /api/sending-policy`
+  traz `todayLimit` e `warmup`. Migration aditiva `20261001100000_number_warmup`.

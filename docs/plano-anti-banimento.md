@@ -1,8 +1,9 @@
 # Plano: proteção contra banimento do número (T-131 a T-135)
 
 **Status:** T-131, T-132, T-135 e o intervalo por grupo (T-136) **implementados** (ADR-041, 2026-10-01).
-Intervalo aleatório de 1:45 a 3:00 **implementado** (T-137, ADR-042). T-133 (variações de texto) e
-T-134 (aquecimento de número novo) aguardam decisão do dono.
+Intervalo aleatório de 1:45 a 3:00 **implementado** (T-137, ADR-042). Aquecimento de número novo
+**implementado** (T-134, ADR-043), perguntado uma vez por número. T-133 (variações de texto) aguarda
+decisão do dono.
 
 Decisões do dono: silêncio a partir das 22:00; limite diário de 150; intervalo de 2 h no mesmo
 grupo, configurável de 30 min a 24 h; o limite diário conta envios (mandar 5 vezes para 20 grupos

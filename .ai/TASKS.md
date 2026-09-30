@@ -156,7 +156,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-132  Anti-banimento: limite diário de envios por número            owner: —        since: —
 [x] T-136  Anti-banimento: intervalo mínimo no mesmo grupo (2 h)           owner: —        since: —
 [ ] T-133  Anti-banimento: variações de texto {a|b|c} por grupo          owner: —        since: —
-[ ] T-134  Anti-banimento: aquecimento de número novo                   owner: —        since: —
+[x] T-134  Anti-banimento: aquecimento de número novo                   owner: —        since: —
 [x] T-137  Intervalo aleatório 1:45 a 3:00, sem escolha do cliente       owner: —        since: —
 [x] T-135  Anti-banimento: pausa automática com sinal de bloqueio       owner: —        since: —
 [x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
