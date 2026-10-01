@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-10-01T06:14Z · claude
+
+**Fiz:** avisos no WhatsApp do dono (ADR-048, commit `1c3dc74`): mensagem de texto quando uma
+campanha real termina e quando há pausa automática, para o próprio número conectado ou para outro
+número. Cartão "Avisos no WhatsApp" na tela WhatsApp, com aviso de teste e últimos avisos.
+**Arquivos:** apps/server/src/{owner-alerts,whatsapp,whatsapp.test,app,main,legal,integration.test}.ts, packages/database/prisma/{schema.prisma,migrations/20261002100000_owner_alerts}, apps/web/src/{components/owner-alerts.tsx,pages/{settings,legal}.tsx,lib/release-notes.ts}
+**Tarefas:** T-148 (concluída), T-149 (aberta: validar num WhatsApp real).
+**Estado:** compila · lint ok · unitários 94/94 + 7 do painel · integração 150/150. Conferido no
+navegador (dev, conta sem WhatsApp): cartão, validação do número, salvar, últimos avisos, 375 px.
+**Armadilhas:**
+- **`notify` nunca falou com o WhatsApp de verdade** (só conector falso). Antes de divulgar, alguém
+  com número conectado precisa clicar em "Enviar aviso de teste" nos dois destinos (T-149).
+- Aviso para o próprio número não toca no celular (mensagem do próprio número). Isso está escrito
+  na tela; quem quer notificação usa "Em outro número".
+- A fila (`queue.ts`, `schedule.ts`, `dispatcher.ts`) NÃO mudou. Os avisos rodam num temporizador
+  próprio (`startOwnerAlerts` em main.ts) e só leem o resultado da fila.
+- O "terminou" usa o último `attemptedAt`, não `Campaign.updatedAt`. Não troque: `updatedAt` muda
+  ao criar o link do relatório e geraria aviso de campanha antiga.
+- `ManagedProvider` e `WhatsAppConnection` não listam `notify`; os avisos aceitam conexão sem
+  `notify` (conector de teste) e apenas não enviam.
+- A Política de Privacidade ganhou a linha "Avisos" sem mudar `TERMS_VERSION` (dado opcional).
+- Mexi em `apps/web/` (área do codex): cartão novo e uma linha em settings.tsx e legal.tsx.
+- Push só na dev; o dono leva para a main quando terminar as features.
+**Próximo passo sugerido:** o dono conecta um número na dev (ou depois de levar para a main) e
+manda o aviso de teste; se o próprio número falhar, ajustar `notify` em whatsapp.ts.
+
+---
+
 ## 2026-10-01T05:10Z · claude
 
 **Fiz:** (1) modelos de campanha: "Salvar como modelo" no cartão da campanha, aba Modelos em

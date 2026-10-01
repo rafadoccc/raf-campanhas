@@ -12,6 +12,8 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[ ] T-149  Validar os avisos num WhatsApp real: "Enviar aviso de teste" no próprio número e em outro número (ADR-048)  owner: —   since: —
+[x] T-148  Avisos no WhatsApp do dono: campanha concluída e pausa automática  owner: —   since: —
 [x] T-145  Esqueci minha senha: link de uso único (pelo administrador ou por e-mail)  owner: —   since: —
 [x] T-146  Modelos de campanha: salvar, editar e usar em dois cliques  owner: —   since: —
 [x] T-147  Listas de grupos: selecionar vários grupos de uma vez  owner: —   since: —

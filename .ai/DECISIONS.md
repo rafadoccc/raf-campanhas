@@ -1300,3 +1300,43 @@ e o cliente conseguir voltar a entrar sem o administrador inventar uma senha par
 - Migration aditiva `20261002000000_templates_lists_reset`.
 - **Fora desta decisão:** login com Google ou Apple. Só levantamento, entregue ao dono; depende de
   domínio próprio com HTTPS.
+
+---
+
+## ADR-048 · Avisos no WhatsApp do dono
+
+**Data:** 2026-10-01 · **Status:** aceita, falta validar num número real (T-149) · **Autor:** claude · **Branch:** dev · **Fecha:** T-148
+
+Pedido do dono: saber, sem abrir o painel, quando uma campanha terminou ou foi pausada. E-mail
+depende de domínio; o WhatsApp do próprio cliente já está conectado.
+
+- **O que avisa:** (1) campanha real (`baileys`) concluída, com envios feitos e falhas; (2) pausa
+  automática por sinal de restrição (ADR-041). Falha isolada não avisa (entra no resumo do fim).
+  Queda da conexão não avisa: sem conexão não há por onde mandar.
+- **Para onde:** o próprio número conectado (conversa "Você"; por ser mensagem do próprio número,
+  o celular não notifica) ou outro número escolhido pelo dono, resolvido a cada aviso por
+  `onWhatsApp` (cobre o nono dígito). Opcional e desligado por padrão.
+- **Fora da fila de envio.** `queue.ts` e `schedule.ts` não mudam. `owner-alerts.ts` roda a cada
+  30 s no processo do servidor:
+  - `collectAlerts` grava um `OwnerAlert` por FATO, com chave única (`fim:<campanha>:<último envio>`,
+    `pausa:<conta>:<quando>`): o mesmo fato nunca avisa duas vezes; "tentar de novo" tem outro
+    último envio e avisa de novo. Só fatos de depois de `AlertSettings.enabledAt` e das últimas 6 h.
+    O "quando" da campanha é o último `attemptedAt`, não `updatedAt` (que muda por outros motivos).
+    Espera 2 min depois do último envio: uma recusa atrasada do servidor reabre a campanha.
+  - `deliverAlerts` manda pela conexão DO DONO (mesmo roteador da fila), um por conta a cada
+    rodada, nunca enquanto um envio da conta está em andamento. O aviso é reservado antes de sair:
+    se o envio falhar, fica o motivo e não é repetido (no máximo uma vez, nunca duplicado). Sem
+    conexão, espera; passadas 6 h, é abandonado.
+- **Não é envio de campanha:** não conta no limite do dia, não mexe no relógio do número, não
+  respeita o horário de silêncio (é uma mensagem para o próprio dono) e nunca vai para grupo
+  (`notify` recusa `@g.us`).
+- **Contrato novo:** `GET/PUT /api/alerts` (`{ enabled, phone }`; o telefone é guardado em dígitos
+  com DDI, e DDD + número ganha o 55) e `POST /api/alerts/test` (3 a cada 10 min por conta).
+  `WhatsAppProvider.notify(text, phone?)`.
+- **Dados:** tabelas novas `AlertSettings` e `OwnerAlert`, apagadas em cascata com a conta; avisos
+  com mais de 30 dias são apagados. A preferência entra na exportação da LGPD e a Política de
+  Privacidade ganhou a linha "Avisos" (sem mudar a versão dos termos: é dado opcional).
+- Migration aditiva `20261002100000_owner_alerts`.
+- **Limite conhecido:** `notify` foi testado com conector falso. Mandar para o próprio número e
+  resolver outro número pelo Baileys precisa de um teste num WhatsApp de verdade (botão "Enviar
+  aviso de teste" na tela WhatsApp).
