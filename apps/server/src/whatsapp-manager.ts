@@ -141,9 +141,16 @@ export class WhatsAppManager {
    */
   async stop(userId: string) {
     const provider = this.providers.get(userId);
-    if (!provider) return;
-    this.providers.delete(userId);
-    await provider.stop();
+    try {
+      if (provider) {
+        this.providers.delete(userId);
+        await provider.stop();
+      }
+    } finally {
+      // O callback de stop pode enfileirar a última gravação. Ela deve terminar antes de
+      // desconectar o Prisma durante o desligamento do processo.
+      await this.persisting.get(userId);
+    }
   }
 
   async stopAll() {
@@ -162,6 +169,7 @@ export class WhatsAppManager {
       return await provider.disconnect();
     } finally {
       this.providers.delete(userId);
+      await this.persisting.get(userId);
       await this.db.whatsAppSession.updateMany({ where: { userId }, data: { state: 'disconnected', accountJid: null, lastError: null } })
         .catch(() => undefined);
     }

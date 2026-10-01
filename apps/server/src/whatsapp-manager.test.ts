@@ -128,6 +128,70 @@ test('manager: stopping one connection keeps the others running and preserves th
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('manager: stopping waits for the final connection state write', async () => {
+  let notify = () => {};
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const finished = new Promise<void>(resolve => { release = resolve; });
+  const db = { whatsAppSession: { updateMany: async () => {
+    entered();
+    await finished;
+    return { count: 1 };
+  } } } as never;
+  const manager = new WhatsAppManager({
+    db,
+    createProvider: (ownerId, sessionDir, onStateChange) => {
+      notify = onStateChange;
+      const provider = fakeProvider(ownerId, sessionDir);
+      provider.stop = async () => { notify(); };
+      return provider;
+    },
+  });
+  manager.for(A);
+  let stopped = false;
+  const stopping = manager.stopAll().then(() => { stopped = true; });
+  await started;
+  try {
+    assert.equal(stopped, false, 'encerramento aguarda a escrita no banco');
+    release();
+    await stopping;
+    assert.equal(stopped, true);
+  } finally { release(); await stopping; }
+});
+
+test('manager: disconnect cannot be overwritten by an older connected state write', async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const finished = new Promise<void>(resolve => { release = resolve; });
+  let stored = 'disconnected';
+  const db = { whatsAppSession: {
+    upsert: async ({ update }: { update: { state: string } }) => {
+      entered();
+      await finished;
+      stored = update.state;
+    },
+    updateMany: async ({ data }: { data: { state: string } }) => {
+      stored = data.state;
+      return { count: 1 };
+    },
+  } } as never;
+  const manager = new WhatsAppManager({ db, createProvider: (ownerId, sessionDir) => fakeProvider(ownerId, sessionDir) });
+  const provider = manager.for(A);
+  await provider.connect();
+  const writing = manager.queuePersist(A);
+  await started;
+  const disconnecting = manager.disconnect(A);
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    release();
+    await writing;
+    await disconnecting;
+    assert.equal(stored, 'disconnected', 'gravação antiga não reverte o logout');
+  } finally { release(); await disconnecting; }
+});
+
 test('manager: a connection failure of one user does not stop the others', async () => {
   const dir = base();
   try {
