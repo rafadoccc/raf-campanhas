@@ -5,6 +5,32 @@
 
 ---
 
+## 2026-10-01T03:57Z · claude
+
+**Fiz:** (1) relatório da campanha com link público revogável, resumo do dia ao clicar no gráfico
+do Início, e canal de sugestões e críticas com resposta do administrador (ADR-045); (2) sessão do
+WhatsApp cifrada em repouso, opcional por `SESSION_KEY` (ADR-046, fecha a T-024); (3) limpeza do
+TASKS.md com a marca nova `[-]` = descartada (ai-check e ai-brief aceitam); (4) branch
+`hardening-20260928` apagada (já estava toda na dev; o worktree do codex usa `review-20260930`).
+**Arquivos:** apps/server/src/{report,feedback-routes,session-crypto,session-crypto.test,auth-state,whatsapp,session-migration,auth,app,legal,integration.test}.ts, packages/database/prisma/{schema.prisma,migrations/20261001200000_feedback_and_report}, apps/web/src/{pages/{report,feedback,dashboard,campaign-detail,admin,release-notes}.tsx,components/{day-details,admin-feedback,navigation}.tsx,lib/{feedback,release-notes}.ts,design/icons.ts,main.tsx,styles.css}, scripts/{ai-check,ai-brief}.mjs, package.json, .env.example
+**Tarefas:** T-142, T-143, T-144 e T-024 (concluídas).
+**Estado:** compila · lint ok · unitários 93/93 + 7 do painel · integração 144/144. Conferido no
+navegador (dev): resumo do dia, relatório, link público sem login, sugestões e bloco do admin.
+**Armadilhas:**
+- `/api/public/report/:token` é pública: qualquer campo novo em `buildReport` aparece no link. Só
+  números ali; o teste de integração barra texto de mensagem, ids e e-mail.
+- `SESSION_KEY` NÃO está definida em lugar nenhum: a cifra está desligada até o dono ligar. Ao
+  ligar, os arquivos são cifrados na primeira abertura; perder a chave = QR de novo. Chave errada
+  dá `SessionKeyError` e não toca em nada (nunca tratar como "ilegível").
+- Leia arquivo de sessão só por `peekSessionJson`/`useDurableAuthState`: `JSON.parse` direto
+  quebra com a cifra ligada.
+- As notas 26.10.1 (do codex) ganharam os grupos Novo e Melhorado desta sessão.
+- Push só na dev; o dono leva para a main.
+**Próximo passo sugerido:** o dono leva a dev para a main fora de campanha; depois decide se liga
+a `SESSION_KEY` no Railway/VPS.
+
+---
+
 ## 2026-10-01T03:24Z · codex
 
 **Fiz:** revisão incremental de robustez (T-141): exclusão de conta serializada com troca

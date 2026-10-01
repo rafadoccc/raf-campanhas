@@ -12,9 +12,9 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
-[~] T-142  Canal de sugestões, críticas e problemas dos usuários, com resposta do admin  owner: claude   since: 2026-10-01T03:41Z
-[~] T-143  Relatório da campanha: página para imprimir/PDF e link para compartilhar  owner: claude   since: 2026-10-01T03:41Z
-[~] T-144  Início: clicar num dia do gráfico mostra os números daquele dia  owner: claude   since: 2026-10-01T03:41Z
+[x] T-142  Canal de sugestões, críticas e problemas dos usuários, com resposta do admin  owner: —   since: —
+[x] T-143  Relatório da campanha: página para imprimir/PDF e link para compartilhar  owner: —   since: —
+[x] T-144  Início: clicar num dia do gráfico mostra os números daquele dia  owner: —   since: —
 [x] T-141  Revisar concorrência na exclusão de conta, sessões web e encerramento do servidor  owner: —   since: —
 [x] T-125  Corrigir achados críticos de autenticação, concorrência e sessão; validar regressões  owner: —   since: —
 [!] T-126  Persistir eventos de entrega/recusa anteriores ao envio; aguarda aprovação da migration  owner: —   since: —
@@ -75,7 +75,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [-] T-021  WhatsAppProvider instanciável por sessão (feita na T-100)  owner: —   since: —
 [-] T-022  Group.externalId único por sessão (feito por usuário na T-097)  owner: —   since: —
 [-] T-023  Fila BullMQ por sessão (substituída: fila no MySQL por número, T-095/T-105)  owner: —   since: —
-[~] T-024  Criptografar credenciais de sessão em repouso  owner: claude   since: 2026-10-01T03:41Z
+[x] T-024  Criptografar credenciais de sessão em repouso (ADR-046, opcional por SESSION_KEY)  owner: —   since: —
 ```
 
 ## Fase 4 — Operação

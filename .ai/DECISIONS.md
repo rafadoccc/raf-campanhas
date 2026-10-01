@@ -1205,3 +1205,55 @@ ocupada para sempre.
 - **Faxina** (a cada minuto): PROCESSING com `attemptedAt` há mais de 7 min que não está saindo
   neste processo vira o mesmo FAILED incerto (`releaseStuckSends`). Pega qualquer caso que
   escape do vigia. A partida continua marcando todo PROCESSING como incerto.
+
+---
+
+## ADR-045 · Relatório da campanha, resumo por dia e canal de sugestões e críticas
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev
+
+Pedidos do dono para vender o sistema: mostrar o resultado de uma campanha a quem não tem login,
+ver os números de um dia passado e ter um lugar para os usuários sugerirem e reclamarem (ele quer
+lançar uma atualização por semana, guiada por esse retorno).
+
+- **Relatório** (`report.ts`): `GET /api/campaigns/:id/report` (dono) devolve só NÚMEROS: totais
+  (envios, entregues, falhas, fila, visualizações, alcance), por grupo e por dia. A página
+  `/campanhas/:id/relatorio` fica fora da moldura do painel e imprime inteira (`@media print` em
+  styles.css): "Imprimir ou salvar em PDF" usa a impressão do navegador, sem biblioteca de PDF.
+- **Link público:** coluna aditiva `Campaign.reportToken` (único, 32 caracteres aleatórios).
+  `POST/DELETE /api/campaigns/:id/report/share` cria e desativa; `GET /api/public/report/:token` é
+  a única rota pública nova (entra em `PUBLIC_API` pelo padrão da rota casada). O link nunca
+  expõe texto de mensagem, mídia, telefone, id interno nem o dono; código errado, link desativado
+  e campanha excluída respondem o mesmo 404. O token fica em texto no banco (o dono precisa
+  copiá-lo de novo) e dá acesso só a contagens, revogável.
+- **Resumo do dia:** `GET /api/dashboard/day?date=AAAA-MM-DD` (só da conta, até 180 dias atrás, no
+  fuso de São Paulo): totais, envios por hora e por campanha. No Início, cada barra do gráfico é
+  um botão que abre esse resumo.
+- **Sugestões e críticas:** tabela nova `Feedback` (tipo, mensagem, situação, resposta), apagada em
+  cascata com a conta e incluída na exportação da LGPD. `POST/GET /api/feedback` (só os próprios,
+  5 por hora por conta); `GET/PATCH /api/admin/feedback` (administrador lê tudo, muda a situação
+  e responde). Tela `/sugestoes` no menu da conta e bloco na Administração.
+- Migration aditiva `20261001200000_feedback_and_report`.
+
+---
+
+## ADR-046 · Sessão do WhatsApp cifrada em repouso, opcional por SESSION_KEY
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev · **Fecha:** T-024
+
+A credencial e as chaves de cada número ficavam em JSON legível na pasta de sessões: quem copiasse
+a pasta ou um backup usava o WhatsApp do cliente.
+
+- **Opcional:** só com `SESSION_KEY` (32+ caracteres; a chave AES-256 sai dela por scrypt). Sem a
+  variável, nada muda: mesmos arquivos, mesmo formato do Baileys.
+- **Formato:** `enc:v1:` + base64(iv 12 | tag 16 | dados), AES-256-GCM, IV novo a cada gravação.
+  Vale para `creds.json`, `creds.json.bak` e todos os arquivos de chave; a gravação continua
+  atômica (ADR-036).
+- **Leitura dos dois formatos:** texto puro continua sendo lido com a chave ligada, e na primeira
+  abertura os arquivos antigos são regravados cifrados, um por vez. Não há passo manual.
+- **Chave errada ou ausente é ERRO, não "ilegível"** (`SessionKeyError`): `useDurableAuthState` para
+  antes de tocar em qualquer arquivo. Sem isso, o caminho de "credencial ilegível" da ADR-036
+  guardaria a sessão boa de lado e pediria QR. A conexão fica em erro com a mensagem (sem tentar
+  de novo), e `hasPairedSession` continua respondendo que há sessão.
+- **Limite:** protege cópia da pasta e backups. Não protege contra quem lê as variáveis de
+  ambiente do processo. Perder ou trocar a chave obriga a ler o QR de novo.
