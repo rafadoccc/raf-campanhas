@@ -21,6 +21,20 @@ export const NOTE_KINDS: { tipo: NoteKind; rotulo: string }[] = [
 
 export const RELEASES: Release[] = [
   {
+    versao: '26.10.1',
+    data: '2026-10-01',
+    grupos: [
+      { tipo: 'corrigido', itens: [
+        'Sair da conta enquanto outra tela atualiza não causa mais erro interno: a sessão encerrada continua encerrada.',
+        'Ao desligar o sistema, as últimas gravações da conexão terminam antes de fechar o banco. Uma gravação atrasada não desfaz a desconexão.',
+        'A limpeza de dados antigos usa a mesma referência de horário das campanhas e não executa duas limpezas ao mesmo tempo.',
+      ] },
+      { tipo: 'seguranca', itens: [
+        'Excluir a conta confere novamente a senha e o papel de administrador se eles mudarem durante a confirmação, preservando os dados nesse caso.',
+      ] },
+    ],
+  },
+  {
     versao: '26.09.8',
     data: '2026-09-30',
     grupos: [

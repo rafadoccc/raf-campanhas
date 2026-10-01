@@ -154,7 +154,8 @@ Baileys 7.0.0-rc14 ainda não trata (ver `apps/server/src/pairing.ts`).
 
 ## Testar e atualizar
 
-- `npm test`: testes sem banco nem WhatsApp (planejamento, relógio, pareamento, reconexão).
+- `npm test`: testes sem banco nem WhatsApp (planejamento, relógio, pareamento, reconexão,
+  persistência ao desligar, limpeza periódica e utilitários do painel).
 - `npm run test:integration`: cria um banco MySQL descartável (`campaign_test_*`), testa API,
   login, segurança, fila concorrente, recibos e o painel servido, e apaga o banco no fim.
 - `npm run lint`: TypeScript de todos os pacotes. `npm run build`: build completo.
@@ -163,6 +164,11 @@ Baileys 7.0.0-rc14 ainda não trata (ver `apps/server/src/pairing.ts`).
 
 Para atualizar, feche a janela do sistema e abra o `.exe` de novo: ele recompila o que mudou.
 Envio real e recibos de leitura só são validados com celular; os testes usam simulação.
+
+O desligamento aguarda as gravações de estado das conexões e a limpeza periódica em
+andamento antes de fechar o banco. A limpeza usa a mesma referência de horário da fila.
+A exclusão de conta confere senha e papel sob trava: se mudarem durante a confirmação,
+a operação é recusada sem apagar os dados. Veja a [revisão de robustez](docs/review-2026-10-01.md).
 
 ## Mídia opcional
 

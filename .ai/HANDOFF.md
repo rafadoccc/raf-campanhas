@@ -5,6 +5,32 @@
 
 ---
 
+## 2026-10-01T03:24Z · codex
+
+**Fiz:** revisão incremental de robustez (T-141): exclusão de conta serializada com troca
+de senha/papel, renovação de sessão revogada responde 401, limpeza usa `currentTime()`
+sem sobreposição e é aguardada no desligamento, conexões aguardam suas gravações ao parar
+ou desconectar. Commits de código: `947800f` e `0388895`. Notas 26.10.1 e relatório em docs.
+**Arquivos:** apps/server/src/{auth,legal,legal.test,main,integration.test,whatsapp-manager,whatsapp-manager.test}.ts,
+package.json, README.md, docs/review-2026-10-01.md, apps/web/src/lib/release-notes.ts, .ai/TASKS.md
+**Tarefas:** T-141 (concluída); T-126/T-049 preservadas.
+**Estado:** build e lint ok · 88 unitários + 7 do painel + 142 integrações passam em banco
+descartável. Nenhum envio real nem alteração no banco em uso. Sem migration/dependência nova.
+**Armadilhas:**
+- Trabalho feito no worktree isolado `raf-campanhas-review-fixes`, branch `review-20260930`.
+  A dev avançou com os ajustes do outro agente: rebase sobre `e976509` preservou tudo.
+- T-140 foi usado simultaneamente pelo outro agente para a interface; esta revisão foi
+  renumerada para T-141 antes de integrar. Nenhuma tarefa anterior foi sobrescrita.
+- Só publicar na dev. Não mover a main nem tags estáveis; o dono promove depois.
+- O teste de revogação substitui/restaura o delegate Prisma explicitamente: `mock.method`
+  não funciona nesse Proxy. O teste nunca opera no banco real.
+- T-126 aguarda aprovação de migration. O aviso de deepmerge-ts continua conforme ADRs;
+  não aplicar `npm audit fix` às cegas. WhatsApp real continua sem validação neste ciclo.
+**Próximo passo sugerido:** promover a dev fora de campanha, depois validar desconexão e
+recibos num grupo de teste autorizado. Detalhes em docs/review-2026-10-01.md.
+
+---
+
 ## 2026-10-01T03:15Z · claude
 
 **Fiz:** logo definitiva escolhida pelo dono: modelo "Puro" ("doc" leve em cinza + "drop" firme em
