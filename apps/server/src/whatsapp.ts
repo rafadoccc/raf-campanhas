@@ -3,7 +3,8 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { prisma, persistRead, flushPendingReads, applyServerEvent, type ServerEvent } from '@campaign/database';
 import { describeGroupForSend, mentionTargets, notSent, mentionAllMode, withMentionAllToken, mentionAllSample, DEFAULT_MENTION_ALL_TOKEN } from './send-context';
-import { writeAtomic } from './auth-state';
+import { writeAtomic, peekSessionJson } from './auth-state';
+import { SessionKeyError } from './session-crypto';
 import QRCode from 'qrcode';
 import { handleCompanionRegRefresh, withAdvSecret } from './pairing';
 import { closeAction, retryDelay, CODE } from './connection-policy';
@@ -123,10 +124,10 @@ export class WhatsAppProvider {
   /** Há uma sessão já pareada salva (ou a cópia de segurança dela)? Reconectar não exige QR. */
   async hasPairedSession() {
     for (const file of ['creds.json', 'creds.json.bak']) {
-      try {
-        const creds = JSON.parse(await readFile(path.join(this.authDir, file), 'utf8')) as { me?: { id?: string } };
-        if (creds.me?.id) return true;
-      } catch { /* ausente ou ilegível: tenta a cópia */ }
+      const creds = await peekSessionJson<{ me?: { id?: string } }>(path.join(this.authDir, file));
+      // Cifrada e sem a chave certa (ADR-046): há uma sessão ali. Dizer "não há" faria o sistema
+      // tratar a conta como nunca pareada; abrir a conexão mostra o erro da chave.
+      if (creds === 'locked' || creds?.me?.id) return true;
     }
     return false;
   }
@@ -308,7 +309,14 @@ export class WhatsAppProvider {
       // O motivo real vai para o log do servidor. Sem internet na partida (ou o WhatsApp Web fora
       // do ar), a conexão tenta de novo sozinha, espaçando, em vez de parar esperando um clique.
       console.error('[WhatsApp] Falha ao iniciar a conexão:', error instanceof Error ? error.message : error);
-      if (this.wanted && generation === this.generation) this.scheduleReconnect(retryDelay(this.retries), true);
+      // Sessão cifrada e SESSION_KEY ausente ou trocada (ADR-046): tentar de novo não resolve, e
+      // nada na pasta foi tocado. Para com o motivo; a correção é devolver a chave e reiniciar.
+      if (error instanceof SessionKeyError) {
+        this.wanted = false;
+        await this.lock?.release().catch(() => undefined);
+        this.data = { state: 'error', error: error.message };
+      }
+      else if (this.wanted && generation === this.generation) this.scheduleReconnect(retryDelay(this.retries), true);
       else this.data = { state: 'error', error: 'Falha ao iniciar a conexão com o WhatsApp. Confira a internet e clique em Conectar.' };
     } finally { this.starting = false; }
   }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { prisma } from '@campaign/database';
 import { legacyOwnerCandidate } from './legacy-session';
 import { legacyWhatsappSessionDir, whatsappSessionDir } from './session-paths';
+import { peekSessionJson } from './auth-state';
 
 // Migração da sessão global legada para a pasta do dono (ADR-024, Fase 4E).
 //
@@ -42,10 +43,8 @@ type Options = {
 export const migrationRecordPath = (ownerId: string, base?: string) => path.join(path.dirname(whatsappSessionDir(ownerId, base)), 'migracao-sessao-legada.json');
 
 async function paired(dir: string) {
-  try {
-    const creds = JSON.parse(await readFile(path.join(dir, 'creds.json'), 'utf8')) as { me?: { id?: string } };
-    return Boolean(creds.me?.id);
-  } catch { return false; }
+  const creds = await peekSessionJson<{ me?: { id?: string } }>(path.join(dir, 'creds.json'));
+  return creds !== null && creds !== 'locked' && Boolean(creds.me?.id);
 }
 
 export async function migrateLegacySession(options: Options = {}): Promise<MigrationOutcome> {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { SessionKeyError, isSealed, openText, sealText, sessionEncryptionEnabled } from './session-crypto';
 import type { AuthenticationCreds, AuthenticationState, SignalDataTypeMap } from '@whiskeysockets/baileys';
 
 // Sessão do WhatsApp em arquivos, à prova de queda (ADR-036). Mesmo formato e mesmos nomes de
@@ -71,12 +72,18 @@ export async function useDurableAuthState(folder: string, baileys: Baileys, log:
   if (!info) await mkdir(folder, { recursive: true, mode: 0o700 });
 
   const full = (file: string) => path.join(folder, fixFileName(file));
-  const parse = (text: string) => JSON.parse(text, baileys.BufferJSON.reviver);
-  const serialize = (value: unknown) => JSON.stringify(value, baileys.BufferJSON.replacer);
+  // Cifra em repouso (ADR-046): com SESSION_KEY, grava cifrado; lê cifrado ou texto puro. Arquivo
+  // cifrado sem a chave certa é ERRO (SessionKeyError), nunca "ilegível": senão uma chave trocada
+  // faria o sistema guardar a sessão boa de lado e pedir QR.
+  const parse = (text: string) => JSON.parse(openText(text), baileys.BufferJSON.reviver);
+  const serialize = (value: unknown) => sealText(JSON.stringify(value, baileys.BufferJSON.replacer));
 
   const readData = (file: string) => withLock(full(file), async () => {
     try { return parse(await readFile(full(file), 'utf8')); }
-    catch { return null; } // chave ausente ou ilegível: o Baileys pede de novo ao WhatsApp
+    catch (error) {
+      if (error instanceof SessionKeyError) throw error;
+      return null; // chave ausente ou ilegível: o Baileys pede de novo ao WhatsApp
+    }
   });
   const writeData = (value: unknown, file: string) => withLock(full(file), () => writeAtomic(full(file), serialize(value)));
   const removeData = (file: string) => withLock(full(file), () => unlink(full(file)).catch(() => undefined));
@@ -88,7 +95,10 @@ export async function useDurableAuthState(folder: string, baileys: Baileys, log:
   let creds: AuthenticationCreds | null = null;
   const tryRead = async (file: string) => {
     try { return parse(await readFile(file, 'utf8')) as AuthenticationCreds; }
-    catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : null; } // undefined = não existe; null = ilegível
+    catch (error) {
+      if (error instanceof SessionKeyError) throw error; // chave errada ou ausente: para aqui, sem mexer em nada
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : null; // undefined = não existe; null = ilegível
+    }
   };
   const main = await tryRead(credsFile);
   if (main) { creds = main; source = 'saved'; }
@@ -105,6 +115,24 @@ export async function useDurableAuthState(folder: string, baileys: Baileys, log:
       await renameWithRetry(credsFile, quarantine).catch(() => undefined);
       log(`[WhatsApp] creds.json ilegível em ${folder} e sem cópia de segurança; guardado como ${path.basename(quarantine)}. Será preciso ler o QR.`);
     }
+  }
+  // A chave acabou de ser ligada numa sessão que já existia em texto puro: cifra os arquivos que
+  // ficaram para trás (os que mudam já são regravados cifrados no uso normal). Um arquivo por vez,
+  // com a mesma gravação atômica; o que não for JSON válido fica como está.
+  let sealed = 0;
+  if (creds && sessionEncryptionEnabled()) {
+    for (const name of await readdir(folder)) {
+      if (!name.endsWith('.json') && name !== 'creds.json.bak') continue;
+      const file = path.join(folder, name);
+      await withLock(file, async () => {
+        const text = await readFile(file, 'utf8').catch(() => null);
+        if (text === null || isSealed(text)) return;
+        try { JSON.parse(text); } catch { return; }
+        await writeAtomic(file, sealText(text), name.startsWith('creds.json'));
+        sealed++;
+      }).catch(error => log(`[WhatsApp] Não foi possível cifrar ${name}: ${error instanceof Error ? error.message : error}`));
+    }
+    if (sealed) log(`[WhatsApp] Sessão em ${folder}: ${sealed} arquivo(s) passaram a ficar cifrados (SESSION_KEY).`);
   }
   const state: AuthenticationState = {
     creds: creds ?? baileys.initAuthCreds(),
@@ -140,5 +168,14 @@ export async function useDurableAuthState(folder: string, baileys: Baileys, log:
     await writeAtomic(backupFile, content, true);
   });
 
-  return { state, saveCreds, source };
+  return { state, saveCreds, source, sealed };
+}
+
+/**
+ * Lê um JSON da pasta de sessão, cifrado ou não, só para CONSULTA (ex.: "há sessão pareada?").
+ * 'locked' = está cifrado e a SESSION_KEY falta ou é outra.
+ */
+export async function peekSessionJson<T>(file: string): Promise<T | 'locked' | null> {
+  try { return JSON.parse(openText(await readFile(file, 'utf8'))) as T; }
+  catch (error) { return error instanceof SessionKeyError ? 'locked' : null; }
 }
