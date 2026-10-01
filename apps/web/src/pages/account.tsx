@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { PlanCard } from '../components/plan-notice';
 import { Alert, Badge, Button, Card, Field, Page, PageHeader, PasswordInput, IconDelete, IconDownload, IconPassword, buttonClass, useConfirm } from '../design';
 
 export default function AccountPage() {
@@ -26,6 +27,7 @@ export default function AccountPage() {
   return <Page>
     <div className="mx-auto w-full max-w-md space-y-4">
       <PageHeader title={user?.name ?? 'Minha conta'} subtitle={<span className="inline-flex items-center gap-2">{user?.email}<Badge tone={user?.role === 'SUPER_ADMIN' ? 'info' : 'neutral'}>{user?.role === 'SUPER_ADMIN' ? 'Administrador' : 'Usuário'}</Badge></span>} />
+      <PlanCard />
       <Card as="div" className="p-5">
         <form onSubmit={submit} className="space-y-4">
           <h2 className="text-sm font-semibold">Trocar senha</h2>

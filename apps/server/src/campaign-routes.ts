@@ -5,6 +5,7 @@ import { publicMessage, NotFoundError } from './security';
 import { mediaMetadata } from './media';
 import { isUncertainFailure } from './send-context';
 import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION, dueOrRunning } from '@campaign/database';
+import { assertCanSend } from './plans';
 
 // Reabre somente entregas ainda FAILED. O horário original já venceu quando o envio falhou;
 // mantê-lo preserva a chave única (campanha + grupo + horário) entre rodadas do mesmo grupo.
@@ -149,6 +150,8 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     const confirmUncertain = (request.body as { confirmUncertain?: unknown } | null)?.confirmUncertain === true;
     const userId = request.user!.id;
     try {
+      // Tentar de novo reabre a campanha: conta vencida ou pausada não envia (ADR-050).
+      await assertCanSend(userId, await currentTime());
       const outcome = await prisma.$transaction(async tx => {
         // A primeira leitura só identifica qual campanha travar. Estado e autorização são
         // revalidados depois do lock, inclusive se outro retry ou encerramento ganhou a disputa.
@@ -179,6 +182,7 @@ export function registerCampaignRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const userId = request.user!.id;
     try {
+      await assertCanSend(userId, await currentTime());
       const result = await prisma.$transaction(async tx => {
         await lockCampaign(tx, id);
         const campaign = await tx.campaign.findFirst({ where: { id, userId, deletedAt: null } });

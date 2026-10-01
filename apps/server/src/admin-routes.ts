@@ -5,6 +5,7 @@ import { publicMessage } from './security';
 import type { WhatsAppManager } from './whatsapp-manager';
 import { legacySessionOwnerId, type LegacyBridgeDeps } from './legacy-session';
 import { adminOverview } from './admin-overview';
+import { subscriptionSummary, todayOf } from './plans';
 
 // Painel do SUPER_ADMIN (ADR-027, Fase 6). Visão OPERACIONAL das contas: status, número
 // conectado e contagens. Nunca o conteúdo das campanhas ou mensagens, nunca QR nem senha.
@@ -40,6 +41,8 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
           sessions: { orderBy: { lastSeenAt: 'desc' }, take: 1, select: { lastSeenAt: true } },
           // Pedido de nova senha ainda sem link (ADR-047): o administrador gera e manda o link.
           passwordResets: { where: { tokenHash: null }, orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+          // Plano da conta (ADR-050): nome, valor, vencimento e pausa.
+          subscription: true,
           _count: { select: { campaigns: { where: { deletedAt: null, isTemplate: false } }, groups: { where: { active: true } } } },
         },
       }),
@@ -51,7 +54,8 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
         GROUP BY c.userId, d.status`,
       legacySessionOwnerId(legacy).catch(() => null),
     ]);
-    return users.map(({ sessions, passwordResets, _count, whatsapp, ...user }) => {
+    const today = todayOf(await currentTime());
+    return users.map(({ sessions, passwordResets, subscription, _count, whatsapp, ...user }) => {
       // Estado ao vivo quando a conexão está em memória; senão, o último registrado. Sem QR.
       const live = user.id === legacyOwner ? legacy.legacyProvider.status() : manager.peek(user.id)?.status();
       const count = (status: string) => Number(results.find(r => r.userId === user.id && r.status === status)?.n ?? 0);
@@ -59,6 +63,8 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
         ...user,
         lastSeenAt: sessions[0]?.lastSeenAt ?? null,
         passwordResetRequestedAt: passwordResets[0]?.createdAt ?? null,
+        // Administrador não tem plano: nunca vence nem é pausado.
+        plan: user.role === 'SUPER_ADMIN' ? null : subscriptionSummary(subscription, today),
         whatsapp: {
           state: live?.state ?? whatsapp?.state ?? 'disconnected',
           accountJid: live?.accountJid ?? whatsapp?.accountJid ?? null,

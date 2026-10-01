@@ -23,6 +23,7 @@ import Fastify from 'fastify';
 import { registerAuth } from './auth';
 import { registerPasswordReset } from './password-reset';
 import { collectAlerts, deliverAlerts, registerAlertRoutes, parsePhone, ALERT_EXPIRY_MS } from './owner-alerts';
+import { pauseBlockedAccounts, planOf, todayOf } from './plans';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -3616,26 +3617,122 @@ test('number protection: the same group waits the group interval', async () => {
   assert.ok(await claimDelivery(prisma, next.id, spTime('2026-10-01', '12:00')), '2 h depois sai');
 });
 
-test('number protection: rules are per account, validated, only the administrator sees or changes them, and saving never touches another account', async () => {
-  const a = await lgpdUser('regras-a@teste.local', 'SUPER_ADMIN');
-  const b = await lgpdUser('regras-b@teste.local');
-  // Cliente comum não vê nem muda as regras (ADR-049); elas continuam valendo para a conta dele.
-  assert.equal((await b.call('GET', '/api/sending-policy')).statusCode, 403);
-  assert.equal((await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: { quiet: { enabled: false }, dailyLimit: null, groupGapMinutes: null, autoPause: false }, headers: as(b.session) })).statusCode, 403);
-  const initial = (await a.call('GET', '/api/sending-policy')).json();
+test('number protection: only the administrator sees or changes the rules, account by account, and saving never touches another account', async () => {
+  const admin = await lgpdUser('regras-a@teste.local', 'SUPER_ADMIN');
+  const client = await lgpdUser('regras-b@teste.local');
+  const other = await lgpdUser('regras-c@teste.local');
+  const rules = (id: string) => `/api/admin/users/${id}/sending-policy`;
+  const put = (who: typeof admin, id: string, payload: object) => app.inject({ method: 'PUT', url: rules(id), payload, headers: as(who.session) });
+  const allOff = { quiet: { enabled: false }, dailyLimit: null, groupGapMinutes: null, autoPause: true };
+  // Cliente comum não vê nem muda regra nenhuma, nem as da própria conta (ADR-049/050).
+  assert.equal((await client.call('GET', rules(client.user.id))).statusCode, 403);
+  assert.equal((await put(client, client.user.id, allOff)).statusCode, 403);
+  assert.equal((await admin.call('GET', '/api/sending-policy')).statusCode, 404, 'a rota antiga, da própria conta, saiu');
+  assert.equal((await admin.call('GET', rules('nao-existe'))).statusCode, 404);
+
+  const initial = (await admin.call('GET', rules(client.user.id))).json();
   assert.deepEqual(initial.defaults, { quiet: { enabled: true, start: '22:00', end: '08:00' }, dailyLimit: 150, groupGapMinutes: 120, autoPause: true });
   const body = { quiet: { enabled: true, start: '23:00', end: '07:30' }, dailyLimit: 200, groupGapMinutes: 180, autoPause: false };
   for (const bad of [{ ...body, dailyLimit: 5 }, { ...body, groupGapMinutes: 10 }, { ...body, quiet: { enabled: true, start: '25:00', end: '07:00' } }, { ...body, quiet: { enabled: true, start: '08:00', end: '08:00' } }]) {
-    assert.equal((await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: bad, headers: as(a.session) })).statusCode, 400, JSON.stringify(bad));
+    assert.equal((await put(admin, client.user.id, bad)).statusCode, 400, JSON.stringify(bad));
   }
-  const saved = await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: body, headers: as(a.session) });
+  const saved = await put(admin, client.user.id, body);
   assert.equal(saved.statusCode, 200, saved.body);
-  const stored = await prisma.sendingPolicy.findUniqueOrThrow({ where: { userId: a.user.id } });
+  const stored = await prisma.sendingPolicy.findUniqueOrThrow({ where: { userId: client.user.id } });
   assert.deepEqual([stored.quietStart, stored.quietEnd, stored.dailyLimit, stored.groupGapMinutes, stored.autoPause], [23 * 60, 7 * 60 + 30, 200, 180, false]);
-  assert.deepEqual((await a.call('GET', '/api/sending-policy')).json().quiet, body.quiet);
-  const off = await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: { quiet: { enabled: false }, dailyLimit: null, groupGapMinutes: null, autoPause: true }, headers: as(a.session) });
-  assert.equal(off.statusCode, 200, 'cada regra pode ser desligada');
-  assert.equal(await prisma.sendingPolicy.count({ where: { userId: b.user.id } }), 0, 'a outra conta não muda');
+  assert.deepEqual((await admin.call('GET', rules(client.user.id))).json().quiet, body.quiet);
+  assert.equal((await put(admin, client.user.id, allOff)).statusCode, 200, 'cada regra pode ser desligada');
+  assert.equal(await prisma.sendingPolicy.count({ where: { userId: { in: [other.user.id, admin.user.id] } } }), 0, 'só a conta escolhida muda');
+  // O administrador ajusta as regras da própria conta pelo mesmo caminho.
+  assert.equal((await put(admin, admin.user.id, body)).statusCode, 200);
+  assert.equal((await prisma.sendingPolicy.findUniqueOrThrow({ where: { userId: admin.user.id } })).dailyLimit, 200);
+});
+
+// ─── Planos por cliente (ADR-050) ───────────────────────────────────────────────
+test('plans (050): the administrator sets plan, due date, pause and groups per campaign; an expired or paused account keeps its data but cannot send', async () => {
+  await pauseEverything();
+  const admin = await lgpdUser('plano-admin@teste.local', 'SUPER_ADMIN');
+  const client = await lgpdUser('plano-cliente@teste.local');
+  const planUrl = `/api/admin/users/${client.user.id}/plan`;
+  const put = (payload: object, who = admin, url = planUrl) => app.inject({ method: 'PUT', url, payload, headers: as(who.session) });
+  const base = { plan: 'Mensal', priceCents: 14700, dueDate: null as string | null, paused: false, maxGroups: null as number | null };
+  const day = (offset: number) => new Date(Date.parse(`${todayOf(new Date())}T12:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+  const mine = async () => (await client.call('GET', '/api/plan')).json();
+
+  // Sem plano definido, nada vence e nada limita.
+  assert.deepEqual(await mine(), { plan: null, dueDate: null, daysLeft: null, state: 'active', maxGroups: null, message: null, dueSoonDays: 5 });
+  // Só o administrador define; o cliente nem lê pela rota do administrador.
+  assert.equal((await put(base, client)).statusCode, 403);
+  assert.equal((await client.call('GET', planUrl)).statusCode, 403);
+  for (const bad of [{ ...base, maxGroups: 0 }, { ...base, maxGroups: 501 }, { ...base, dueDate: '2026-13-40' }, { ...base, priceCents: -1 }, { ...base, plan: 'x'.repeat(41) }, { ...base, paused: 'sim' }]) {
+    assert.equal((await put(bad)).statusCode, 400, JSON.stringify(bad));
+  }
+  assert.equal((await put(base, admin, `/api/admin/users/${admin.user.id}/plan`)).statusCode, 400, 'administrador não tem plano');
+  assert.equal((await put(base, admin, '/api/admin/users/nao-existe/plan')).statusCode, 404);
+
+  // Grupos por campanha.
+  const groups = [];
+  for (let i = 0; i < 3; i++) groups.push(await prisma.group.create({ data: { name: `Plano ${i}`, userId: client.user.id, externalId: `plano-${Date.now()}-${i}@g.us` } }));
+  assert.equal((await put({ ...base, maxGroups: 2, dueDate: day(10) })).statusCode, 200);
+  const campaign = (groupIds: string[]) => client.call('POST', '/api/campaigns', { name: 'Do plano', mode: 'IMMEDIATE', messages: ['oi'], groupIds });
+  const tooMany = await campaign(groups.map(g => g.id));
+  assert.equal(tooMany.statusCode, 400);
+  assert.match(tooMany.json().error, /até 2 grupos por campanha \(esta tem 3\)/);
+  const created = await campaign(groups.slice(0, 2).map(g => g.id));
+  assert.equal(created.statusCode, 201, created.body);
+  const id = created.json().id as string;
+  const status = (next: string) => app.inject({ method: 'PATCH', url: `/api/campaigns/${id}/status`, payload: { status: next, provider: 'simulator' }, headers: as(client.session) });
+  const stateOf = async () => (await prisma.campaign.findUniqueOrThrow({ where: { id } })).status;
+
+  // O cliente vê o próprio plano, sem o valor combinado.
+  assert.deepEqual(await mine(), { plan: 'Mensal', dueDate: day(10), daysLeft: 10, state: 'active', maxGroups: 2, message: null, dueSoonDays: 5 });
+  assert.equal((await status('ACTIVE')).statusCode, 200);
+
+  // Vencida: salvar já pausa as campanhas, e a conta não retoma até renovar.
+  const expired = await put({ ...base, maxGroups: 2, dueDate: day(-1) });
+  assert.deepEqual([expired.json().state, expired.json().pausedCampaigns], ['expired', 1]);
+  assert.equal(await stateOf(), 'PAUSED');
+  const refused = await status('ACTIVE');
+  assert.equal(refused.statusCode, 400);
+  assert.match(refused.json().error, /assinatura venceu em \d\d\/\d\d/);
+  assert.equal((await mine()).state, 'expired');
+  assert.equal((await client.call('GET', '/api/campaigns')).statusCode, 200, 'a conta continua entrando e vendo tudo');
+  assert.equal((await client.call('POST', `/api/campaigns/${id}/retry-failed`, {})).statusCode, 400, 'tentar de novo também é envio');
+
+  // Renovada até hoje: vence só depois do dia de hoje.
+  assert.equal((await put({ ...base, maxGroups: 2, dueDate: day(0) })).json().state, 'active');
+  assert.equal((await mine()).daysLeft, 0);
+  assert.equal((await status('ACTIVE')).statusCode, 200);
+
+  // Plano com menos grupos do que a campanha já tem: ela não é retomada.
+  await status('PAUSED');
+  await put({ ...base, maxGroups: 1, dueDate: day(0) });
+  assert.match((await status('ACTIVE')).json().error, /até 1 grupo por campanha/);
+  await put({ ...base, dueDate: day(0) });
+  assert.equal((await status('ACTIVE')).statusCode, 200);
+
+  // Conta pausada pelo administrador (mês sem uso): mesma trava, com outra mensagem.
+  const paused = await put({ ...base, dueDate: day(30), paused: true });
+  assert.deepEqual([paused.json().state, paused.json().paused, paused.json().pausedCampaigns], ['paused', true, 1]);
+  assert.equal(await stateOf(), 'PAUSED');
+  assert.match((await status('ACTIVE')).json().error, /conta está pausada/);
+  assert.equal((await put({ ...base, dueDate: day(30) })).json().state, 'active');
+  assert.equal((await status('ACTIVE')).statusCode, 200);
+
+  // A conferência de cada minuto pega o vencimento que chega sozinho (virada do dia).
+  await prisma.subscription.update({ where: { userId: client.user.id }, data: { dueDate: new Date(`${day(-1)}T00:00:00.000Z`) } });
+  assert.equal(await stateOf(), 'ACTIVE');
+  assert.ok(await pauseBlockedAccounts(new Date()) >= 1);
+  assert.equal(await stateOf(), 'PAUSED');
+
+  // A lista de contas mostra o plano; administrador não tem plano nem é bloqueado.
+  const list = (await admin.call('GET', '/api/admin/users')).json() as { id: string; plan: { plan: string; priceCents: number; state: string } | null }[];
+  const row = list.find(u => u.id === client.user.id)!;
+  assert.deepEqual([row.plan?.plan, row.plan?.priceCents, row.plan?.state], ['Mensal', 14700, 'expired']);
+  assert.equal(list.find(u => u.id === admin.user.id)!.plan, null);
+  await prisma.subscription.create({ data: { userId: admin.user.id, pausedAt: new Date() } });
+  assert.equal((await planOf(admin.user.id, new Date())).blocked, null);
+  await pauseEverything();
 });
 
 test('number protection: a restriction signal pauses every active campaign of that account only, until resumed by hand', async () => {

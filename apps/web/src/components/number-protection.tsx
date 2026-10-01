@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api, errorMessage, type SafetyNotice } from '../lib/api';
-import { Alert, Button, ButtonLink, Card, Checkbox, Select, IconAlert, IconCampaigns, IconCheck, dataHora, inputClass, numero } from '../design';
+import { Alert, Button, ButtonLink, Checkbox, Select, IconAlert, IconCampaigns, IconCheck, dataHora, inputClass, numero } from '../design';
 
 // Proteção do número (ADR-041): regras que a fila respeita além do intervalo entre envios.
 // Um envio segurado por uma regra não falha: espera, e a previsão da campanha diz até quando.
+// Só o administrador vê e ajusta, conta por conta, na Administração (ADR-049, ADR-050).
 
 type Rules = { quiet: { enabled: boolean; start: string; end: string }; dailyLimit: number | null; groupGapMinutes: number | null; autoPause: boolean };
 type Policy = Rules & { defaults: Rules; limits: { dailyLimit: { min: number; max: number } }; today: number | null; todayLimit: number | null };
@@ -65,14 +66,15 @@ export function SafetyAlert({ notice, onDismissed }: { notice: SafetyNotice; onD
   </div>;
 }
 
-export function NumberProtection() {
+export function NumberProtection({ userId }: { userId: string }) {
+  const url = `/admin/users/${userId}/sending-policy`;
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [draft, setDraft] = useState<Rules | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [saved, setSaved] = useState(false);
   useEffect(() => {
-    api<Policy>('/sending-policy').then(p => { setPolicy(p); setDraft(p); }).catch(e => setError(errorMessage(e)));
-  }, []);
-  if (!policy || !draft) return <Card className="p-5"><p className="text-sm text-muted">{error || 'Carregando a proteção do número…'}</p></Card>;
+    api<Policy>(url).then(p => { setPolicy(p); setDraft(p); }).catch(e => setError(errorMessage(e)));
+  }, [url]);
+  if (!policy || !draft) return <p className="text-sm text-muted">{error || 'Carregando as regras de envio…'}</p>;
 
   const set = (patch: Partial<Rules>) => { setDraft({ ...draft, ...patch }); setSaved(false); };
   const { min, max } = policy.limits.dailyLimit;
@@ -80,7 +82,7 @@ export function NumberProtection() {
   async function save(next: Rules) {
     setBusy(true); setError('');
     try {
-      const stored = await api<Rules>('/sending-policy', { method: 'PUT', json: pick(next) });
+      const stored = await api<Rules>(url, { method: 'PUT', json: pick(next) });
       setPolicy({ ...policy!, ...stored }); setDraft(stored); setSaved(true);
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
@@ -88,10 +90,10 @@ export function NumberProtection() {
   const time = (value: string, onChange: (v: string) => void, label: string) =>
     <input type="time" aria-label={label} value={value} disabled={!draft.quiet.enabled} onChange={e => onChange(e.target.value)} className={shortInput} />;
 
-  return <Card className="space-y-4 p-5">
+  return <section className="space-y-4">
     <div className="space-y-1">
-      <h2 className="text-sm font-semibold">Proteção do número</h2>
-      <p className="text-xs text-muted">Regras para o WhatsApp não restringir o seu número. Um envio segurado por uma regra não falha: espera e sai assim que a regra liberar.</p>
+      <h3 className="text-sm font-semibold">Regras de envio</h3>
+      <p className="text-xs text-muted">Protegem o número desta conta contra restrição do WhatsApp. Um envio segurado por uma regra não falha: espera e sai assim que a regra liberar.</p>
     </div>
     {error && <Alert>{error}</Alert>}
 
@@ -124,14 +126,14 @@ export function NumberProtection() {
     </section>
 
     <Checkbox checked={draft.autoPause} onChange={autoPause => set({ autoPause })} label="Pausar sozinho se o WhatsApp der sinal de restrição"
-      hint="Número recusado, envios limitados ou várias mensagens recusadas em 1 hora: pausa todas as campanhas e avisa aqui. Retomar é com você." />
+      hint="Número recusado, envios limitados ou várias mensagens recusadas em 1 hora: pausa todas as campanhas da conta e avisa o cliente no painel. Retomar é com ele." />
 
     <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
       <Button variant="primary" loading={busy} disabled={busy || !changed || (draft.dailyLimit !== null && (draft.dailyLimit < min || draft.dailyLimit > max))} onClick={() => void save(draft)}>Salvar regras</Button>
       <Button variant="ghost" disabled={busy} onClick={() => { setDraft(policy.defaults); setSaved(false); }}>Voltar ao recomendado</Button>
       {saved && !changed && <span className="inline-flex items-center gap-1 text-xs text-brand-700"><IconCheck className="h-3.5 w-3.5" aria-hidden />Salvo</span>}
     </div>
-  </Card>;
+  </section>;
 }
 
 const pick = ({ quiet, dailyLimit, groupGapMinutes, autoPause }: Rules): Rules => ({ quiet, dailyLimit, groupGapMinutes, autoPause });

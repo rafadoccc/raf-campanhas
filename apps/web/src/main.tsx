@@ -8,6 +8,7 @@ import { ConfirmProvider } from './design';
 import DashboardPage from './pages/dashboard';
 import LoginPage from './pages/login';
 import { TermsGate } from './components/terms-gate';
+import { PlanNotice } from './components/plan-notice';
 
 // Aba aberta antes de uma atualização do sistema: os arquivos antigos da tela já não existem.
 // Recarrega UMA vez para pegar a versão nova, em vez de ficar em branco. Se recarregou há
@@ -94,6 +95,8 @@ function RequireAuth() {
   // relative + overflow-hidden: nada escapa da moldura e o documento nunca rola (o menu fica fixo).
   return <div className="relative flex h-dvh flex-col overflow-hidden">
     <Navigation />
+    {/* Assinatura para vencer, vencida ou conta pausada (ADR-050). */}
+    <PlanNotice />
     <div className="scroll-area min-h-0 flex-1 overflow-y-auto">
       <Suspense fallback={<Pending />}><Outlet /></Suspense>
     </div>

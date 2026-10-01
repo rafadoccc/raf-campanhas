@@ -279,6 +279,24 @@ model User {
   passwordResets PasswordReset[]
   alertSettings AlertSettings?
   alerts       OwnerAlert[]
+  subscription Subscription?
+}
+
+// Plano da conta (ADR-050). Sem linha = sem plano definido: nada vence e nada limita. Só o
+// administrador escreve aqui; a cobrança em si acontece fora do sistema.
+model Subscription {
+  userId     String    @id
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Nome livre do plano ("Mensal", "Fundador") e valor combinado em centavos: controle do administrador.
+  plan       String?   @db.VarChar(40)
+  priceCents Int?
+  // Último dia pago, no calendário de São Paulo. Depois dele a conta não envia. null = sem vencimento.
+  dueDate    DateTime? @db.Date
+  // Conta pausada pelo administrador (mês sem uso): guarda tudo, mas não envia.
+  pausedAt   DateTime?
+  // Grupos por campanha que o plano permite. null = sem limite do plano.
+  maxGroups  Int?
+  updatedAt  DateTime  @updatedAt
 }
 
 // Avisos no WhatsApp do dono (ADR-048): preferência da conta. Sem linha = desligado.

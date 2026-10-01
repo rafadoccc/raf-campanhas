@@ -3,10 +3,11 @@ import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
 import { AdminFeedback } from '../components/admin-feedback';
+import { AccountPlanDialog, planBadge, type PlanSummary } from '../components/account-plan';
 import {
   Alert, Badge, Button, ButtonLink, Card, CardHeader, Dot, EmptyState, Field, Menu, Page, PageHeader, PasswordInput, Segmented, Select, Skeleton, Stat,
   IconActivity, IconAddUser, IconAdmin, IconCampaigns, IconDelete, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
-  IconCheck, IconLogout, IconPassword, IconQueue, IconSearch, IconSent, IconServer, IconShare, IconSystem, IconWhatsApp,
+  IconCheck, IconLogout, IconPassword, IconPlan, IconQueue, IconSearch, IconSent, IconServer, IconShare, IconSystem, IconWhatsApp,
   dataHora, horaSeg, inputClass, numero, useConfirm, type MenuItem,
 } from '../design';
 
@@ -18,6 +19,8 @@ type AdminUser = {
   id: string; email: string; name: string; role: 'SUPER_ADMIN' | 'USER'; disabledAt: string | null; createdAt: string; lastSeenAt: string | null;
   /** A pessoa clicou em "Esqueci minha senha" e ainda não há link (ADR-047). */
   passwordResetRequestedAt: string | null;
+  /** Plano da conta (ADR-050); null para administrador, que não tem plano. */
+  plan: PlanSummary | null;
   whatsapp: { state: string; accountJid: string | null; lastConnectedAt: string | null; lastError: string | null; legacySession: boolean };
   counts: { campaigns: number; activeCampaigns: number; groups: number; sent: number; failed: number };
 };
@@ -208,11 +211,15 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
   // sabendo a senha, só entrega o link (pelo WhatsApp, por exemplo).
   const [resetLink, setResetLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // Janela "Plano e regras" (ADR-050): vencimento, pausa, grupos por campanha e regras de envio.
+  const [planning, setPlanning] = useState(false);
+  const badge = planBadge(user.plan);
   const createResetLink = () => run(async () => {
     setCopied(false); setResetting(false);
     setResetLink(await api<{ url: string; expiresAt: string }>(`/admin/users/${user.id}/reset-link`, { method: 'POST', json: {} }));
   });
   const actions: MenuItem[] = [
+    { label: user.role === 'SUPER_ADMIN' ? 'Regras de envio' : 'Plano e regras', icon: IconPlan, onSelect: () => setPlanning(true) },
     { label: 'Gerar link de nova senha', icon: IconShare, onSelect: () => void createResetLink() },
     { label: 'Encerrar sessões', icon: IconLogout, onSelect: () => void forceLogout() },
     ...(wa.state === 'connected' ? [{ label: 'Desconectar WhatsApp', icon: IconDisconnect, onSelect: () => void stopWhatsApp() }] : []),
@@ -235,6 +242,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
             {self && <Badge tone="brand">Você</Badge>}
             {user.role === 'SUPER_ADMIN' && <Badge tone="info">Admin</Badge>}
             {disabled && <Badge tone="danger">Desativada</Badge>}
+            {badge && <Badge tone={badge.tone} title={badge.title}>{badge.label}</Badge>}
             {user.passwordResetRequestedAt && !resetLink && <Badge tone="warning" title={`Pediu em ${dataHora(user.passwordResetRequestedAt)}. Use "Gerar link de nova senha" no menu de ações.`}>Pediu nova senha</Badge>}
           </p>
           <p className="truncate text-xs text-muted" title={user.email}>{user.email}</p>
@@ -254,7 +262,10 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
       </dl>
       <div className="flex items-center justify-end gap-1.5">
         {self
-          ? <ButtonLink to="/conta" size="sm" icon={IconPassword} title="A sua senha é trocada em Minha conta">Minha senha</ButtonLink>
+          ? <>
+            <ButtonLink to="/conta" size="sm" icon={IconPassword} title="A sua senha é trocada em Minha conta">Minha senha</ButtonLink>
+            <Menu label="Mais ações para a sua conta" items={[actions[0]]} />
+          </>
           : <>
             <Button size="sm" icon={IconPassword} disabled={busy} aria-expanded={resetting} onClick={() => { setResetting(v => !v); setNotice(''); }}>Alterar senha</Button>
             <Menu label={`Mais ações para ${user.name}`} items={actions} disabled={busy} />
@@ -280,6 +291,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
     </div>}
     {notice && <div className="mt-2"><Alert tone="brand">{notice}</Alert></div>}
     {error && <div className="mt-2"><Alert>{error}</Alert></div>}
+    {planning && <AccountPlanDialog user={user} onClose={() => setPlanning(false)} onSaved={onChanged} />}
   </li>;
 }
 

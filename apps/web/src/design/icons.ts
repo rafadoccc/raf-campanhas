@@ -66,4 +66,5 @@ export {
   ChartColumn as IconReport,
   Bookmark as IconTemplate,
   ListChecks as IconList,
+  SlidersHorizontal as IconPlan,
 } from 'lucide-react';

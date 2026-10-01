@@ -78,6 +78,8 @@ export async function exportAccount(userId: string) {
       id: true, email: true, name: true, role: true, createdAt: true, termsAcceptedAt: true, termsVersion: true,
       sessions: { orderBy: { createdAt: 'desc' }, select: { createdAt: true, lastSeenAt: true, expiresAt: true, ip: true, userAgent: true } },
       whatsapp: { select: { accountJid: true, state: true, lastConnectedAt: true } },
+      // Plano da conta (ADR-050), sem o valor combinado (controle do administrador).
+      subscription: { select: { plan: true, dueDate: true, pausedAt: true, maxGroups: true } },
     },
   });
   const [alerts, lists, feedback, groups, media, campaigns] = await Promise.all([
@@ -101,13 +103,14 @@ export async function exportAccount(userId: string) {
       },
     }),
   ]);
-  const { sessions, whatsapp, ...account } = user;
+  const { sessions, whatsapp, subscription, ...account } = user;
   return {
     sistema: PRODUCT_NAME,
     geradoEm: new Date().toISOString(),
     conta: account,
     acessos: sessions,
     whatsapp,
+    plano: subscription,
     avisos: alerts ? { ligados: alerts.enabled, numero: alerts.phone } : null,
     grupos: groups,
     listasDeGrupos: lists.map(list => ({ nome: list.name, criadaEm: list.createdAt, grupos: list.items.map(item => item.group.name) })),

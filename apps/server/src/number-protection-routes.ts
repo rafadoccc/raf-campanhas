@@ -45,12 +45,14 @@ function parse(body: unknown): SendingRules {
 
 /** `accountOf`: número conectado da conta agora (para mostrar o uso do dia). */
 export function registerNumberProtectionRoutes(app: FastifyInstance, accountOf: (userId: string) => Promise<string | null>) {
-  // Ver e mudar as regras é só do administrador (ADR-049): o cliente não escolhe o próprio limite.
-  // As regras continuam valendo para todas as contas; o que muda é quem enxerga e ajusta.
+  // Ver e mudar as regras é só do administrador, na Administração, conta por conta (ADR-049,
+  // ADR-050): o cliente não escolhe o próprio limite. As regras valem para todas as contas.
   const adminOnly = { preHandler: requireSuperAdmin };
+  const exists = async (id: string) => Boolean(await prisma.user.findUnique({ where: { id }, select: { id: true } }));
 
-  app.get('/api/sending-policy', adminOnly, async request => {
-    const userId = request.user!.id;
+  app.get('/api/admin/users/:id/sending-policy', adminOnly, async (request, reply) => {
+    const { id: userId } = request.params as { id: string };
+    if (!await exists(userId)) return reply.code(404).send({ error: 'Usuário não encontrado.' });
     const account = await accountOf(userId);
     const now = await currentTime();
     const rules = await rulesFor(prisma, userId, account);
@@ -59,14 +61,15 @@ export function registerNumberProtectionRoutes(app: FastifyInstance, accountOf: 
     return { ...view(rules), defaults: view(DEFAULT_RULES), limits: RULE_LIMITS, today, todayLimit: dailyLimitOn(rules, now), warmup: await warmupStatus(userId, account, now) };
   });
 
-  app.put('/api/sending-policy', adminOnly, async (request, reply) => {
+  app.put('/api/admin/users/:id/sending-policy', adminOnly, async (request, reply) => {
+    const { id: userId } = request.params as { id: string };
+    if (!await exists(userId)) return reply.code(404).send({ error: 'Usuário não encontrado.' });
     let rules: SendingRules;
     try { rules = parse(request.body); }
     catch (error) {
       if (error instanceof RuleError) return reply.code(400).send({ error: error.message });
       throw error;
     }
-    const userId = request.user!.id;
     await prisma.sendingPolicy.upsert({ where: { userId }, update: rules, create: { userId, ...rules } });
     // Regra afrouxada vale na hora: a fila esquece quem estava segurando e confere de novo.
     releaseRuleHolds();

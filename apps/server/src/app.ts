@@ -21,6 +21,7 @@ import { registerFeedbackRoutes } from './feedback-routes';
 import { registerPasswordReset } from './password-reset';
 import { registerGroupListRoutes } from './group-lists';
 import { registerAlertRoutes } from './owner-alerts';
+import { registerPlanRoutes, assertCanSend, assertGroupLimit } from './plans';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -122,6 +123,8 @@ registerPasswordReset(app, config);
 registerGroupListRoutes(app);
 // Avisos no WhatsApp do dono (ADR-048): preferência da conta e aviso de teste.
 registerAlertRoutes(app, sending);
+// Plano da conta (ADR-050): vencimento, pausa e grupos por campanha, definidos pelo administrador.
+registerPlanRoutes(app);
 // Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
 registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
 // Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de
@@ -235,6 +238,9 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   // Só grupos do próprio usuário (o banco também recusa, pela chave composta de CampaignGroup).
   const groupsFound = await prisma.group.count({ where: { id: { in: groupIds }, active: true, userId: request.user!.id } });
   if (groupsFound !== new Set(groupIds).size) return reply.status(400).send({ error: 'Um ou mais grupos selecionados não existem ou estão inativos.' });
+  // Limite de grupos por campanha do plano da conta (ADR-050).
+  try { await assertGroupLimit(request.user!.id, groupIds.length, now); }
+  catch (error) { return reply.code(400).send({ error: publicMessage(error, 'Grupos demais para o plano.') }); }
 
   if (!template && mode === 'SCHEDULED' && !times.some(time => DateTime.fromISO(`${String(body.endsAt)}T${time}`, { zone: 'America/Sao_Paulo' }).toMillis() > now.getTime())) return reply.code(400).send({ error: 'Todos os horários já passaram no fuso de São Paulo. Escolha um horário futuro, outra data ou Fila única.' });
 
@@ -278,6 +284,8 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
   const next = body.status as 'ACTIVE' | 'PAUSED' | 'CANCELLED';
   try {
     await completeFinished(prisma);
+    // Conta vencida ou pausada não inicia nem retoma campanha (ADR-050). Pausar e encerrar, sim.
+    if (next === 'ACTIVE') await assertCanSend(request.user!.id, await currentTime());
     const updated = await prisma.$transaction(async tx => {
       await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id }, include: { groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
@@ -289,6 +297,8 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       let campaignProvider = campaign.provider; let accountJid = campaign.accountJid;
       const now = await currentTime(); let nextAvailableAt = campaign.nextAvailableAt;
       if (next === 'ACTIVE') {
+        // O plano pode ter mudado depois de a campanha ser montada (ou ela veio de uma cópia).
+        await assertGroupLimit(campaign.userId, campaign.groups.length, now);
         if (campaign.status === 'DRAFT') campaignProvider = body.provider ?? 'simulator';
         if (!['simulator', 'baileys'].includes(campaignProvider)) throw new Error('Provedor inválido.');
         if (campaignProvider === 'baileys') {

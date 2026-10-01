@@ -12,6 +12,7 @@ import { migrateLegacySession } from './session-migration';
 import { backfillMediaPreviews } from './media';
 import { startRetentionSweep } from './legal';
 import { startOwnerAlerts } from './owner-alerts';
+import { startPlanSweep } from './plans';
 
 async function main() {
   const config = loadConfig(process.env);
@@ -34,6 +35,7 @@ async function main() {
   let dispatcher: Dispatcher | undefined;
   let stopRetention: (() => Promise<void>) | undefined;
   let stopAlerts: (() => Promise<void>) | undefined;
+  let stopPlans: (() => Promise<void>) | undefined;
   const app = buildApp(provider, config, manager, () => dispatcher?.isActive() ?? false);
   let closing = false;
 
@@ -42,6 +44,7 @@ async function main() {
     closing = true;
     await stopRetention?.().catch(error => console.error('[LGPD] Falha ao encerrar limpeza:', error));
     await stopAlerts?.().catch(error => console.error('[Avisos] Falha ao encerrar:', error));
+    await stopPlans?.().catch(error => console.error('[Planos] Falha ao encerrar:', error));
     // Cada etapa roda mesmo se a anterior falhar: em especial, não deixa o processo vivo
     // sem API/fila após um erro de partida ou de renovação da posse.
     await dispatcher?.stop().catch(error => console.error('[Fila] Falha ao encerrar:', error));
@@ -87,6 +90,8 @@ async function main() {
   stopRetention = startRetentionSweep();
   // Avisos no WhatsApp do dono (ADR-048): campanha concluída e pausa automática.
   stopAlerts = startOwnerAlerts(router, config.publicUrl.origin);
+  // Planos (ADR-050): conta vencida ou pausada tem as campanhas pausadas, conferido a cada minuto.
+  stopPlans = startPlanSweep();
   if (!sessionsPersistent()) console.warn('[WhatsApp] ATENÇÃO: as sessões estão em', defaultSessionsDir(), 'que é apagado a cada deploy. Adicione um Volume no Railway (ex.: /data): o sistema passa a usá-lo sozinho e o WhatsApp não pede QR a cada atualização.');
   if (!config.webDist) console.warn('Painel não compilado (apps/web/dist ausente): só a API está disponível. Rode npm run build.');
   console.log(`Sistema pronto em ${config.publicUrl.origin} (escutando em ${config.host}:${config.port}). Conecte o WhatsApp pelo painel.`);

@@ -21,6 +21,20 @@ export const NOTE_KINDS: { tipo: NoteKind; rotulo: string }[] = [
 
 export const RELEASES: Release[] = [
   {
+    versao: '26.10.2',
+    data: '2026-10-01',
+    grupos: [
+      { tipo: 'novo', itens: [
+        '**Seu plano:** em Minha conta você vê o plano, até quando ele está pago e quantos grupos cabem numa campanha.',
+        'Um aviso aparece no topo do painel quando a assinatura está para vencer. Depois do vencimento, os envios ficam parados até a renovação; suas campanhas, grupos e modelos continuam guardados.',
+      ] },
+      { tipo: 'melhorado', itens: [
+        'A campanha mostra só a duração aproximada de cada rodada; o intervalo entre grupos continua automático.',
+        'Sugestões e críticas: o formulário avisa quando falta texto, em vez de deixar o botão apagado.',
+      ] },
+    ],
+  },
+  {
     versao: '26.10.1',
     data: '2026-10-01',
     grupos: [
