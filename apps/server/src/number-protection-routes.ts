@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma, rulesFor, sendsToday, currentTime, dailyLimitOn, warmupDay, DEFAULT_RULES, RULE_LIMITS, WARMUP_DAYS, type SendingRules } from '@campaign/database';
 import { releaseRuleHolds } from './dispatcher';
+import { requireSuperAdmin } from './auth';
 
 // Proteção do número (ADR-041): as regras de envio da conta e o aviso de pausa automática.
 // Tudo pelo usuário da sessão; nada do cliente escolhe de quem são as regras.
@@ -44,7 +45,11 @@ function parse(body: unknown): SendingRules {
 
 /** `accountOf`: número conectado da conta agora (para mostrar o uso do dia). */
 export function registerNumberProtectionRoutes(app: FastifyInstance, accountOf: (userId: string) => Promise<string | null>) {
-  app.get('/api/sending-policy', async request => {
+  // Ver e mudar as regras é só do administrador (ADR-049): o cliente não escolhe o próprio limite.
+  // As regras continuam valendo para todas as contas; o que muda é quem enxerga e ajusta.
+  const adminOnly = { preHandler: requireSuperAdmin };
+
+  app.get('/api/sending-policy', adminOnly, async request => {
     const userId = request.user!.id;
     const account = await accountOf(userId);
     const now = await currentTime();
@@ -54,7 +59,7 @@ export function registerNumberProtectionRoutes(app: FastifyInstance, accountOf: 
     return { ...view(rules), defaults: view(DEFAULT_RULES), limits: RULE_LIMITS, today, todayLimit: dailyLimitOn(rules, now), warmup: await warmupStatus(userId, account, now) };
   });
 
-  app.put('/api/sending-policy', async (request, reply) => {
+  app.put('/api/sending-policy', adminOnly, async (request, reply) => {
     let rules: SendingRules;
     try { rules = parse(request.body); }
     catch (error) {

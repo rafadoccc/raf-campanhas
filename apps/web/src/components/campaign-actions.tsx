@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { editAction, editCampaign } from '../lib/campaign-ops';
-import { Alert, Button, IconEdit, IconPause, IconReschedule, IconReuse, IconStart, IconStop, SEND_INTERVAL_LABEL, duracaoRodada, useConfirm } from '../design';
+import { Alert, Button, IconEdit, IconPause, IconReschedule, IconReuse, IconStart, IconStop, duracaoRodada, useConfirm } from '../design';
 
 type Props = { id: string; name: string; status: string; groupCount?: number; connectionState?: string; onChanged?: () => void };
 const editIcon = { edit: IconEdit, reuse: IconReuse, reschedule: IconReschedule } as const;
@@ -26,7 +26,7 @@ export function CampaignActions({ id, name, status, groupCount = 0, connectionSt
     if (next === 'ACTIVE') {
       const ok = await confirm({
         title: status === 'PAUSED' ? 'Retomar a campanha?' : 'Iniciar a campanha?',
-        description: `${groupCount} grupos, um a cada ${SEND_INTERVAL_LABEL} (${duracaoRodada(groupCount)} por rodada). Confirmo que os grupos autorizaram estas mensagens.`,
+        description: `${groupCount} grupos, ${duracaoRodada(groupCount)} por rodada. Confirmo que os grupos autorizaram estas mensagens.`,
         confirmLabel: status === 'PAUSED' ? 'Retomar' : 'Iniciar',
       });
       if (!ok) return;

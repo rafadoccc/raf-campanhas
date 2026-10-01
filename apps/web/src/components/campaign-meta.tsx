@@ -37,7 +37,7 @@ export function CampaignMeta({ groups, mode, schedules, startsAt, endsAt, mentio
       ? <Item icon={IconClock}>Fila única</Item>
       : <Item icon={IconClock} title={`Horários: ${times.join(', ')}`}><span className="tabular">{shown}</span></Item>}
     {!immediate && period && <Item icon={IconPeriod}><span className="tabular">{period}</span></Item>}
-    {detailed && groups > 1 && <Item icon={IconQueue} title="Tempo aproximado para passar por todos os grupos. O intervalo entre grupos é sorteado a cada envio.">{duracaoRodada(groups)} por rodada</Item>}
+    {detailed && groups > 1 && <Item icon={IconQueue} title="Tempo aproximado para passar por todos os grupos.">{duracaoRodada(groups)} por rodada</Item>}
     {mentionAll && <Item icon={IconMention}>Marca todos</Item>}
     {simulated && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-2xs">simulação</span>}
   </div>;

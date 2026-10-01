@@ -2883,7 +2883,7 @@ test('minimum interval (028): the API refuses less than 2 minutes and the queue 
   }
 });
 
-test('random interval (042): outside the test floor, each send waits a drawn 1:45 to 3:00, whatever the campaign says', async () => {
+test('random interval (042): outside the test floor, each send waits a drawn 1:30 to 3:00, whatever the campaign says', async () => {
   const previous = process.env.SEND_INTERVAL_FLOOR_SECONDS;
   delete process.env.SEND_INTERVAL_FLOOR_SECONDS; // como em produção
   try {
@@ -2896,7 +2896,7 @@ test('random interval (042): outside the test floor, each send waits a drawn 1:4
       await finishDelivery(prisma, row.id, { providerId: `3EBSORTEIO${round}`, context: '' }, at);
       const number = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: ACCOUNT } });
       const wait = (number.nextAvailableAt!.getTime() - at.getTime()) / 1000;
-      assert.ok(wait >= 105 && wait <= 180, `espera sorteada fora da faixa: ${wait} s`);
+      assert.ok(wait >= 90 && wait <= 180, `espera sorteada fora da faixa: ${wait} s`);
       assert.equal(number.lastIntervalSeconds, wait);
       waits.add(wait);
     }
@@ -3616,9 +3616,12 @@ test('number protection: the same group waits the group interval', async () => {
   assert.ok(await claimDelivery(prisma, next.id, spTime('2026-10-01', '12:00')), '2 h depois sai');
 });
 
-test('number protection: rules are per account, validated, and saving them never touches another account', async () => {
-  const a = await lgpdUser('regras-a@teste.local');
+test('number protection: rules are per account, validated, only the administrator sees or changes them, and saving never touches another account', async () => {
+  const a = await lgpdUser('regras-a@teste.local', 'SUPER_ADMIN');
   const b = await lgpdUser('regras-b@teste.local');
+  // Cliente comum não vê nem muda as regras (ADR-049); elas continuam valendo para a conta dele.
+  assert.equal((await b.call('GET', '/api/sending-policy')).statusCode, 403);
+  assert.equal((await app.inject({ method: 'PUT', url: '/api/sending-policy', payload: { quiet: { enabled: false }, dailyLimit: null, groupGapMinutes: null, autoPause: false }, headers: as(b.session) })).statusCode, 403);
   const initial = (await a.call('GET', '/api/sending-policy')).json();
   assert.deepEqual(initial.defaults, { quiet: { enabled: true, start: '22:00', end: '08:00' }, dailyLimit: 150, groupGapMinutes: 120, autoPause: true });
   const body = { quiet: { enabled: true, start: '23:00', end: '07:30' }, dailyLimit: 200, groupGapMinutes: 180, autoPause: false };

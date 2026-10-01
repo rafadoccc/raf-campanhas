@@ -46,16 +46,16 @@ test('intervalo por grupo: 2 h depois do último envio ao grupo; se cair no sil�
   assert.equal(ruleBlock({ ...rules, groupGapMinutes: null }, at, 0, sp('2026-10-01', '10:59')), null, 'desligado');
 });
 
-test('intervalo sorteado a cada envio entre 1 min 45 s e 3 min, ignorando o que a campanha tinha', () => {
-  assert.deepEqual(SEND_INTERVAL, { min: 105, max: 180 });
-  assert.equal(drawInterval(600, () => 0), 105, 'menor sorteio');
+test('intervalo sorteado a cada envio entre 1 min 30 s e 3 min, ignorando o que a campanha tinha', () => {
+  assert.deepEqual(SEND_INTERVAL, { min: 90, max: 180 });
+  assert.equal(drawInterval(600, () => 0), 90, 'menor sorteio');
   assert.equal(drawInterval(600, () => 0.9999), 180, 'maior sorteio');
   const draws = new Set(Array.from({ length: 300 }, () => drawInterval(120)));
-  assert.ok([...draws].every(s => s >= 105 && s <= 180), 'sempre dentro da faixa');
+  assert.ok([...draws].every(s => s >= 90 && s <= 180), 'sempre dentro da faixa');
   assert.ok(draws.size > 20, 'varia de verdade (não é um ritmo fixo)');
-  assert.equal(minimumInterval(600), 105);
+  assert.equal(minimumInterval(600), 90);
   assert.equal(maximumInterval(60), 180);
-  assert.equal(TYPICAL_INTERVAL_SECONDS, 143, 'média usada nas previsões');
+  assert.equal(TYPICAL_INTERVAL_SECONDS, 135, 'média usada nas previsões');
 });
 
 test('aquecimento: 30 envios/dia nos dias 1-3, 80 nos dias 4-7, depois o limite da conta', () => {

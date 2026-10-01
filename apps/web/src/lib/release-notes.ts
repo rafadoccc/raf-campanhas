@@ -52,14 +52,14 @@ export const RELEASES: Release[] = [
     data: '2026-09-30',
     grupos: [
       { tipo: 'novo', itens: [
-        '**Proteção do número:** regras para o WhatsApp não restringir o seu número, ajustáveis na tela WhatsApp.',
+        '**Proteção do número:** regras automáticas para o WhatsApp não restringir o seu número.',
         '**Horário de silêncio:** nada sai entre 22h e 8h; o que estiver na fila espera e sai às 8h.',
-        'Limite de envios por dia por número (150, ajustável) e intervalo mínimo de 2 horas antes de mandar de novo para o mesmo grupo.',
+        'Limite de envios por dia por número (150) e intervalo mínimo de 2 horas antes de mandar de novo para o mesmo grupo.',
         '**Pausa automática:** se o WhatsApp der sinal de restrição, as campanhas pausam e um aviso aparece no Início.',
         '**Aquecimento de número novo:** ao conectar um chip novo, o sistema começa com 30 envios por dia e aumenta sozinho em 7 dias.',
       ] },
       { tipo: 'melhorado', itens: [
-        'O intervalo entre grupos agora é sorteado entre 1 min 45 s e 3 min a cada envio, para não parecer robô. Não é mais preciso escolher.',
+        'O intervalo entre grupos agora é automático e varia a cada envio, para não parecer robô. Não é mais preciso escolher.',
         'A campanha mostra por volta de que horas sai o próximo envio e quanto tempo leva cada rodada.',
       ] },
       { tipo: 'corrigido', itens: [

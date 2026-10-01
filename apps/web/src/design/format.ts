@@ -8,9 +8,8 @@ export const dataHora = (at: string | Date) => new Intl.DateTimeFormat('pt-BR', 
 /** Datas de campanha são gravadas como meia-noite UTC do dia escolhido. */
 export const dia = (at: string | Date) => new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(new Date(at));
 export const numero = (n: number) => n.toLocaleString('pt-BR');
-/** Intervalo entre grupos (ADR-042): o sistema sorteia a cada envio, ninguém escolhe. */
-export const SEND_INTERVAL_LABEL = '1 min 45 s a 3 min';
-const TYPICAL_INTERVAL_SECONDS = 143; // média do sorteio (TYPICAL_INTERVAL_SECONDS no servidor)
+/** Intervalo entre grupos (ADR-042): o sistema sorteia a cada envio e a tela não mostra a faixa, só a duração. */
+const TYPICAL_INTERVAL_SECONDS = 135; // média do sorteio (TYPICAL_INTERVAL_SECONDS no servidor)
 /** Duração aproximada de uma rodada: "~24 min", "~1 h 12 min". */
 export const duracaoRodada = (groups: number) => {
   const minutes = Math.round(Math.max(0, groups - 1) * TYPICAL_INTERVAL_SECONDS / 60);

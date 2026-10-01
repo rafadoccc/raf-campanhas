@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, type SafetyNotice } from '../lib/api';
 import { NumberProtection, SafetyAlert, WarmupPanel, type Warmup } from '../components/number-protection';
 import { OwnerAlerts } from '../components/owner-alerts';
+import { useAuth } from '../lib/auth';
 import { startVisiblePolling, connectionPollDelay } from '../lib/visible-polling';
 import { screenCache } from '../lib/cache';
 import { Alert, Button, Card, Dot, Page, PageHeader, IconOpen, IconRefresh, IconWhatsApp, IconDisable, hora, useConfirm } from '../design';
@@ -17,6 +18,8 @@ const SYNC_COOLDOWN_MS = 30_000;
 // servidor sincroniza os grupos sozinho (ADR-035) e a tela avisa quando terminar.
 export default function Settings() {
   const confirm = useConfirm();
+  // As regras de proteção do número são só do administrador (ADR-049); o cliente vê a conexão e os avisos.
+  const admin = useAuth().user?.role === 'SUPER_ADMIN';
   // null = ainda conferindo (antes aparecia "Desconectado" até a primeira resposta chegar).
   const [connection, setConnection] = useState<Connection | null>(() => screenCache.get<Connection>('whatsapp') ?? null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -117,7 +120,7 @@ export default function Settings() {
           {connected && cooldown > 0 && <p className="tabular text-2xs text-slate-400" aria-live="polite">Sincronizar de novo disponível em {Math.ceil(cooldown / 1000)} s.</p>}
         </div>
       </Card>
-      <NumberProtection />
+      {admin && <NumberProtection />}
       <OwnerAlerts connected={connected} />
       <p className="text-2xs text-muted">As campanhas rodam com o navegador fechado, desde que o sistema fique ligado.</p>
     </div>

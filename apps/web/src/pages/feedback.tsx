@@ -7,6 +7,8 @@ import { Alert, Badge, Button, Card, EmptyState, Field, Page, PageHeader, Segmen
 // Sugestões e críticas (ADR-045): o usuário conta o que quer, o que quebrou ou o que incomoda, e
 // acompanha aqui a situação e a resposta. Só os próprios envios aparecem.
 
+const MIN_LENGTH = 10;
+
 export default function FeedbackPage() {
   const [kind, setKind] = useState<FeedbackKind>('sugestao');
   const [message, setMessage] = useState('');
@@ -17,7 +19,10 @@ export default function FeedbackPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true); setError(''); setSent(false);
+    setSent(false);
+    // Botão sempre ativo: desativado em silêncio, a pessoa não sabia o que faltava.
+    if (message.trim().length < MIN_LENGTH) { setError(`Conte um pouco mais: escreva pelo menos ${MIN_LENGTH} caracteres.`); return; }
+    setBusy(true); setError('');
     try {
       const created = await api<Feedback>('/feedback', { method: 'POST', json: { kind, message } });
       setItems(current => [created, ...(current ?? [])]);
@@ -31,17 +36,17 @@ export default function FeedbackPage() {
     <div className="mx-auto w-full max-w-2xl space-y-4">
       <PageHeader title="Sugestões e críticas" subtitle={<>O que você escrever aqui chega direto para quem cuida do sistema. As novidades saem nas <Link to="/notas" className="underline">notas de atualização</Link>.</>} />
       <Card as="div" className="p-5">
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={submit} noValidate className="space-y-4">
           <div>
             <span className="mb-1 block text-xs font-medium text-muted">Sobre o que é?</span>
             <Segmented label="Tipo da mensagem" value={kind} onChange={setKind} options={feedbackKinds} />
           </div>
-          <Field label="Sua mensagem" hint={`${message.length} de ${FEEDBACK_MAX_LENGTH} caracteres`}>
-            <textarea required minLength={10} maxLength={FEEDBACK_MAX_LENGTH} value={message} onChange={e => { setMessage(e.target.value); setSent(false); }} placeholder={placeholder} className={`${inputClass} min-h-32`} />
+          <Field label="Sua mensagem" hint={`${message.length} de ${FEEDBACK_MAX_LENGTH} caracteres (mínimo ${MIN_LENGTH})`}>
+            <textarea maxLength={FEEDBACK_MAX_LENGTH} value={message} onChange={e => { setMessage(e.target.value); setSent(false); setError(''); }} placeholder={placeholder} className={`${inputClass} min-h-32`} />
           </Field>
           {error && <Alert>{error}</Alert>}
           {sent && <Alert tone="brand">Recebido, obrigado. Você acompanha a situação aqui embaixo.</Alert>}
-          <Button type="submit" variant="primary" icon={IconSent} loading={busy} disabled={busy || message.trim().length < 10}>Enviar</Button>
+          <Button type="submit" variant="primary" icon={IconSent} loading={busy} disabled={busy}>Enviar</Button>
         </form>
       </Card>
 

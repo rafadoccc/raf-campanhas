@@ -10,7 +10,7 @@ import { loadTemplates, startFromTemplate, type Template } from './templates';
 import {
   Alert, Button, Card, Checkbox, Field, IconButton, Page, PageHeader, ScrollArea, Segmented,
   IconAdd, IconBack, IconMoveDown, IconMoveUp, IconRemove, IconSearch, IconTemplate,
-  buttonClass, inputClass, membros, SEND_INTERVAL_LABEL, duracaoRodada,
+  buttonClass, inputClass, membros, duracaoRodada,
 } from '../design';
 
 type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null; participants: number | null };
@@ -136,12 +136,6 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
               <span className="mb-1 block text-xs font-medium text-muted">Quando enviar</span>
               <Segmented label="Quando enviar" value={mode} onChange={setMode} options={modeOptions} />
               <span className="mt-1 block text-2xs text-slate-400">{mode === 'IMMEDIATE' ? 'Fila única: o 1º grupo recebe assim que você iniciar.' : 'Cada horário inicia uma rodada, todo dia do período.'}</span>
-            </div>
-            {/* Intervalo entre grupos: sorteado pelo sistema a cada envio (ADR-042), não se escolhe. */}
-            <div className="min-w-0">
-              <span className="mb-1 block text-xs font-medium text-muted">Intervalo entre grupos</span>
-              <p className="rounded border border-line bg-slate-50 px-2.5 py-2 text-sm text-ink">Automático: {SEND_INTERVAL_LABEL}</p>
-              <span className="mt-1 block text-2xs text-slate-400">Sorteado a cada envio, para o WhatsApp não reconhecer um ritmo de robô.</span>
             </div>
           </div>
           <Checkbox checked={mentionAll} onChange={setMentionAll}

@@ -27,10 +27,10 @@ export async function lockCampaign(tx: Prisma.TransactionClient, id: string) {
 }
 
 // ─── Intervalo entre envios (ADR-042; antes ADR-028/035) ────────────────────────
-// Sorteado a CADA envio entre 1 min 45 s e 3 min: um ritmo sempre igual é o padrão mais fácil de
+// Sorteado a CADA envio entre 1 min 30 s e 3 min: um ritmo sempre igual é o padrão mais fácil de
 // o WhatsApp reconhecer como robô. O cliente não escolhe mais; o `intervalSeconds` da campanha
 // fica gravado só por compatibilidade (a API ainda o aceita) e a fila de produção o ignora.
-export const SEND_INTERVAL = { min: 105, max: 180 } as const;
+export const SEND_INTERVAL = { min: 90, max: 180 } as const;
 /** Média do sorteio: é o que as previsões usam para os envios depois do próximo. */
 export const TYPICAL_INTERVAL_SECONDS = Math.round((SEND_INTERVAL.min + SEND_INTERVAL.max) / 2);
 /** Valor que a API aceita e grava em `Campaign.intervalSeconds` (compatibilidade, ADR-042). */
