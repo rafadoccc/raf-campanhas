@@ -57,4 +57,5 @@ export {
   Download as IconDownload,
   FileText as IconDocument,
   Lock as IconPrivacy,
+  ScrollText as IconNotes,
 } from 'lucide-react';

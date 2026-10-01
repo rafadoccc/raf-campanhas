@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/api';
-import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, Menu } from '../design';
+import { hasUnseenReleaseNotes } from '../lib/release-notes-seen';
+import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, Menu } from '../design';
 
 const items = [
   { label: 'Início', to: '/', icon: IconHome },
@@ -22,6 +23,8 @@ export function Navigation() {
   const navigate = useNavigate();
   const onAccount = useLocation().pathname === '/conta';
   const admin = user?.role === 'SUPER_ADMIN';
+  // Lido uma vez ao montar o menu: abrir /notas marca como lido e, na volta, o menu monta de novo.
+  const [unseenNotes] = useState(hasUnseenReleaseNotes);
   // No celular o nome do sistema sai: sem ele, todos os ícones cabem (antes WhatsApp e
   // Administração ficavam escondidos numa rolagem lateral). Só ícone = rótulo em aria-label.
   return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-2 sm:px-4">
@@ -31,6 +34,11 @@ export function Navigation() {
           cabe sem forçar uma rolagem lateral escondida no meio do menu. */}
       {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass} aria-label={label} title={label}><Icon className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">{label}</span></NavLink>)}
       {admin && <NavLink to="/admin" className={linkClass} aria-label="Administração" title="Administração"><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">Administração</span></NavLink>}
+      {/* Notas de atualização: só o ícone, discreto. O pontinho avisa que há versão nova não lida. */}
+      <Link to="/notas" className={`${itemClass(false)} relative`} aria-label={unseenNotes ? 'Notas de atualização (há novidades)' : 'Notas de atualização'} title="Notas de atualização">
+        <IconNotes className="h-4 w-4" aria-hidden />
+        {unseenNotes && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden />}
+      </Link>
     </div>
     <div className="ml-auto flex shrink-0 items-center gap-1">
       {/* Clicar no nome abre um menu (em vez de ir direto para a troca de senha). */}

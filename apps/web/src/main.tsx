@@ -56,6 +56,8 @@ const AccountPage = page(() => import('./pages/account'));
 const AdminPage = page(() => import('./pages/admin'));
 // Privacidade e Termos: públicas (abrem sem login), carregadas só quando alguém abre.
 const LegalPage = lazy(() => import('./pages/legal'));
+// Notas de atualização: página de leitura, fora da moldura do painel.
+const ReleaseNotesPage = lazy(() => import('./pages/release-notes'));
 
 function preloadPages() {
   const run = () => { for (const p of pages) void p.preload().catch(() => undefined); };
@@ -110,6 +112,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/login" element={<LoginPage />} />
             <Route path="/privacidade" element={<Suspense fallback={<Pending />}><LegalPage kind="privacy" /></Suspense>} />
             <Route path="/termos" element={<Suspense fallback={<Pending />}><LegalPage kind="terms" /></Suspense>} />
+            <Route path="/notas" element={<Suspense fallback={<Pending />}><ReleaseNotesPage /></Suspense>} />
             <Route element={<RequireAuth />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/campanhas" element={<CampaignsPage />} />
