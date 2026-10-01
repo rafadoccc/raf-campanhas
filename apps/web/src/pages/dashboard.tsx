@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { DayDetails } from '../components/day-details';
 import { api, connectionSummary } from '../lib/api';
 import { SafetyAlert } from '../components/number-protection';
 import { usePolling } from '../lib/use-polling';
@@ -29,14 +30,17 @@ function when(next: NextDelivery, now: string, connected: boolean) {
   return inMs > 30_000 ? `às ${hora(next.nextAt)} · ${tempoRelativo(next.nextAt, Date.parse(now))}` : 'saindo agora';
 }
 
-function WeekBars({ days }: { days: Dashboard['last7Days'] }) {
+// Cada barra é um botão: clicar abre os números daquele dia (DayDetails, ADR-045).
+function WeekBars({ days, onPick }: { days: Dashboard['last7Days']; onPick: (day: string) => void }) {
   const max = Math.max(1, ...days.map(d => d.sent));
-  return <div className="flex h-full items-end gap-1.5" role="img" aria-label={`Envios dos últimos 7 dias: ${days.map(d => d.sent).join(', ')}`}>
-    {days.map((d, i) => <div key={d.day} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={`${weekday(d.day)}: ${d.sent} envios`}>
+  return <div className="flex h-full items-end gap-1.5">
+    {days.map((d, i) => <button type="button" key={d.day} onClick={() => onPick(d.day)}
+      aria-label={`${weekday(d.day)}: ${d.sent} ${d.sent === 1 ? 'envio' : 'envios'}. Ver o resumo do dia`} title="Ver o resumo deste dia"
+      className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded">
       <span className="tabular text-2xs text-muted">{d.sent || ''}</span>
-      <div className={`w-full rounded-sm transition-[height] duration-500 ease-out ${i === days.length - 1 ? 'bg-brand-600' : 'bg-brand-100'}`} style={{ height: `${Math.max(3, (d.sent / max) * 72)}px` }} />
-      <span className="text-2xs capitalize text-slate-400">{weekday(d.day)}</span>
-    </div>)}
+      <span className={`block w-full rounded-sm transition-[height,background-color] duration-500 ease-out ${i === days.length - 1 ? 'bg-brand-600 group-hover:bg-brand-700' : 'bg-brand-100 group-hover:bg-brand-500'}`} style={{ height: `${Math.max(3, (d.sent / max) * 72)}px` }} />
+      <span className="text-2xs capitalize text-slate-400 group-hover:text-ink">{weekday(d.day)}</span>
+    </button>)}
   </div>;
 }
 
@@ -49,6 +53,8 @@ export default function DashboardPage() {
   const connected = loaded?.connection === 'connected';
   // Aviso de pausa automática (ADR-041): some aqui na hora ao clicar em Entendi.
   const [dismissed, setDismissed] = useState(false);
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const closeDay = useCallback(() => setPickedDay(null), []);
   const metric = (value: number | null | undefined, suffix = '') => (d ? `${numero(value ?? 0)}${suffix}` : '—');
 
   return <Page className="lg:overflow-hidden">
@@ -59,6 +65,7 @@ export default function DashboardPage() {
     />
     {error && <Alert tone="warning">Não foi possível atualizar os dados. Confira se o sistema está ligado.</Alert>}
     {loaded?.safety && !dismissed && <SafetyAlert notice={loaded.safety} onDismissed={() => setDismissed(true)} />}
+    {pickedDay && <DayDetails day={pickedDay} onClose={closeDay} />}
 
     <Card className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-6">
       <Stat icon={IconCampaigns} label="Campanhas ativas" value={metric(d?.activeCampaigns)} />
@@ -76,8 +83,8 @@ export default function DashboardPage() {
     <div className="grid min-w-0 grid-cols-1 min-h-0 flex-1 gap-4 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
       <div className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-2">
         <Card className="flex flex-col p-4">
-          <p className="text-xs text-muted">Envios nos últimos 7 dias</p>
-          <div className="mt-2 h-24">{d ? <WeekBars days={d.last7Days} /> : <Skeleton className="h-full" />}</div>
+          <p className="flex items-baseline justify-between gap-2 text-xs text-muted">Envios nos últimos 7 dias<span className="text-2xs text-slate-400">clique num dia para ver o resumo</span></p>
+          <div className="mt-2 h-28">{d ? <WeekBars days={d.last7Days} onPick={setPickedDay} /> : <Skeleton className="h-full" />}</div>
         </Card>
         <Card className="flex min-h-[14rem] flex-1 flex-col lg:min-h-0">
           <CardHeader title="Em andamento" action={<Link to="/campanhas" className="text-xs text-muted hover:text-ink">Ver todas</Link>} />

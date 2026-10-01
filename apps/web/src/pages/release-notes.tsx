@@ -105,6 +105,8 @@ export default function ReleaseNotesPage() {
       {totalPages > 1 && <Pagination page={page} total={totalPages} />}
 
       <footer className="mt-8 border-t border-line pt-5 text-center text-xs text-muted">
+        {/* O convite só para quem está logado: a tela de sugestões fica dentro do painel. */}
+        {user && <p className="mb-2 text-sm text-ink">Tem uma ideia ou encontrou um problema? <Link to="/sugestoes" className="font-medium underline">Envie uma sugestão ou crítica</Link>.</p>}
         As versões seguem <strong className="font-semibold">ano.mês.sequência</strong>: 26.09.3, por exemplo, é a terceira versão de setembro de 2026.
       </footer>
     </main>

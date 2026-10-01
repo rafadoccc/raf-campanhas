@@ -74,6 +74,9 @@ model Campaign {
   nextAvailableAt DateTime?
   pausedAt        DateTime?
   deletedAt       DateTime?
+  // Link público do relatório (ADR-045): quem tem o código vê só os números da campanha, sem
+  // login. null = sem link. O dono cria e desativa quando quiser.
+  reportToken     String?            @unique @db.VarChar(64)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   messages        CampaignMessage[]
@@ -239,6 +242,27 @@ model User {
   groups       Group[]
   media        CampaignMedia[]
   sendingPolicy SendingPolicy?
+  feedback     Feedback[]
+}
+
+// Sugestões, críticas, problemas e elogios dos usuários sobre o sistema (ADR-045). O administrador
+// lê, muda a situação e pode responder; quem enviou vê a resposta na mesma tela.
+model Feedback {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // sugestao | problema | critica | elogio
+  kind        String    @db.VarChar(20)
+  message     String    @db.Text
+  // novo | analisando | feito | recusado
+  status      String    @default("novo") @db.VarChar(20)
+  reply       String?   @db.Text
+  repliedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 // Proteção do número (ADR-041): regras de envio da conta. Sem linha = padrões seguros

@@ -11,7 +11,9 @@ const scrypt = promisify(scryptCallback) as (password: string, salt: Buffer, key
 export const SESSION_COOKIE = 'campanhas_sessao';
 // Rotas da API acessíveis sem login. Todo o resto exige sessão (negar por padrão).
 // /api/legal: contato e versão dos Termos, que as páginas públicas de Privacidade e Termos mostram.
-const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup', '/api/legal']);
+// /api/public/report/:token: relatório da campanha pelo código do link (ADR-045); é o padrão da
+// ROTA casada pelo Fastify (api-path.ts), então nenhum outro endereço cai aqui.
+const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup', '/api/legal', '/api/public/report/:token']);
 
 // Papéis (ADR-016). O papel vem SEMPRE do banco, pela sessão validada no servidor; nada que o
 // navegador envie (corpo, cabeçalho, cookie próprio) decide permissão.

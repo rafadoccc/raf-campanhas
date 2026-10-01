@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { usePolling } from '../lib/use-polling';
+import { AdminFeedback } from '../components/admin-feedback';
 import {
   Alert, Badge, Button, ButtonLink, Card, CardHeader, Dot, EmptyState, Field, Menu, Page, PageHeader, PasswordInput, Segmented, Select, Skeleton, Stat,
   IconActivity, IconAddUser, IconAdmin, IconCampaigns, IconDelete, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
@@ -322,5 +323,6 @@ export default function AdminPage() {
       <Health overview={overview} />
     </div>
     <Accounts users={data?.users ?? null} meId={me?.id} onChanged={reload} />
+    <AdminFeedback />
   </Page>;
 }

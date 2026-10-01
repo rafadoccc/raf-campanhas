@@ -7,8 +7,8 @@ import { api, errorMessage, connectionState as readConnection } from '../lib/api
 import { retryAllFailed, retryDelivery } from '../lib/campaign-ops';
 import { usePolling } from '../lib/use-polling';
 import {
-  Alert, Badge, Button, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
-  IconBack, IconChevron, IconClock, IconMention, IconMessage, IconRefresh, IconVideo,
+  Alert, Badge, Button, ButtonLink, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
+  IconBack, IconChevron, IconClock, IconMention, IconMessage, IconRefresh, IconReport, IconVideo,
   accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, tempoRelativo, useConfirm, useInfiniteList, type Wait,
 } from '../design';
 import { CampaignMeta } from '../components/campaign-meta';
@@ -165,6 +165,8 @@ export default function CampaignPage() {
               </div>
             </div>}
             <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} groupCount={campaign.groups.length} />
+            {/* Relatório (ADR-045): só faz sentido depois que algo saiu. */}
+            {sent > 0 && <ButtonLink to={`/campanhas/${campaign.id}/relatorio`} variant="ghost" size="sm" icon={IconReport} className="w-fit">Ver relatório para compartilhar</ButtonLink>}
           </div>
         </Card>
 

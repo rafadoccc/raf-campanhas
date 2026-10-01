@@ -54,6 +54,11 @@ const SettingsPage = page(() => import('./pages/settings'));
 const HistoryPage = page(() => import('./pages/history'));
 const AccountPage = page(() => import('./pages/account'));
 const AdminPage = page(() => import('./pages/admin'));
+const FeedbackPage = page(() => import('./pages/feedback'));
+// Relatório da campanha: fora da moldura do painel, para imprimir sem cortar. O do dono confere o
+// login por conta própria; o do link (/r/:token) abre sem login.
+const CampaignReportPage = lazy(() => import('./pages/report'));
+const SharedReportPage = lazy(() => import('./pages/report').then(module => ({ default: module.SharedReportPage })));
 // Privacidade e Termos: públicas (abrem sem login), carregadas só quando alguém abre.
 const LegalPage = lazy(() => import('./pages/legal'));
 // Notas de atualização: página de leitura, fora da moldura do painel.
@@ -113,6 +118,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/privacidade" element={<Suspense fallback={<Pending />}><LegalPage kind="privacy" /></Suspense>} />
             <Route path="/termos" element={<Suspense fallback={<Pending />}><LegalPage kind="terms" /></Suspense>} />
             <Route path="/notas" element={<Suspense fallback={<Pending />}><ReleaseNotesPage /></Suspense>} />
+            <Route path="/campanhas/:id/relatorio" element={<Suspense fallback={<Pending />}><CampaignReportPage /></Suspense>} />
+            <Route path="/r/:token" element={<Suspense fallback={<Pending />}><SharedReportPage /></Suspense>} />
             <Route element={<RequireAuth />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/campanhas" element={<CampaignsPage />} />
@@ -122,6 +129,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/configuracoes" element={<SettingsPage />} />
               <Route path="/historico" element={<HistoryPage />} />
               <Route path="/conta" element={<AccountPage />} />
+              <Route path="/sugestoes" element={<FeedbackPage />} />
               <Route element={<RequireAdmin />}><Route path="/admin" element={<AdminPage />} /></Route>
               <Route path="/grupos" element={<Navigate to="/configuracoes" replace />} />
               <Route path="*" element={<main className="p-8"><h1 className="text-lg font-semibold">Página não encontrada</h1></main>} />

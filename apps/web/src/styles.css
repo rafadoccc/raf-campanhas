@@ -14,6 +14,16 @@
   }
 }
 
+/* Impressão (relatório da campanha → "Salvar como PDF"): a tela prende tudo em 100% de altura
+   com rolagem interna, o que cortaria o papel na primeira página. No papel o conteúdo corre
+   solto, em fundo branco, e as cores das barras e etiquetas são mantidas. */
+@media print {
+  html, body, #root { height: auto !important; }
+  body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-flow { height: auto !important; overflow: visible !important; }
+  @page { margin: 14mm; }
+}
+
 @layer utilities {
   /* Rolagem com barra invisível (a área continua rolável por roda, toque e teclado). */
   /* position: relative prende aqui dentro os elementos absolutos (ex.: rótulos sr-only das

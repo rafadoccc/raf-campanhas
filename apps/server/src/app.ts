@@ -16,6 +16,8 @@ import { usesLegacySession } from './legacy-session';
 import { wakeDispatcher } from './dispatcher';
 import { registerLegalRoutes } from './legal';
 import { registerNumberProtectionRoutes, safetyNotice, warmupStatus } from './number-protection-routes';
+import { registerReportRoutes } from './report';
+import { registerFeedbackRoutes } from './feedback-routes';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -109,6 +111,9 @@ registerCampaignRoutes(app);
 registerLegalRoutes(app, config, manager);
 // Proteção do número (ADR-041): regras de envio da conta e aviso de pausa automática.
 registerNumberProtectionRoutes(app, async userId => (await sending.forOwner(userId))?.status().accountJid ?? null);
+// Relatório da campanha, números por dia e canal de sugestões e críticas (ADR-045).
+registerReportRoutes(app);
+registerFeedbackRoutes(app);
 // Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
 registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
 // Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de

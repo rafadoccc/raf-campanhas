@@ -61,4 +61,7 @@ export {
   CalendarDays as IconPeriod,
   ChevronLeft as IconPrevious,
   ChevronRight as IconNext,
+  Share2 as IconShare,
+  MessageSquarePlus as IconFeedback,
+  ChartColumn as IconReport,
 } from 'lucide-react';

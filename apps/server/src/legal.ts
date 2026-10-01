@@ -80,7 +80,8 @@ export async function exportAccount(userId: string) {
       whatsapp: { select: { accountJid: true, state: true, lastConnectedAt: true } },
     },
   });
-  const [groups, media, campaigns] = await Promise.all([
+  const [feedback, groups, media, campaigns] = await Promise.all([
+    prisma.feedback.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, select: { kind: true, message: true, status: true, reply: true, repliedAt: true, createdAt: true } }),
     prisma.group.findMany({ where: { userId }, orderBy: { name: 'asc' }, select: { name: true, externalId: true, active: true, participants: true, isAdmin: true, createdAt: true } }),
     prisma.campaignMedia.findMany({ where: { userId }, select: { id: true, name: true, mimeType: true, kind: true, size: true, createdAt: true } }),
     prisma.campaign.findMany({
@@ -107,6 +108,7 @@ export async function exportAccount(userId: string) {
     whatsapp,
     grupos: groups,
     midias: media,
+    sugestoes: feedback,
     campanhas: campaigns.map(({ messages, schedules, groups: linked, deliveries, ...campaign }) => ({
       ...campaign,
       mensagens: messages.map(m => m.content),

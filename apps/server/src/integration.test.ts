@@ -3197,8 +3197,95 @@ test('LGPD: retention sweep erases deleted and 6-month-old finished campaigns, o
   assert.equal(await prisma.group.count({ where: { id: gone.id } }), 0, 'grupo que saiu há 6 meses sai');
 });
 
+// ─── Sugestões e críticas, relatório e números por dia (ADR-045) ────────────────
+test('feedback: each user sees only their own; the admin sees all, replies and sets the status', async () => {
+  const a = await lgpdUser('opina-a@teste.local');
+  const b = await lgpdUser('opina-b@teste.local');
+  const admin = await lgpdUser('opina-admin@teste.local', 'SUPER_ADMIN');
+  assert.equal((await a.call('POST', '/api/feedback', { kind: 'outro', message: 'texto longo o bastante' })).statusCode, 400, 'tipo inválido');
+  assert.equal((await a.call('POST', '/api/feedback', { kind: 'sugestao', message: 'curto' })).statusCode, 400, 'curto demais');
+  const sent = await a.call('POST', '/api/feedback', { kind: 'sugestao', message: 'Queria agendar o status do WhatsApp.', userId: b.user.id });
+  assert.equal(sent.statusCode, 201, sent.body);
+  assert.equal((await prisma.feedback.findUniqueOrThrow({ where: { id: sent.json().id } })).userId, a.user.id, 'o dono vem da sessão, não do corpo');
+  await b.call('POST', '/api/feedback', { kind: 'problema', message: 'O botão não respondeu no celular.' });
+
+  const mine = (await a.call('GET', '/api/feedback')).json();
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].status, 'novo');
+  assert.equal((await a.call('GET', '/api/admin/feedback')).statusCode, 403, 'usuário comum não lê o de todos');
+
+  const all = (await admin.call('GET', '/api/admin/feedback')).json();
+  const item = all.items.find((f: { id: string }) => f.id === sent.json().id);
+  assert.equal(item.user.email, 'opina-a@teste.local');
+  assert.ok(all.counts.novo >= 2);
+  const patch = (payload: object, session = admin.session) => app.inject({ method: 'PATCH', url: `/api/admin/feedback/${item.id}`, payload, headers: as(session) });
+  assert.equal((await patch({ status: 'feito' }, a.session)).statusCode, 403);
+  assert.equal((await patch({ status: 'qualquer' })).statusCode, 400);
+  const answered = await patch({ status: 'analisando', reply: 'Boa ideia, entrou na fila.' });
+  assert.equal(answered.statusCode, 200, answered.body);
+  const seen = (await a.call('GET', '/api/feedback')).json()[0];
+  assert.equal(seen.status, 'analisando');
+  assert.equal(seen.reply, 'Boa ideia, entrou na fila.');
+  assert.ok(seen.repliedAt);
+  assert.equal((await b.call('GET', '/api/feedback')).json().some((f: { reply: string | null }) => f.reply), false, 'a resposta não aparece para outra conta');
+
+  // Limite suave: 5 por hora por conta.
+  for (let i = 0; i < 4; i++) await a.call('POST', '/api/feedback', { kind: 'elogio', message: `Mensagem de teste número ${i}.` });
+  assert.equal((await a.call('POST', '/api/feedback', { kind: 'elogio', message: 'A sexta mensagem na mesma hora.' })).statusCode, 429);
+  assert.ok((await a.call('GET', '/api/account/export')).json().sugestoes.length >= 5, 'entra na exportação da LGPD');
+  await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'USER', disabledAt: new Date() } });
+});
+
+test('report: owner numbers, a public link with numbers only, revocable; day numbers per account', async () => {
+  const { user, campaign, delivery } = await protectedQueue('relatorio@teste.local', {});
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword('senha-de-teste-123') } });
+  const { cookie: session } = await loginAs(app, 'relatorio@teste.local');
+  const other = await lgpdUser('relatorio-outro@teste.local');
+  const now = new Date();
+  const first = await delivery(0, { scheduledAt: new Date(now.getTime() - 5000), status: 'SENT', sentAt: now, attemptedAt: now });
+  await prisma.delivery.update({ where: { id: first.id }, data: { deliveredAt: now, messageBody: 'texto-secreto-da-campanha' } });
+  await prisma.deliveryRead.create({ data: { deliveryId: first.id, recipientHash: 'h1', readAt: now } });
+  await delivery(1, { scheduledAt: new Date(now.getTime() - 4000), status: 'SENT', sentAt: now, attemptedAt: now });
+  const failed = await delivery(2, { scheduledAt: new Date(now.getTime() - 3000) });
+  await prisma.delivery.update({ where: { id: failed.id }, data: { status: 'FAILED', error: 'x' } });
+  await delivery(3, { scheduledAt: new Date(now.getTime() + 3_600_000) });
+
+  const url = `/api/campaigns/${campaign.id}/report`;
+  const mine = await app.inject({ method: 'GET', url, headers: as(session) });
+  assert.equal(mine.statusCode, 200, mine.body);
+  const t = mine.json().totals;
+  assert.deepEqual([t.sent, t.delivered, t.failed, t.pending, t.reads, t.groups, t.groupsReached], [2, 1, 1, 1, 1, 1, 1]);
+  assert.equal(t.deliveryRate, 50);
+  assert.equal(mine.json().shareToken, null);
+  assert.equal((await other.call('GET', url)).statusCode, 404, 'campanha de outra conta: como se não existisse');
+  assert.equal((await other.call('POST', `${url}/share`, {})).statusCode, 404);
+
+  const shared = await app.inject({ method: 'POST', url: `${url}/share`, payload: {}, headers: as(session) });
+  const token = shared.json().shareToken as string;
+  assert.match(token, /^[A-Za-z0-9_-]{32}$/);
+  assert.equal((await app.inject({ method: 'POST', url: `${url}/share`, payload: {}, headers: as(session) })).json().shareToken, token, 'o mesmo link continua valendo');
+  // Sem login: só números. Nada de texto de mensagem, ids internos ou do dono.
+  const open = await app.inject({ method: 'GET', url: `/api/public/report/${token}`, headers: { host: 'localhost' } });
+  assert.equal(open.statusCode, 200, open.body);
+  assert.equal(open.json().totals.sent, 2);
+  for (const secret of ['texto-secreto-da-campanha', campaign.id, user.id, 'relatorio@teste.local', 'shareToken', campaign.accountJid!]) assert.ok(!open.body.includes(secret), `o link não expõe ${secret}`);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/public/report/codigo-que-nao-existe-123456', headers: { host: 'localhost' } })).statusCode, 404);
+  assert.equal((await app.inject({ method: 'DELETE', url: `${url}/share`, headers: as(session) })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: `/api/public/report/${token}`, headers: { host: 'localhost' } })).statusCode, 404, 'link desativado');
+
+  // Números do dia (clique no gráfico do Início), só da própria conta.
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(now);
+  const day = await app.inject({ method: 'GET', url: `/api/dashboard/day?date=${today}`, headers: as(session) });
+  assert.equal(day.statusCode, 200, day.body);
+  assert.deepEqual([day.json().sent, day.json().delivered, day.json().reads, day.json().groupsReached], [2, 1, 1, 1]);
+  assert.equal(day.json().campaigns[0].name, 'Protegida');
+  assert.equal(day.json().hours.reduce((sum: number, h: { sent: number }) => sum + h.sent, 0), 2);
+  assert.equal((await other.call('GET', `/api/dashboard/day?date=${today}`)).json().sent, 0);
+  for (const bad of ['2026-13-40', 'ontem', '2999-01-01', '2020-01-01']) assert.equal((await app.inject({ method: 'GET', url: `/api/dashboard/day?date=${bad}`, headers: as(session) })).statusCode, 400, bad);
+});
+
 // ─── Proteção do número (ADR-041) ───────────────────────────────────────────────
-const spTime = (day: string, clock: string) => new Date(`${day}T${clock}:00-03:00`);
+const spTime =(day: string, clock: string) => new Date(`${day}T${clock}:00-03:00`);
 async function protectedQueue(email: string, rules: { quietStart?: number | null; quietEnd?: number | null; dailyLimit?: number | null; groupGapMinutes?: number | null; autoPause?: boolean }) {
   const user = await prisma.user.create({ data: { email, name: email.split('@')[0], passwordHash: 'x' } });
   await prisma.sendingPolicy.create({ data: { userId: user.id, quietStart: null, quietEnd: null, dailyLimit: null, groupGapMinutes: null, autoPause: true, ...rules } });

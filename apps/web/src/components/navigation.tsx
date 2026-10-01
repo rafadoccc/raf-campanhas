@@ -3,7 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/api';
 import { hasUnseenReleaseNotes } from '../lib/release-notes-seen';
-import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, Logo, Menu } from '../design';
+import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, IconFeedback, Logo, Menu } from '../design';
 
 const items = [
   { label: 'Início', to: '/', icon: IconHome },
@@ -43,6 +43,7 @@ export function Navigation() {
         header={<><p className="truncate text-sm font-medium text-ink">{user?.name}</p><p className="truncate text-2xs text-muted">{user?.email}</p></>}
         items={[
           { label: 'Minha conta e senha', icon: IconPassword, onSelect: () => navigate('/conta') },
+          { label: 'Sugestões e críticas', icon: IconFeedback, onSelect: () => navigate('/sugestoes') },
           { label: 'Privacidade', icon: IconPrivacy, onSelect: () => navigate('/privacidade') },
           { label: 'Termos de Uso', icon: IconDocument, onSelect: () => navigate('/termos') },
         ]} />
