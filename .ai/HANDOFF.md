@@ -5,6 +5,18 @@
 
 ---
 
+## 2026-10-01T03:15Z · claude
+
+**Fiz:** logo definitiva escolhida pelo dono: modelo "Puro" ("doc" leve em cinza + "drop" firme em
+grafite, minúsculo, sem símbolo e sem verde). Os três modelos anteriores e o `LOGO_VARIANT` saíram.
+**Arquivos:** apps/web/src/design/{logo.tsx,index.ts}
+**Tarefas:** T-140 (concluída; fecha a escolha da logo que estava pendente).
+**Estado:** compila · lint ok. Conferido no navegador (tela de entrada).
+**Armadilhas:** a logo é só `<Logo />`, sem variantes. Push só na dev; o dono leva para a main.
+**Próximo passo sugerido:** quando for para a main, registrar a versão nas notas (`lib/release-notes.ts`).
+
+---
+
 ## 2026-10-01T00:40Z · claude
 
 **Fiz:** ajustes de interface pedidos pelo dono.
