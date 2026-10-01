@@ -1257,3 +1257,46 @@ a pasta ou um backup usava o WhatsApp do cliente.
   de novo), e `hasPairedSession` continua respondendo que há sessão.
 - **Limite:** protege cópia da pasta e backups. Não protege contra quem lê as variáveis de
   ambiente do processo. Perder ou trocar a chave obriga a ler o QR de novo.
+
+---
+
+## ADR-047 · Modelos de campanha, listas de grupos e "esqueci minha senha"
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev · **Fecha:** T-145, T-146, T-147
+
+Pedidos do dono: não remontar toda semana a mesma campanha, não marcar os mesmos grupos um a um,
+e o cliente conseguir voltar a entrar sem o administrador inventar uma senha para ele.
+
+- **Modelo = campanha marcada.** Coluna aditiva `Campaign.isTemplate`. Um modelo é uma campanha em
+  RASCUNHO que nunca é enviada: reaproveita texto, mídia, grupos, horários, formulário e o
+  "duplicar" que já existiam, em vez de uma segunda tabela com as mesmas colunas. Consequência:
+  **toda consulta que lista ou conta campanhas para o usuário filtra `isTemplate: false`** (lista
+  de campanhas, contagens do admin). A fila não precisa: modelo não tem entregas e a rota de status
+  recusa ativá-lo.
+  - `GET /api/templates` lista os modelos (no máximo `MAX_TEMPLATES` = 50 por conta).
+  - `POST /api/campaigns/:id/duplicate` aceita `asTemplate`: de campanha para modelo ("Salvar como
+    modelo") e de modelo para campanha ("Usar": cria um rascunho com as datas de hoje). O campo
+    `isTemplate` aparece em `GET /api/campaigns/:id`.
+  - Editar um modelo (`PATCH /api/campaigns/:id`) dispensa as regras de data: período no passado e
+    horário já vencido não fazem sentido para algo que não é enviado.
+- **Listas de grupos.** Tabelas novas `GroupList` e `GroupListItem`, com chave estrangeira composta
+  por `userId` (uma lista só aponta para grupos da mesma conta) e apagadas em cascata com a conta e
+  com o grupo. `GET/POST /api/group-lists`, `PATCH/DELETE /api/group-lists/:id`; nome único por
+  conta (409), até 50 listas de 500 grupos. A lista só ajuda a MARCAR grupos no formulário: a
+  campanha continua guardando os próprios grupos, então mudar ou apagar a lista não mexe em
+  campanha nenhuma. Entram na exportação da LGPD.
+- **Esqueci minha senha por link de uso único.** Tabela nova `PasswordReset` (guarda só o sha256
+  do código; `tokenHash` nulo = pedido esperando o administrador). Rotas públicas novas em
+  `PUBLIC_API`: `POST /api/auth/forgot`, `GET` e `POST /api/auth/reset/:token`.
+  - O pedido responde igual exista a conta ou não, e tem limite de 5 por 15 min por IP e por e-mail.
+  - **Entrega:** sem e-mail configurado, o pedido aparece na Administração e o administrador gera o
+    link (`POST /api/admin/users/:id/reset-link`, vale 24 h) e manda pelo canal que já usa com o
+    cliente. Com `RESEND_API_KEY` + `MAIL_FROM`, o link vai por e-mail (vale 1 h). Escolhido assim
+    porque hoje não há domínio nem serviço de e-mail; o fluxo do administrador funciona desde já e
+    o e-mail liga sem mudar código.
+  - Trocar a senha pelo link apaga o link, derruba todas as sessões da conta e usa a mesma trava
+    `FOR UPDATE` do login. Ninguém, nem o administrador, fica sabendo a senha.
+  - O endereço do link sai de `PUBLIC_URL`, nunca do cabeçalho `Host` do pedido.
+- Migration aditiva `20261002000000_templates_lists_reset`.
+- **Fora desta decisão:** login com Google ou Apple. Só levantamento, entregue ao dono; depende de
+  domínio próprio com HTTPS.

@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-10-01T05:10Z · claude
+
+**Fiz:** (1) modelos de campanha: "Salvar como modelo" no cartão da campanha, aba Modelos em
+Campanhas, "Começar de um modelo" na campanha nova; (2) listas de grupos no formulário da campanha;
+(3) "esqueci minha senha" por link de uso único, entregue pelo administrador (Administração →
+"Gerar link de nova senha") ou por e-mail quando `RESEND_API_KEY` + `MAIL_FROM` existem. ADR-047,
+commit `6bad43a`. Login com Google/Apple: só levantamento, entregue ao dono no chat; nada no código.
+**Arquivos:** apps/server/src/{password-reset,mailer,group-lists,campaign-routes,app,auth,config,admin-routes,admin-overview,legal,integration.test}.ts, packages/database/prisma/{schema.prisma,migrations/20261002000000_templates_lists_reset}, apps/web/src/{pages/{password-reset,campaigns,login,admin,campaign-detail}.tsx,components/{templates,group-lists,campaign-form}.tsx,design/icons.ts,lib/release-notes.ts,main.tsx}, .env.example
+**Tarefas:** T-145, T-146, T-147 (concluídas).
+**Estado:** compila · lint ok · unitários 93/93 + 7 do painel · integração 148/148. Conferido no
+navegador (dev): pedido de senha, selo e link na Administração, troca pelo link, link morto depois
+de usado; salvar modelo, aba Modelos, usar e editar modelo; salvar lista e marcar grupos por ela.
+**Armadilhas:**
+- Modelo é uma `Campaign` com `isTemplate: true`. **Toda consulta nova que lista ou conta campanhas
+  para o usuário precisa de `isTemplate: false`**, senão o modelo aparece como rascunho.
+- `mailer.ts` (Resend) só foi testado com um envio falso: nunca falou com o serviço real. Antes de
+  ligar em produção, mandar um e-mail de verdade. Exige domínio verificado no Resend.
+- Rotas públicas novas: `/api/auth/forgot` e `/api/auth/reset/:token`. O pedido responde igual
+  para qualquer e-mail; não acrescentar nada na resposta que dependa de a conta existir.
+- O link de nova senha usa `PUBLIC_URL`. Em desenvolvimento ele sai com `http://localhost:PORTA`.
+- Lista de grupos só marca caixas no formulário; a campanha guarda os próprios grupos.
+- Código do codex em `apps/web/` foi tocado (formulário, campanhas, admin): área dele, avisado aqui.
+- Push só na dev; o dono leva para a main.
+**Próximo passo sugerido:** o dono testa na dev e leva para a main fora de campanha. Se quiser o
+e-mail automático, criar conta no Resend, verificar o domínio e definir as duas variáveis.
+
+---
+
 ## 2026-10-01T03:57Z · claude
 
 **Fiz:** (1) relatório da campanha com link público revogável, resumo do dia ao clicar no gráfico

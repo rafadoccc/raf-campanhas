@@ -12,6 +12,9 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[x] T-145  Esqueci minha senha: link de uso único (pelo administrador ou por e-mail)  owner: —   since: —
+[x] T-146  Modelos de campanha: salvar, editar e usar em dois cliques  owner: —   since: —
+[x] T-147  Listas de grupos: selecionar vários grupos de uma vez  owner: —   since: —
 [x] T-142  Canal de sugestões, críticas e problemas dos usuários, com resposta do admin  owner: —   since: —
 [x] T-143  Relatório da campanha: página para imprimir/PDF e link para compartilhar  owner: —   since: —
 [x] T-144  Início: clicar num dia do gráfico mostra os números daquele dia  owner: —   since: —
