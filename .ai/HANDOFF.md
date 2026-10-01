@@ -5,6 +5,36 @@
 
 ---
 
+## 2026-10-01T18:12Z · claude
+
+**Fiz:** a pedido do dono (ADR-049, commit `0c44327`): (1) intervalo entre envios de 1:30 a 3:00
+(era 1:45) e a faixa não aparece mais na tela, só a duração aproximada da rodada; (2) regras de
+proteção do número só para o administrador: `GET/PUT /api/sending-policy` exigem SUPER_ADMIN e o
+cartão some para o cliente; (3) formulário de sugestões com botão sempre ativo e mensagem dizendo
+o mínimo de 10 caracteres. O dono autorizou levar a dev inteira para a main.
+**Arquivos:** packages/database/src/queue.ts, apps/server/src/{number-protection-routes,sending-policy.test,integration.test}.ts, apps/web/src/{pages/{settings,feedback}.tsx,components/{campaign-form,campaign-actions,campaign-meta}.tsx,design/format.ts,lib/release-notes.ts}, docs/plano-anti-banimento.md
+**Tarefas:** T-150 (concluída; criada depois do trabalho, sem reivindicar antes), T-127 (concluída:
+o dono validou o @todos num grupo real).
+**Estado:** compila · lint ok · unitários 94/94 + 7 do painel · integração 150/150. Conferido no
+navegador (dev) com conta comum: tela WhatsApp só com conexão e avisos, formulário sem o bloco do
+intervalo, sugestão vazia mostra a mensagem.
+**Armadilhas:**
+- **Mudança de contrato:** `/api/sending-policy` responde 403 para quem não é administrador. As
+  regras continuam valendo para todas as contas (padrões ou o que estava salvo).
+- O administrador só ajusta as regras da PRÓPRIA conta. Não existe ainda tela para ajustar as de um
+  cliente; entra junto com planos por cliente, se o dono quiser.
+- `TYPICAL_INTERVAL_SECONDS` tem uma cópia em apps/web/src/design/format.ts (135): mudar a faixa
+  exige mudar os dois.
+- Não reproduzi a falha "não consigo enviar" das sugestões: a rota e a tela funcionaram com conta
+  comum e com administrador. A causa provável era o botão desativado em silêncio abaixo de 10
+  caracteres; se o dono ainda não conseguir, pedir a mensagem que aparece.
+- Com o servidor da dev ligado, `npm run build` falha no `prisma generate` (arquivo do motor em
+  uso no Windows). Pare o servidor antes, ou compile só o que mudou.
+**Próximo passo sugerido:** conferir o deploy da main no Railway (três migrations aditivas) e
+validar os avisos num número real (T-149).
+
+---
+
 ## 2026-10-01T06:14Z · claude
 
 **Fiz:** avisos no WhatsApp do dono (ADR-048, commit `1c3dc74`): mensagem de texto quando uma

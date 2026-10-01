@@ -1340,3 +1340,29 @@ depende de domínio; o WhatsApp do próprio cliente já está conectado.
 - **Limite conhecido:** `notify` foi testado com conector falso. Mandar para o próprio número e
   resolver outro número pelo Baileys precisa de um teste num WhatsApp de verdade (botão "Enviar
   aviso de teste" na tela WhatsApp).
+
+---
+
+## ADR-049 · Intervalo de 1:30 a 3:00 sem faixa na tela; regras de envio só para o administrador
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev · **Ajusta:** ADR-041, ADR-042
+
+Pedido do dono: a faixa do intervalo não deve ficar aparente para o cliente, o mínimo cai de 1:45
+para 1:30, e o cliente não vê nem muda as regras de proteção do número.
+
+- **Mudança de contrato:** `GET` e `PUT /api/sending-policy` passam a exigir `SUPER_ADMIN` (403 para
+  os demais). O cartão "Proteção do número" só aparece para o administrador. As regras continuam
+  valendo para TODAS as contas: sem linha em `SendingPolicy`, os padrões (22h–8h, 150 por dia, 2 h
+  por grupo, pausa automática); com linha, o que estava salvo. Nenhum dado foi alterado.
+  - Continuam do cliente: a pergunta "este número é novo?" (`POST /api/whatsapp/warmup`), o aviso
+    de pausa automática e o "Entendi" dele, e os avisos no WhatsApp (ADR-048).
+  - **Limite conhecido:** o administrador só ajusta as regras da PRÓPRIA conta. Ajustar as de um
+    cliente pela Administração fica para a tarefa de planos por cliente.
+
+- `SEND_INTERVAL` passa de 105–180 s para **90–180 s**; a média das previsões
+  (`TYPICAL_INTERVAL_SECONDS`, e a cópia dela em `apps/web/src/design/format.ts`) passa de 143 para
+  **135 s**. Quem sorteia e quem confere continuam sendo `queue.ts` e `claimDelivery`; o piso de
+  teste e o resto da fila não mudam.
+- A interface deixa de mostrar a faixa: saiu o bloco "Intervalo entre grupos" do formulário e o
+  "um a cada…" da confirmação de iniciar. Ficam só as durações aproximadas ("~24 min por rodada"),
+  que já existiam no formulário e no resumo da campanha.

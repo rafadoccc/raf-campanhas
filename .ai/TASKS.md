@@ -12,6 +12,7 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[x] T-150  Intervalo 1:30 a 3:00 sem faixa na tela; regras de envio só para o administrador; formulário de sugestões explica o mínimo (ADR-049)  owner: —   since: —
 [ ] T-149  Validar os avisos num WhatsApp real: "Enviar aviso de teste" no próprio número e em outro número (ADR-048)  owner: —   since: —
 [x] T-148  Avisos no WhatsApp do dono: campanha concluída e pausa automática  owner: —   since: —
 [x] T-145  Esqueci minha senha: link de uso único (pelo administrador ou por e-mail)  owner: —   since: —
@@ -157,7 +158,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-117  Painel sem tela branca após recompilar; rolagem das telas  owner: —        since: —
 [x] T-118  Conversão automática de vídeo (MOV/HEVC/WebM → MP4 H.264)  owner: —        since: —
 [x] T-119  @todos oficial do WhatsApp: capturar o formato real na dev  owner: —        since: —
-[ ] T-127  Validar o @todos nativo num grupo de teste real (ADR-039)     owner: —        since: —
+[x] T-127  Validar o @todos nativo num grupo de teste real (ADR-039): o dono confirmou em 2026-10-01     owner: —        since: —
 [x] T-128  Revisão de segurança: login não travável por terceiros        owner: —        since: —
 [x] T-129  Nome DocDrop no painel e na documentação                     owner: —        since: —
 [x] T-130  LGPD: termos, aceite, baixar/excluir dados, 6 meses        owner: —        since: —

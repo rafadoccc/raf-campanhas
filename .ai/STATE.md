@@ -31,16 +31,17 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
+| 5q | Regras de proteção do número visíveis e editáveis só pelo administrador; intervalo 1:30 a 3:00 sem faixa na tela (ADR-049) | ✅ concluída (T-150) |
 | 5p | Avisos no WhatsApp do dono: campanha concluída e pausa automática (ADR-048) | ✅ na dev (T-148) · falta validar num número real (T-149) |
 | 5o | Modelos de campanha, listas de grupos e "esqueci minha senha" por link de uso único (ADR-047) | ✅ na dev (T-145, T-146, T-147) |
 | 5n | Relatório da campanha com link público, resumo por dia, sugestões e críticas (ADR-045); sessão cifrada opcional (ADR-046) | ✅ na dev (T-142, T-143, T-144, T-024) |
 | 5m | Notas de atualização para o cliente em /notas, com ícone no menu | ✅ na dev (T-139) |
 | 5l | Envio sem resposta nunca trava a fila: teto de upload, vigia, faxina (ADR-044) | ✅ na dev (T-138) · o dono leva para a main |
 | 5k | Aquecimento de número novo, perguntado uma vez por número (ADR-043) | ✅ concluída (T-134) |
-| 5j | Intervalo entre envios sorteado de 1:45 a 3:00, sem escolha do cliente (ADR-042) | ✅ concluída (T-137) |
+| 5j | Intervalo entre envios sorteado de 1:30 a 3:00 (era 1:45, ADR-049), sem escolha nem faixa na tela (ADR-042) | ✅ concluída (T-137) |
 | 5i | Proteção do número: silêncio, limite diário, intervalo por grupo, pausa automática (ADR-041) | ✅ concluída (T-131, T-132, T-135, T-136) · T-133/T-134 aguardam o dono |
 | 5h | Nome DocDrop e LGPD: termos, aceite, baixar/excluir dados, 6 meses (ADR-040) | ✅ concluída (T-129, T-130) |
-| 5g | Revisão do codex (ADR-037), animações (ADR-038), @todos nativo (ADR-039) | ✅ código pronto · @todos falta validar num grupo real (T-127) |
+| 5g | Revisão do codex (ADR-037), animações (ADR-038), @todos nativo (ADR-039) | ✅ código pronto · @todos validado pelo dono num grupo real em 2026-10-01 (T-127) |
 | 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
 
 ---
