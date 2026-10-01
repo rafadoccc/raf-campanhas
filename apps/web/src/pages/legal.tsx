@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { IconBack } from '../design';
+import { IconBack, Logo } from '../design';
 
 // Política de Privacidade e Termos de Uso (LGPD, ADR-040). Páginas públicas: abrem sem login,
 // pelo link da tela de entrada. Mudou algo relevante no texto? Troque TERMS_VERSION no servidor
@@ -137,7 +137,7 @@ export default function LegalPage({ kind }: { kind: 'privacy' | 'terms' }) {
       </Link>
       <article className="space-y-6 rounded-lg border border-line bg-white p-5 shadow-card sm:p-8">
         <header className="space-y-1">
-          <p className="text-2xs font-medium uppercase tracking-wide text-muted">DocDrop</p>
+          <Logo className="mb-2 text-base" />
           <h1 className="text-xl font-semibold leading-tight">{privacy ? 'Política de Privacidade' : 'Termos de Uso'}</h1>
           <p className="text-xs text-muted">Atualizado em {UPDATED_AT}.</p>
         </header>

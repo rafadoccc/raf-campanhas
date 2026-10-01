@@ -2,19 +2,20 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { MediaPreview, type CampaignMedia } from '../components/campaign-media';
 import { CampaignActions } from '../components/campaign-actions';
-import { WhatsAppPreview } from '../components/message-editor';
+import { WhatsAppPreview, plainSummary } from '../components/message-editor';
 import { api, errorMessage, connectionState as readConnection } from '../lib/api';
 import { retryAllFailed, retryDelivery } from '../lib/campaign-ops';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
-  IconBack, IconChevron, IconClock, IconGroups, IconMention, IconMessage, IconRefresh, IconVideo,
-  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, tempoRelativo, useConfirm, useInfiniteList, SEND_INTERVAL_LABEL, type Wait,
+  IconBack, IconChevron, IconClock, IconMention, IconMessage, IconRefresh, IconVideo,
+  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, tempoRelativo, useConfirm, useInfiniteList, type Wait,
 } from '../design';
+import { CampaignMeta } from '../components/campaign-meta';
 
 type Group = { name: string; participants: number | null };
 type Campaign = {
-  id: string; name: string; status: string; provider: string; mode: string; mentionAll: boolean;
+  id: string; name: string; status: string; provider: string; mode: string; mentionAll: boolean; startsAt: string; endsAt: string;
   media: (CampaignMedia & { color?: string | null }) | null; readsTotal: number; delivered: number; progress: Record<string, number>;
   readsByGroup: { groupId: string; name: string; participants: number | null; count: number }[];
   groups: { group: Group }[]; messages: { content: string }[]; schedules: { time: string }[];
@@ -42,7 +43,7 @@ function Template({ campaign }: { campaign: Campaign }) {
         : <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-slate-100 text-slate-400">{media?.kind === 'video' ? <IconVideo className="h-5 w-5" aria-hidden /> : <IconMessage className="h-5 w-5" aria-hidden />}</span>}
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-semibold">Modelo da mensagem</span>
-        <span className="block truncate text-xs text-muted">{messages[0]?.content ?? 'Sem texto'}</span>
+        <span className="block truncate text-xs text-muted">{plainSummary(messages[0]?.content ?? '') || 'Sem texto'}</span>
       </span>
       <IconChevron className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
     </button>
@@ -111,7 +112,6 @@ export default function CampaignPage() {
   const sent = p.SENT ?? 0;
   const pending = (p.PENDING ?? 0) + (p.PROCESSING ?? 0);
   const next = (deliveries.items ?? []).filter(d => d.wait?.expectedAt).sort((a, b) => Date.parse(a.wait!.expectedAt) - Date.parse(b.wait!.expectedAt))[0];
-  const when = campaign.mode === 'IMMEDIATE' ? 'Fila única' : campaign.schedules.map(s => s.time).join(', ');
   const refresh = () => { reload(); deliveries.reload(); };
   // Tentar de novo (ADR-030): só faz sentido fora de uma campanha encerrada (aí é "usar de novo").
   const canRetry = campaign.status !== 'CANCELLED';
@@ -137,12 +137,10 @@ export default function CampaignPage() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-semibold" title={campaign.name}>{campaign.name}</h1>
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
-                  <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groups.length} grupos</span>
-                  <span>· um a cada {SEND_INTERVAL_LABEL} · {when}</span>
-                  {campaign.status !== 'DRAFT' && campaign.provider === 'simulator' && <span>· simulação</span>}
-                  {campaign.mentionAll && <span className="inline-flex items-center gap-1"><IconMention className="h-3.5 w-3.5" aria-hidden />marca todos</span>}
-                </p>
+                <div className="mt-2">
+                  <CampaignMeta detailed groups={campaign.groups.length} mode={campaign.mode} schedules={campaign.schedules} startsAt={campaign.startsAt} endsAt={campaign.endsAt}
+                    mentionAll={campaign.mentionAll} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
+                </div>
               </div>
               <Badge tone={status.tone}>{status.label}</Badge>
             </div>
@@ -155,7 +153,17 @@ export default function CampaignPage() {
               </div>
               <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full transition-[width] duration-500 ease-out" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
             </>}
-            {next && <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded bg-slate-50 px-3 py-2 text-xs"><IconClock className="h-3.5 w-3.5 text-muted" aria-hidden /><span className="text-muted">Próximo:</span><strong>{next.group.name}</strong><span>por volta das {hora(next.wait!.expectedAt)}{Date.parse(next.wait!.expectedAt) - Date.now() > 60_000 ? ` (${tempoRelativo(next.wait!.expectedAt)})` : ''}</span>{next.wait!.reason && <span className="text-amber-700">· {next.wait!.reason}</span>}</p>}
+            {/* Próximo envio: cada informação na sua linha (nada de "·" solto quando a linha quebra). O
+                motivo "WhatsApp desconectado" não entra aqui: a faixa logo abaixo já diz, com o link. */}
+            {next && <div className="flex items-start gap-2.5 rounded bg-slate-50 px-3 py-2.5 text-xs">
+              <IconClock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-2xs font-medium uppercase tracking-wide text-muted">Próximo envio</p>
+                <p className="truncate font-medium text-ink" title={next.group.name}>{next.group.name}</p>
+                <p className="tabular text-muted">por volta das {hora(next.wait!.expectedAt)}{Date.parse(next.wait!.expectedAt) - Date.now() > 60_000 ? ` (${tempoRelativo(next.wait!.expectedAt)})` : ''}</p>
+                {next.wait!.reason && !(connection !== 'connected' && next.wait!.reason.startsWith('WhatsApp desconectado')) && <p className="text-amber-700">{next.wait!.reason}</p>}
+              </div>
+            </div>}
             <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} groupCount={campaign.groups.length} />
           </div>
         </Card>

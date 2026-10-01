@@ -4,9 +4,10 @@ import { api, errorMessage } from '../lib/api';
 import { deleteCampaign, editAction, editCampaign } from '../lib/campaign-ops';
 import {
   Alert, Badge, Button, ButtonLink, EmptyState, IconButton, LoadMoreSentinel, Page, PageHeader, ScrollArea, Segmented, Skeleton,
-  IconAdd, IconCampaigns, IconDelete, IconEdit, IconGroups, IconMention, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
-  accent, campaignStatus, dia, duracaoRodada, inputClass, useConfirm, useInfiniteList,
+  IconAdd, IconCampaigns, IconDelete, IconEdit, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
+  accent, campaignStatus, inputClass, useConfirm, useInfiniteList,
 } from '../design';
+import { CampaignMeta } from '../components/campaign-meta';
 
 type Campaign = {
   id: string; name: string; startsAt: string; endsAt: string; status: string; provider: string; createdAt: string;
@@ -29,7 +30,6 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
   const total = Object.values(campaign.progress).reduce((a, b) => a + b, 0);
   const sent = campaign.progress.SENT ?? 0;
   const failed = campaign.progress.FAILED ?? 0;
-  const when = campaign.mode === 'IMMEDIATE' ? 'Fila única' : campaign.schedules.map(s => s.time).join(', ');
   const edit = editAction(campaign.status);
   const EditIcon = editIcon[edit.kind];
   return <li className="flex min-w-0 rounded-lg border border-line bg-white shadow-card">
@@ -45,14 +45,10 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
             <h2 className="truncate font-semibold" title={campaign.name}>{campaign.name}</h2>
             <Badge tone={status.tone}>{status.label}</Badge>
           </div>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
-            <span className="inline-flex items-center gap-1"><IconGroups className="h-3.5 w-3.5" aria-hidden />{campaign.groupCount}</span>
-            <span>· {duracaoRodada(campaign.groupCount)} por rodada</span>
-            <span>· {when}</span>
-            {campaign.mode !== 'IMMEDIATE' && <span>· {dia(campaign.startsAt)}–{dia(campaign.endsAt)}</span>}
-            {campaign.status !== 'DRAFT' && campaign.provider === 'simulator' && <span>· simulação</span>}
-            {campaign.mentionAll && <span className="inline-flex items-center gap-0.5"><IconMention className="h-3 w-3" aria-hidden />todos</span>}
-          </p>
+          <div className="mt-1.5">
+            <CampaignMeta groups={campaign.groupCount} mode={campaign.mode} schedules={campaign.schedules} startsAt={campaign.startsAt} endsAt={campaign.endsAt}
+              mentionAll={campaign.mentionAll} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
+          </div>
         </div>
       </div>
       {total > 0 && <div className="mt-3">

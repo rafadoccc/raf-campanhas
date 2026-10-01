@@ -5,7 +5,7 @@ import { IconCheck, IconChevron, IconEmpty, IconHide, IconLoading, IconMore, Ico
 // Peças básicas do design system (docs/design-system.md). Cantos de 5–6 px, borda fina,
 // sombra quase nula. Uma ação principal por área; o resto é secundário ou discreto.
 
-type Icon = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
+export type Icon = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md';
 

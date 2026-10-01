@@ -5,3 +5,4 @@ export * from './format';
 export * from './icons';
 export { ConfirmProvider, useConfirm } from './confirm';
 export { useInfiniteList, LoadMoreSentinel, type PageResult } from './infinite';
+export { Logo, LOGO_VARIANT, type LogoVariant } from './logo';

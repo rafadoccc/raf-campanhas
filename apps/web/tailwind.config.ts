@@ -28,11 +28,16 @@ const config: Config = {
         'fade-in': { from: { opacity: '0', transform: 'translateY(2px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
         'pop-in': { from: { opacity: '0', transform: 'scale(0.96) translateY(-2px)' }, to: { opacity: '1', transform: 'scale(1) translateY(0)' } },
         'overlay-in': { from: { opacity: '0' }, to: { opacity: '1' } },
+        // Troca de página (notas de atualização): o conteúdo entra do lado para onde se avançou.
+        'slide-from-right': { from: { opacity: '0', transform: 'translateX(14px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
+        'slide-from-left': { from: { opacity: '0', transform: 'translateX(-14px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
       },
       animation: {
         'fade-in': 'fade-in 200ms ease-out backwards',
         'pop-in': 'pop-in 150ms ease-out backwards',
         'overlay-in': 'overlay-in 150ms ease-out backwards',
+        'slide-from-right': 'slide-from-right 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards',
+        'slide-from-left': 'slide-from-left 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards',
       },
     },
     borderRadius: {

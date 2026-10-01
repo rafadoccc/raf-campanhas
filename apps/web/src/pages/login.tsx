@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { Alert, Button, Field, PasswordInput, inputClass } from '../design';
+import { Alert, Button, Field, Logo, PasswordInput, inputClass } from '../design';
 
 export default function LoginPage() {
   const { user, signIn } = useAuth();
@@ -28,8 +28,8 @@ export default function LoginPage() {
   return <main className="flex min-h-full items-center justify-center p-6">
     <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-white p-6 shadow-card">
       <header>
-        <p className="text-2xs font-medium uppercase tracking-wide text-muted">DocDrop</p>
-        <h1 className="text-lg font-semibold leading-tight">Entrar</h1>
+        <Logo className="text-2xl" />
+        <h1 className="mt-3 text-sm font-medium leading-tight text-muted">Entre para continuar</h1>
       </header>
       {!hasUsers && <Alert tone="warning">Nenhum usuário cadastrado ainda. Defina <code>ADMIN_EMAIL</code> e <code>ADMIN_PASSWORD</code> e reinicie o sistema, ou rode <code>npm run user:create</code>.</Alert>}
       {error && <Alert>{error}</Alert>}

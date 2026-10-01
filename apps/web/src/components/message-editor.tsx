@@ -34,6 +34,15 @@ function renderLine(line: string, key: string): ReactNode[] {
   });
 }
 
+/** Uma linha de texto limpo, sem os marcadores (*negrito*, _itálico_…), para resumos. */
+export function plainSummary(text: string) {
+  return text
+    .replace(/```([^`]+)```/g, '$1')
+    .replace(/([*_~])(\S(?:[^*_~\n]*\S)?)\1/g, '$2')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Balão no jeito do WhatsApp, com a formatação e o @todos (usado no editor e no detalhe). */
 export function WhatsAppPreview({ text, mentionAll }: { text: string; mentionAll: boolean }) {
   const shown = mentionAll ? placeMentionAll(text) : text;

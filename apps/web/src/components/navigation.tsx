@@ -3,7 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/api';
 import { hasUnseenReleaseNotes } from '../lib/release-notes-seen';
-import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, Menu } from '../design';
+import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, Logo, Menu } from '../design';
 
 const items = [
   { label: 'Início', to: '/', icon: IconHome },
@@ -15,6 +15,7 @@ const items = [
 const itemClass = (active: boolean) =>
   `inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2.5 text-sm transition-colors ${active ? 'bg-slate-100 font-medium text-ink' : 'text-muted hover:bg-slate-50 hover:text-ink'}`;
 const linkClass = ({ isActive }: { isActive: boolean }) => itemClass(isActive);
+const iconOnly = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted transition-colors hover:bg-slate-50 hover:text-ink disabled:opacity-50';
 
 export function Navigation() {
   const { user, signOut } = useAuth();
@@ -28,17 +29,12 @@ export function Navigation() {
   // No celular o nome do sistema sai: sem ele, todos os ícones cabem (antes WhatsApp e
   // Administração ficavam escondidos numa rolagem lateral). Só ícone = rótulo em aria-label.
   return <nav className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-white px-2 sm:px-4">
-    <Link to="/" className="mr-3 hidden shrink-0 truncate font-semibold tracking-tight sm:block">DocDrop</Link>
+    <Link to="/" className="mr-3 hidden shrink-0 sm:block" aria-label="DocDrop: ir para o Início"><Logo className="text-base" /></Link>
     <div className="scroll-area flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden">
       {/* Rótulo só a partir do lg (1024 px): entre 640 e 1023 (tablet e telas médias) só ícone
           cabe sem forçar uma rolagem lateral escondida no meio do menu. */}
       {items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={linkClass} aria-label={label} title={label}><Icon className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">{label}</span></NavLink>)}
       {admin && <NavLink to="/admin" className={linkClass} aria-label="Administração" title="Administração"><IconAdmin className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">Administração</span></NavLink>}
-      {/* Notas de atualização: só o ícone, discreto. O pontinho avisa que há versão nova não lida. */}
-      <Link to="/notas" className={`${itemClass(false)} relative`} aria-label={unseenNotes ? 'Notas de atualização (há novidades)' : 'Notas de atualização'} title="Notas de atualização">
-        <IconNotes className="h-4 w-4" aria-hidden />
-        {unseenNotes && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden />}
-      </Link>
     </div>
     <div className="ml-auto flex shrink-0 items-center gap-1">
       {/* Clicar no nome abre um menu (em vez de ir direto para a troca de senha). */}
@@ -51,11 +47,16 @@ export function Navigation() {
           { label: 'Termos de Uso', icon: IconDocument, onSelect: () => navigate('/termos') },
         ]} />
       {logoutError && <span role="alert" className="max-w-44 text-xs text-red-700" title={logoutError}>Não foi possível sair. Tente novamente.</span>}
-      <button type="button" disabled={loggingOut} onClick={() => {
+      {/* Novidades e Sair: só ícone, do mesmo tamanho. O pontinho avisa que há versão nova não lida. */}
+      <Link to="/notas" className={`${iconOnly} relative`} aria-label={unseenNotes ? 'Novidades (há atualizações não lidas)' : 'Novidades'} title="Novidades do sistema">
+        <IconNotes className="h-4 w-4" aria-hidden />
+        {unseenNotes && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-brand-500 ring-2 ring-white" aria-hidden />}
+      </Link>
+      <button type="button" disabled={loggingOut} aria-label="Sair" title="Sair" className={iconOnly} onClick={() => {
         setLoggingOut(true); setLogoutError('');
         void signOut().catch(error => setLogoutError(errorMessage(error))).finally(() => setLoggingOut(false));
-      }} className="inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-sm text-muted hover:bg-slate-50 hover:text-ink disabled:opacity-50" title="Sair">
-        <IconLogout className="h-4 w-4" aria-hidden /><span className="hidden lg:inline">Sair</span>
+      }}>
+        <IconLogout className="h-4 w-4" aria-hidden />
       </button>
     </div>
   </nav>;

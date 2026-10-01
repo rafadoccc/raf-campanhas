@@ -57,5 +57,8 @@ export {
   Download as IconDownload,
   FileText as IconDocument,
   Lock as IconPrivacy,
-  ScrollText as IconNotes,
+  Sparkles as IconNotes,
+  CalendarDays as IconPeriod,
+  ChevronLeft as IconPrevious,
+  ChevronRight as IconNext,
 } from 'lucide-react';
