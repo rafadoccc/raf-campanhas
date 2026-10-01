@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-10-01T00:40Z · claude
+
+**Fiz:** ajustes de interface pedidos pelo dono.
+- **Logo em texto** (`design/logo.tsx`): três modelos (`queda`, `gota`, `peso`); o sistema usa o de
+  `LOGO_VARIANT` (hoje `queda`) no menu, na entrada, nas páginas legais e nas notas.
+- **Resumo da campanha** (`components/campaign-meta.tsx`): um componente só para o cartão da lista
+  e o topo do detalhe; cada informação com o próprio ícone e sem "·" entre elas (o separador
+  ficava solto no começo da linha ao quebrar). O intervalo fixo saiu dali (é igual para todas).
+- **Próximo envio** no detalhe em linhas próprias; o motivo "WhatsApp desconectado" não repete a
+  faixa amarela logo abaixo. O resumo do "Modelo da mensagem" não mostra mais os asteriscos.
+- **Menu:** Novidades (ícone novo) e Sair ficaram só com ícone, lado a lado, à direita.
+- **Notas:** paginação central com setas e números, e o conteúdo desliza para o lado da troca.
+**Arquivos:** apps/web/src/{design/logo.tsx,design/index.ts,design/icons.ts,design/primitives.tsx,components/campaign-meta.tsx,components/navigation.tsx,components/message-editor.tsx,pages/{campaigns,campaign-detail,release-notes,login,legal}.tsx}, apps/web/tailwind.config.ts
+**Tarefas:** T-140 (concluída).
+**Estado:** compila · lint ok · unitários 84/84 + 7 do painel. Conferido no navegador com dados de exemplo.
+**Armadilhas:**
+- O dono ainda vai escolher o modelo da logo: trocar é mudar `LOGO_VARIANT` em `design/logo.tsx`.
+- Resumo de campanha novo? Use `CampaignMeta`; não monte a linha à mão com "·".
+- Push só na dev; o dono leva para a main.
+**Próximo passo sugerido:** aplicar o modelo de logo escolhido e registrar a versão nas notas quando for para a main.
+
+---
+
 ## 2026-10-01T00:14Z · claude
 
 **Fiz:** página de notas de atualização para o cliente (`/notas`), no visual do DocDrop e
