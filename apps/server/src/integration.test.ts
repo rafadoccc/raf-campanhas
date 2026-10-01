@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
-import { purgeExpiredData } from './legal';
+import { deleteAccount, purgeExpiredData } from './legal';
 import { checkRejections, safetyPause, SAFETY_REASONS, REJECTIONS_TO_PAUSE } from './safety';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
@@ -509,6 +509,35 @@ test('login sets a hardened cookie, logout and expiry end the session, wrong pas
     assert.equal(blocked.statusCode, 429);
     assert.match(blocked.json().error, /Aguarde/);
   } finally { await probe.close(); }
+});
+
+test('revocation between session lookup and refresh returns 401 without recreating the session', async () => {
+  for (const renewal of [true, false]) {
+    const { user, call } = await lgpdUser(`revoked-refresh-${renewal}@teste.local`);
+    const session = await prisma.authSession.findFirstOrThrow({ where: { userId: user.id } });
+    await prisma.authSession.update({
+      where: { id: session.id },
+      data: {
+        expiresAt: new Date(Date.now() + (renewal ? 60_000 : 200 * 3_600_000)),
+        lastSeenAt: new Date(Date.now() - 10 * 60_000),
+      },
+    });
+    const original = prisma.authSession.findUnique;
+    const lookup = original.bind(prisma.authSession);
+    // O delegate Prisma é um Proxy sem descriptor de método: restaura a substituição
+    // explicitamente, em vez de usar mock.method, que depende desse descriptor.
+    prisma.authSession.findUnique = (async (...args: Parameters<typeof lookup>) => {
+      const row = await lookup(...args);
+      if (row?.id === session.id) await prisma.authSession.delete({ where: { id: row.id } });
+      return row;
+    }) as unknown as typeof original;
+    try {
+      const response = await call('GET', '/api/auth/me');
+      assert.equal(response.statusCode, 401, response.body);
+      assert.equal(response.headers['set-cookie'], undefined, 'não renova cookie revogado');
+      assert.equal(await prisma.authSession.count({ where: { id: session.id } }), 0);
+    } finally { prisma.authSession.findUnique = original; }
+  }
 });
 
 test('someone who knows the e-mail cannot lock the owner out from the device already logged in', async () => {
@@ -3096,6 +3125,52 @@ test('LGPD: deleting the account needs the password and erases everything of tha
   assert.equal(byAdmin.statusCode, 200, byAdmin.body);
   assert.equal(await prisma.campaign.count({ where: { id: other.id } }), 0);
   await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'USER', disabledAt: new Date() } });
+});
+
+test('account deletion rejects a password changed after confirmation and preserves all data', async () => {
+  const { user } = await lgpdUser('delete-stale-password@teste.local');
+  const campaign = await lgpdCampaign(user.id, 'Preservada');
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword('senha-nova-de-teste-123') } });
+  let disconnected = false;
+  await assert.rejects(deleteAccount(user.id, {
+    disconnect: async () => { disconnected = true; },
+    sessionDirFor: id => whatsappSessionDir(id, suiteSessions),
+  }, user.passwordHash), /senha foi alterada/i);
+  assert.ok(await prisma.user.findUnique({ where: { id: user.id } }));
+  assert.ok(await prisma.campaign.findUnique({ where: { id: campaign.id } }));
+  assert.equal(disconnected, false);
+});
+
+test('account deletion waits for a concurrent role change and cannot delete a promoted administrator', async () => {
+  const { user } = await lgpdUser('delete-promoted@teste.local');
+  let locked!: () => void;
+  let release!: () => void;
+  const hasLock = new Promise<void>(resolve => { locked = resolve; });
+  const unlock = new Promise<void>(resolve => { release = resolve; });
+  const promotion = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${user.id} FOR UPDATE`;
+    locked();
+    await unlock;
+    await tx.user.update({ where: { id: user.id }, data: { role: 'SUPER_ADMIN' } });
+  });
+  await hasLock;
+  let disconnected = false;
+  const deletion = assert.rejects(deleteAccount(user.id, {
+    disconnect: async () => { disconnected = true; },
+    sessionDirFor: id => whatsappSessionDir(id, suiteSessions),
+  }), /administrador não pode ser excluída/i);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    release();
+    await promotion;
+    await deletion;
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).role, 'SUPER_ADMIN');
+    assert.equal(disconnected, false);
+  } finally {
+    release();
+    await promotion;
+    await prisma.user.updateMany({ where: { id: user.id }, data: { role: 'USER', disabledAt: new Date() } });
+  }
 });
 
 test('LGPD: retention sweep erases deleted and 6-month-old finished campaigns, orphan media and old gone groups', async () => {

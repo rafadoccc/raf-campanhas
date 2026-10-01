@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { prisma, lockCampaign, LOCKING_TRANSACTION } from '@campaign/database';
+import { prisma, currentTime, lockCampaign, LOCKING_TRANSACTION } from '@campaign/database';
 import type { AppConfig } from './config';
 import { TERMS_VERSION, ServerBusyError, clearSessionCookie, requireSuperAdmin, verifyPassword } from './auth';
 import { publicMessage } from './security';
@@ -32,11 +32,17 @@ type WhatsAppControl = {
  * Apaga a conta e TUDO dela: campanhas (com mensagens, horários, envios e leituras), mídias,
  * grupos, sessões de login, conexão e pasta do WhatsApp. Sem volta.
  */
-export async function deleteAccount(userId: string, whatsapp: WhatsAppControl) {
+export async function deleteAccount(userId: string, whatsapp: WhatsAppControl, expectedPasswordHash?: string) {
   await prisma.$transaction(async tx => {
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { id: true, role: true, whatsapp: { select: { accountJid: true } } } });
+    // Serializa com troca de senha, promoção a administrador e criação de dados com FK.
+    // A senha é verificada fora da transação; o hash precisa continuar sendo o mesmo aqui.
+    await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { id: true, role: true, passwordHash: true, whatsapp: { select: { accountJid: true } } } });
     if (!user) throw new AccountError('Conta não encontrada.', 404);
     if (user.role === 'SUPER_ADMIN') throw new AccountError('Conta de administrador não pode ser excluída. Passe o papel de administrador para outra conta antes.');
+    if (expectedPasswordHash !== undefined && user.passwordHash !== expectedPasswordHash) {
+      throw new AccountError('A senha foi alterada durante a confirmação. Entre novamente e tente de novo.', 409);
+    }
     const campaigns = await tx.campaign.findMany({ where: { userId }, select: { id: true, accountJid: true } });
     // Mesma ordem de travas do despachante (número, depois campanha): sem impasse com um envio.
     const numbers = [...new Set([user.whatsapp?.accountJid, ...campaigns.map(c => c.accountJid)].filter((jid): jid is string => Boolean(jid)))].sort();
@@ -119,7 +125,8 @@ export async function exportAccount(userId: string) {
  * - grupos que saíram do WhatsApp há mais de RETENTION_DAYS e não estão em nenhuma campanha.
  * `userId` restringe a uma conta (usado nos testes).
  */
-export async function purgeExpiredData(now = new Date(), options: { userId?: string; batch?: number } = {}) {
+export async function purgeExpiredData(now?: Date, options: { userId?: string; batch?: number } = {}) {
+  now ??= await currentTime();
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS);
   const owner = options.userId ? { userId: options.userId } : {};
   const expired = { OR: [{ deletedAt: { not: null } }, { status: { in: ['COMPLETED', 'CANCELLED'] as ('COMPLETED' | 'CANCELLED')[] }, updatedAt: { lt: cutoff } }] };
@@ -142,14 +149,33 @@ export async function purgeExpiredData(now = new Date(), options: { userId?: str
 }
 
 /** Roda a limpeza na partida (depois de 2 min) e a cada 6 horas. */
-export function startRetentionSweep() {
-  const run = () => void purgeExpiredData()
-    .then(result => { if (result.campaigns || result.media || result.groups) console.info('[LGPD] Limpeza do prazo de guarda:', JSON.stringify(result)); })
-    .catch(error => console.warn('[LGPD] Limpeza do prazo de guarda falhou:', error instanceof Error ? error.message : error));
-  const first = setTimeout(run, 2 * 60_000);
-  const timer = setInterval(run, 6 * 3_600_000);
+export function startRetentionSweep(options: {
+  initialDelayMs?: number;
+  intervalMs?: number;
+  purge?: () => ReturnType<typeof purgeExpiredData>;
+} = {}) {
+  let stopped = false;
+  let running: Promise<void> | null = null;
+  const run = () => {
+    if (stopped || running) return;
+    running = Promise.resolve().then(options.purge ?? (() => purgeExpiredData()))
+      .then(result => {
+        if (result.campaigns || result.media || result.groups) {
+          console.info('[LGPD] Limpeza do prazo de guarda:', JSON.stringify(result));
+        }
+      })
+      .catch(error => console.warn('[LGPD] Limpeza do prazo de guarda falhou:', error instanceof Error ? error.message : error))
+      .finally(() => { running = null; });
+  };
+  const first = setTimeout(run, options.initialDelayMs ?? 2 * 60_000);
+  const timer = setInterval(run, options.intervalMs ?? 6 * 3_600_000);
   first.unref(); timer.unref();
-  return () => { clearTimeout(first); clearInterval(timer); };
+  return async () => {
+    stopped = true;
+    clearTimeout(first);
+    clearInterval(timer);
+    await running;
+  };
 }
 
 export function registerLegalRoutes(app: FastifyInstance, config: AppConfig, whatsapp: WhatsAppControl) {
@@ -176,7 +202,7 @@ export function registerLegalRoutes(app: FastifyInstance, config: AppConfig, wha
       if (typeof password !== 'string' || !password || password.length > 200) throw new AccountError('Digite a sua senha para confirmar.');
       const user = await prisma.user.findUniqueOrThrow({ where: { id: request.user!.id }, select: { passwordHash: true } });
       if (!await verifyPassword(password, user.passwordHash)) throw new AccountError('Senha incorreta.');
-      await deleteAccount(request.user!.id, whatsapp);
+      await deleteAccount(request.user!.id, whatsapp, user.passwordHash);
       clearSessionCookie(reply, config);
       return { deleted: true };
     } catch (error) {

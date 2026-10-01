@@ -194,10 +194,20 @@ async function resolveSession(request: FastifyRequest, reply: FastifyReply, conf
   if (session.expiresAt.getTime() - now < config.sessionTtlMs / 2) {
     // Renova, mas nunca além do prazo absoluto.
     const expiresAt = Math.min(now + config.sessionTtlMs, hardLimit);
-    await prisma.authSession.update({ where: { id: session.id }, data: { expiresAt: new Date(expiresAt), lastSeenAt: new Date(now) } });
+    // Logout, troca de senha ou desativação podem revogar a sessão depois da leitura.
+    // Não recria nem renova uma sessão revogada, e responde 401 em vez de erro 500.
+    const changed = await prisma.authSession.updateMany({
+      where: { id: session.id, expiresAt: { gt: new Date(now) }, user: { disabledAt: null } },
+      data: { expiresAt: new Date(expiresAt), lastSeenAt: new Date(now) },
+    });
+    if (!changed.count) return null;
     setSessionCookie(reply, config, token, expiresAt - now);
   } else if (now - session.lastSeenAt.getTime() > 5 * 60_000) {
-    await prisma.authSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date(now) } });
+    const changed = await prisma.authSession.updateMany({
+      where: { id: session.id, expiresAt: { gt: new Date(now) }, user: { disabledAt: null } },
+      data: { lastSeenAt: new Date(now) },
+    });
+    if (!changed.count) return null;
   }
   return publicSessionUser(session.user);
 }

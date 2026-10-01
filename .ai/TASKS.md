@@ -12,6 +12,7 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[~] T-141  Revisar concorrência na exclusão de conta, sessões web e encerramento do servidor  owner: codex   since: 2026-10-01T00:39Z
 [x] T-125  Corrigir achados críticos de autenticação, concorrência e sessão; validar regressões  owner: —   since: —
 [!] T-126  Persistir eventos de entrega/recusa anteriores ao envio; aguarda aprovação da migration  owner: —   since: —
 ```
