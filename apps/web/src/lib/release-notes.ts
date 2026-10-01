@@ -28,6 +28,9 @@ export const RELEASES: Release[] = [
         '**Relatório da campanha:** envios, entregas, visualizações e alcance por grupo e por dia. Dá para imprimir, salvar em PDF ou mandar um link para quem não tem login.',
         '**Resumo do dia:** clique num dia do gráfico do Início para ver os números daquele dia, por hora e por campanha.',
         '**Sugestões e críticas:** no menu da sua conta, conte o que quer, o que quebrou ou o que incomoda, e acompanhe a resposta.',
+        '**Modelos de campanha:** salve uma campanha como modelo e crie a próxima em dois cliques, já com texto, mídia, grupos e horários.',
+        '**Listas de grupos:** dê um nome a um conjunto de grupos e marque todos de uma vez ao montar a campanha.',
+        '**Esqueci minha senha:** peça uma senha nova na tela de entrada e receba um link de uso único para criar outra.',
       ] },
       { tipo: 'melhorado', itens: [
         'Resumo da campanha mais limpo: grupos, horários, período e duração da rodada, cada um com o seu ícone.',

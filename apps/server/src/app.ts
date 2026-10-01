@@ -18,6 +18,8 @@ import { registerLegalRoutes } from './legal';
 import { registerNumberProtectionRoutes, safetyNotice, warmupStatus } from './number-protection-routes';
 import { registerReportRoutes } from './report';
 import { registerFeedbackRoutes } from './feedback-routes';
+import { registerPasswordReset } from './password-reset';
+import { registerGroupListRoutes } from './group-lists';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -114,6 +116,9 @@ registerNumberProtectionRoutes(app, async userId => (await sending.forOwner(user
 // Relatório da campanha, números por dia e canal de sugestões e críticas (ADR-045).
 registerReportRoutes(app);
 registerFeedbackRoutes(app);
+// Esqueci minha senha, listas de grupos (ADR-047). Os modelos de campanha ficam em campaign-routes.
+registerPasswordReset(app, config);
+registerGroupListRoutes(app);
 // Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
 registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
 // Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de
@@ -127,7 +132,8 @@ app.get('/api/campaigns', async request => {
   const statuses = (typeof query.status === 'string' ? query.status.split(',') : []).filter((x): x is typeof allowed[number] => (allowed as readonly string[]).includes(x));
   const search = typeof query.q === 'string' ? query.q.trim().slice(0, 100) : '';
   const page = await prisma.campaign.findMany({
-    where: { deletedAt: null, userId: request.user!.id, ...(statuses.length ? { status: { in: statuses } } : {}), ...(search ? { name: { contains: search } } : {}) },
+    // Modelos (ADR-047) têm a própria lista (/api/templates): não entram aqui.
+    where: { deletedAt: null, isTemplate: false, userId: request.user!.id, ...(statuses.length ? { status: { in: statuses } } : {}), ...(search ? { name: { contains: search } } : {}) },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: take + 1,
     ...(typeof query.cursor === 'string' && query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
@@ -211,10 +217,13 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   const times = Array.isArray(body?.times) ? body.times.filter((time): time is string => typeof time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(time)) : [];
   if (Array.isArray(body?.groupIds) && (groupIds.length !== body.groupIds.length || new Set(groupIds).size !== groupIds.length)) return reply.code(400).send({ error: 'Grupos inválidos ou repetidos.' });
   if (Array.isArray(body?.messages) && messages.length !== body.messages.length) return reply.code(400).send({ error: 'Há mensagens vazias ou inválidas.' });
+  // Modelo (ADR-047): as datas não valem nada (são refeitas ao usar o modelo), então editar um
+  // modelo antigo não pode ser barrado por "data passada" nem por "horário já passou".
+  const template = method === 'PATCH' && await prisma.campaign.count({ where: { id: (request.params as { id: string }).id, userId: request.user!.id, deletedAt: null, isTemplate: true } }) > 0;
   if (mode === 'SCHEDULED') {
     const start = String(body.startsAt ?? ''); const end = String(body.endsAt ?? '');
     const today = DateTime.fromJSDate(now, { zone: TIME_ZONE }).toISODate()!;
-    if (![start, end].every(s => /^\d{4}-\d{2}-\d{2}$/.test(s) && DateTime.fromISO(s).isValid) || end < today || endsAt.getTime() - startsAt.getTime() > 366 * 86400000 || !Array.isArray(body.times) || times.length !== body.times.length || times.length > 24) return reply.code(400).send({ error: 'Informe datas atuais/futuras (até 366 dias) e horários válidos.' });
+    if (![start, end].every(s => /^\d{4}-\d{2}-\d{2}$/.test(s) && DateTime.fromISO(s).isValid) || (!template && end < today) || endsAt.getTime() - startsAt.getTime() > 366 * 86400000 || !Array.isArray(body.times) || times.length !== body.times.length || times.length > 24) return reply.code(400).send({ error: 'Informe datas atuais/futuras (até 366 dias) e horários válidos.' });
   }
 
   if (!name || name.length > 200 || Number.isNaN(startsAt.valueOf()) || Number.isNaN(endsAt.valueOf()) || endsAt < startsAt || !groupIds.length || groupIds.length > 500 || !messages.length || messages.length > 20 || messages.some(m => m.length > 10000) || (mode === 'SCHEDULED' && !times.length)) {
@@ -224,7 +233,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
   const groupsFound = await prisma.group.count({ where: { id: { in: groupIds }, active: true, userId: request.user!.id } });
   if (groupsFound !== new Set(groupIds).size) return reply.status(400).send({ error: 'Um ou mais grupos selecionados não existem ou estão inativos.' });
 
-  if (mode === 'SCHEDULED' && !times.some(time => DateTime.fromISO(`${String(body.endsAt)}T${time}`, { zone: 'America/Sao_Paulo' }).toMillis() > now.getTime())) return reply.code(400).send({ error: 'Todos os horários já passaram no fuso de São Paulo. Escolha um horário futuro, outra data ou Fila única.' });
+  if (!template && mode === 'SCHEDULED' && !times.some(time => DateTime.fromISO(`${String(body.endsAt)}T${time}`, { zone: 'America/Sao_Paulo' }).toMillis() > now.getTime())) return reply.code(400).send({ error: 'Todos os horários já passaram no fuso de São Paulo. Escolha um horário futuro, outra data ou Fila única.' });
 
   if (method === 'PATCH') {
     const { id } = request.params as { id: string };
@@ -270,6 +279,8 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id }, include: { groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
       if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
+      // Modelo nunca é enviado nem encerrado: fica em rascunho; "usar" cria a campanha (ADR-047).
+      if (campaign.isTemplate) throw new Error('Um modelo não é enviado. Use o modelo para criar uma campanha.');
       const transitions: Record<string, string[]> = { DRAFT: ['ACTIVE', 'CANCELLED'], ACTIVE: ['PAUSED', 'CANCELLED'], PAUSED: ['ACTIVE', 'CANCELLED'], CANCELLED: [], COMPLETED: [] };
       if (!transitions[campaign.status].includes(next)) throw new Error('Mudança de status não permitida.');
       let campaignProvider = campaign.provider; let accountJid = campaign.accountJid;

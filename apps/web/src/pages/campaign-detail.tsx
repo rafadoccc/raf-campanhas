@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { MediaPreview, type CampaignMedia } from '../components/campaign-media';
 import { CampaignActions } from '../components/campaign-actions';
 import { WhatsAppPreview, plainSummary } from '../components/message-editor';
@@ -15,7 +15,7 @@ import { CampaignMeta } from '../components/campaign-meta';
 
 type Group = { name: string; participants: number | null };
 type Campaign = {
-  id: string; name: string; status: string; provider: string; mode: string; mentionAll: boolean; startsAt: string; endsAt: string;
+  id: string; name: string; status: string; isTemplate?: boolean; provider: string; mode: string; mentionAll: boolean; startsAt: string; endsAt: string;
   media: (CampaignMedia & { color?: string | null }) | null; readsTotal: number; delivered: number; progress: Record<string, number>;
   readsByGroup: { groupId: string; name: string; participants: number | null; count: number }[];
   groups: { group: Group }[]; messages: { content: string }[]; schedules: { time: string }[];
@@ -105,6 +105,8 @@ export default function CampaignPage() {
   if (!data) return <Page>{error ? <p>Não foi possível carregar a campanha. <Link to="/campanhas" className="underline">Voltar</Link></p> : <><Skeleton className="h-8 w-64" /><Skeleton className="h-40" /></>}</Page>;
 
   const { campaign, connection } = data;
+  // Modelo (ADR-047) não tem envios nem relatório: o endereço dele abre direto a edição.
+  if (campaign.isTemplate) return <Navigate to={`/campanhas/${campaign.id}/editar`} replace />;
   const status = campaignStatus[campaign.status] ?? campaignStatus.DRAFT;
   const color = accent(campaign.media?.color);
   const p = campaign.progress;

@@ -38,7 +38,9 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
           ...publicUser,
           whatsapp: { select: { state: true, accountJid: true, lastConnectedAt: true, lastError: true } },
           sessions: { orderBy: { lastSeenAt: 'desc' }, take: 1, select: { lastSeenAt: true } },
-          _count: { select: { campaigns: { where: { deletedAt: null } }, groups: { where: { active: true } } } },
+          // Pedido de nova senha ainda sem link (ADR-047): o administrador gera e manda o link.
+          passwordResets: { where: { tokenHash: null }, orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+          _count: { select: { campaigns: { where: { deletedAt: null, isTemplate: false } }, groups: { where: { active: true } } } },
         },
       }),
       prisma.campaign.groupBy({ by: ['userId'], where: { status: 'ACTIVE', deletedAt: null }, _count: { _all: true } }),
@@ -49,13 +51,14 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
         GROUP BY c.userId, d.status`,
       legacySessionOwnerId(legacy).catch(() => null),
     ]);
-    return users.map(({ sessions, _count, whatsapp, ...user }) => {
+    return users.map(({ sessions, passwordResets, _count, whatsapp, ...user }) => {
       // Estado ao vivo quando a conexão está em memória; senão, o último registrado. Sem QR.
       const live = user.id === legacyOwner ? legacy.legacyProvider.status() : manager.peek(user.id)?.status();
       const count = (status: string) => Number(results.find(r => r.userId === user.id && r.status === status)?.n ?? 0);
       return {
         ...user,
         lastSeenAt: sessions[0]?.lastSeenAt ?? null,
+        passwordResetRequestedAt: passwordResets[0]?.createdAt ?? null,
         whatsapp: {
           state: live?.state ?? whatsapp?.state ?? 'disconnected',
           accountJid: live?.accountJid ?? whatsapp?.accountJid ?? null,

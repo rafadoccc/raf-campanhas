@@ -13,7 +13,8 @@ export const SESSION_COOKIE = 'campanhas_sessao';
 // /api/legal: contato e versão dos Termos, que as páginas públicas de Privacidade e Termos mostram.
 // /api/public/report/:token: relatório da campanha pelo código do link (ADR-045); é o padrão da
 // ROTA casada pelo Fastify (api-path.ts), então nenhum outro endereço cai aqui.
-const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup', '/api/legal', '/api/public/report/:token']);
+// /api/auth/forgot e /api/auth/reset/:token: "esqueci minha senha" (ADR-047), por definição sem login.
+const PUBLIC_API = new Set(['/api/health', '/api/auth/login', '/api/auth/setup', '/api/legal', '/api/public/report/:token', '/api/auth/forgot', '/api/auth/reset/:token']);
 
 // Papéis (ADR-016). O papel vem SEMPRE do banco, pela sessão validada no servidor; nada que o
 // navegador envie (corpo, cabeçalho, cookie próprio) decide permissão.

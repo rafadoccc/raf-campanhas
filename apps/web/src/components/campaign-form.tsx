@@ -5,14 +5,16 @@ import { ServerClock } from './server-clock';
 import { screenCache } from '../lib/cache';
 import { CampaignMediaInput, type CampaignMedia } from './campaign-media';
 import { MessageEditor } from './message-editor';
+import { GroupListsBar } from './group-lists';
+import { loadTemplates, startFromTemplate, type Template } from './templates';
 import {
   Alert, Button, Card, Checkbox, Field, IconButton, Page, PageHeader, ScrollArea, Segmented,
-  IconAdd, IconBack, IconMoveDown, IconMoveUp, IconRemove, IconSearch,
+  IconAdd, IconBack, IconMoveDown, IconMoveUp, IconRemove, IconSearch, IconTemplate,
   buttonClass, inputClass, membros, SEND_INTERVAL_LABEL, duracaoRodada,
 } from '../design';
 
 type Group = { id: string; name: string; active: boolean; externalId: string | null; adminOnly: boolean | null; isAdmin: boolean | null; participants: number | null };
-type CampaignDraft = { status: string; name: string; startsAt: string; endsAt: string; mode: string; mentionAll: boolean; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
+type CampaignDraft = { status: string; isTemplate?: boolean; name: string; startsAt: string; endsAt: string; mode: string; mentionAll: boolean; media: CampaignMedia | null; messages: { content: string }[]; groups: { groupId: string }[]; schedules: { time: string }[] };
 // Só duas opções: lado a lado (Segmented), sem abrir menu.
 const modeOptions = [{ value: 'IMMEDIATE', label: 'Ao iniciar' }, { value: 'SCHEDULED', label: 'Em horários diários' }] as const;
 
@@ -53,6 +55,23 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const selectVisible = () => setSelected(current => [...current, ...visible.map(group => group.id).filter(id => !current.includes(id))]);
   const blocked = selected.filter(id => byId(id)?.adminOnly && byId(id)?.isAdmin === false).length;
   const [initial, setInitial] = useState({ name: '', startsAt: '', endsAt: '', messages: [''] });
+  // Modelo (ADR-047): é uma campanha guardada para reaproveitar. Este mesmo formulário o edita;
+  // muda só o que não faz sentido num modelo (as datas, escolhidas ao usar) e para onde volta.
+  const [isTemplate, setIsTemplate] = useState(false);
+  // Campanha nova: os modelos guardados aparecem no topo, para começar por um deles.
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [startingFrom, setStartingFrom] = useState<string | null>(null);
+  useEffect(() => {
+    if (campaignId) return;
+    const controller = new AbortController();
+    loadTemplates(controller.signal).then(setTemplates).catch(() => undefined);
+    return () => controller.abort();
+  }, [campaignId]);
+  async function startFrom(template: Template) {
+    setStartingFrom(template.id); setError('');
+    try { navigate(`/campanhas/${await startFromTemplate(template.id)}/editar`); }
+    catch (e) { setError(errorMessage(e, 'Não foi possível usar o modelo.')); setStartingFrom(null); }
+  }
   useEffect(() => {
     if (!campaignId) return;
     const controller = new AbortController();
@@ -60,7 +79,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
     api<CampaignDraft>(`/campaigns/${campaignId}`, { signal: controller.signal }).then(data => {
       if (controller.signal.aborted || screenCache.generation() !== generation) return;
       if (data.status !== 'DRAFT') throw Error('Somente rascunhos podem ser editados.');
-      setMedia(data.media ?? null);
+      setMedia(data.media ?? null); setIsTemplate(data.isTemplate === true);
       setInitial({ name: data.name, startsAt: data.startsAt.slice(0, 10), endsAt: data.endsAt.slice(0, 10), messages: data.messages.map(m => m.content) });
       setSelected(data.groups.map(g => g.groupId)); setMode(data.mode === 'SCHEDULED' ? 'SCHEDULED' : 'IMMEDIATE'); setMentionAll(data.mentionAll ?? false);
       setTimes(data.schedules.length ? data.schedules.map(s => s.time) : ['09:00']); setLoaded(true);
@@ -87,17 +106,28 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         const result = await api<CampaignMedia & { id: string }>(`/media?name=${encodeURIComponent(media.name)}`, { method: 'POST', headers: { 'Content-Type': media.mimeType }, body: media.file });
         mediaId = result.id; setMedia(result);
       }
-      const data = await api<{ id: string }>(`/campaigns${campaignId ? `/${campaignId}` : ''}`, { method: campaignId ? 'PATCH' : 'POST', json: { mediaId, name: form.get('name'), mode, mentionAll, startsAt: form.get('startsAt'), endsAt: form.get('endsAt'), groupIds: selected, messages: form.getAll('message'), times: mode === 'SCHEDULED' ? times : [] } });
-      navigate(`/campanhas/${data.id}`);
+      // Modelo não mostra os campos de data: vão as que ele já tinha (o servidor não as confere
+      // num modelo, e elas são refeitas ao usar).
+      const dates = isTemplate ? { startsAt: initial.startsAt, endsAt: initial.endsAt } : { startsAt: form.get('startsAt'), endsAt: form.get('endsAt') };
+      const data = await api<{ id: string }>(`/campaigns${campaignId ? `/${campaignId}` : ''}`, { method: campaignId ? 'PATCH' : 'POST', json: { mediaId, name: form.get('name'), mode, mentionAll, ...dates, groupIds: selected, messages: form.getAll('message'), times: mode === 'SCHEDULED' ? times : [] } });
+      navigate(isTemplate ? '/campanhas?aba=modelos' : `/campanhas/${data.id}`);
     } catch (e) { setError(errorMessage(e, 'Não foi possível salvar a campanha.')); } finally { setSaving(false); }
   }
 
   return <Page>
-    <Link to={campaignId ? `/campanhas/${campaignId}` : '/campanhas'} className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-ink"><IconBack className="h-3.5 w-3.5" aria-hidden />{campaignId ? 'Voltar sem salvar' : 'Campanhas'}</Link>
+    <Link to={isTemplate ? '/campanhas?aba=modelos' : campaignId ? `/campanhas/${campaignId}` : '/campanhas'} className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-ink"><IconBack className="h-3.5 w-3.5" aria-hidden />{campaignId ? 'Voltar sem salvar' : 'Campanhas'}</Link>
     <form onSubmit={submit} className="mx-auto w-full max-w-4xl space-y-4 pb-6">
-      <PageHeader title={campaignId ? 'Editar campanha' : 'Nova campanha'} subtitle={<ServerClock />} />
+      <PageHeader title={isTemplate ? 'Editar modelo' : campaignId ? 'Editar campanha' : 'Nova campanha'} subtitle={isTemplate ? 'Um modelo não é enviado: ele fica guardado para você criar campanhas a partir dele.' : <ServerClock />} />
       {error && <Alert>{error}</Alert>}
       {!loaded && <p className="text-muted">Carregando…</p>}
+      {/* Começar de um modelo: cria o rascunho já preenchido e abre aqui mesmo para ajustar. */}
+      {!campaignId && templates.length > 0 && <Card className="space-y-2 p-4">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-muted"><IconTemplate className="h-3.5 w-3.5" aria-hidden />Começar de um modelo</p>
+        <div className="flex flex-wrap gap-1.5">
+          {templates.map(template => <Button key={template.id} size="sm" loading={startingFrom === template.id} disabled={startingFrom !== null} onClick={() => void startFrom(template)}
+            title={`${template.groupCount} ${template.groupCount === 1 ? 'grupo' : 'grupos'} · ${template.mode === 'IMMEDIATE' ? 'fila única' : template.schedules.map(s => s.time).join(', ')}`}>{template.name}</Button>)}
+        </div>
+      </Card>}
       {loaded && <>
         <Card className="space-y-4 p-4">
           <Field label="Nome"><input defaultValue={initial.name} required maxLength={200} name="name" className={inputClass} placeholder="Ex.: Festival de Inverno" /></Field>
@@ -118,10 +148,12 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
             label="Marcar todos os membros (@todos)"
             hint="Envia com o @todos do WhatsApp: aparece destacado e todos recebem notificação, até quem silenciou o grupo. Se você escrever @todos no texto, ele fica nesse lugar; senão, vai no começo. Em grupos com mais de 32 membros o WhatsApp só deixa admins usarem: se você não for admin, a marcação vai oculta (notifica igual, sem o destaque)." />
           {mode === 'SCHEDULED' && <div className="animate-fade-in space-y-4">
-            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field className="min-w-0" label="De"><input defaultValue={initial.startsAt} required name="startsAt" type="date" className={inputClass} /></Field>
-              <Field className="min-w-0" label="Até"><input defaultValue={initial.endsAt} required name="endsAt" type="date" className={inputClass} /></Field>
-            </div>
+            {isTemplate
+              ? <p className="rounded border border-line bg-slate-50 px-2.5 py-2 text-xs text-muted">As datas são escolhidas quando você usa o modelo. Aqui ficam só os horários.</p>
+              : <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field className="min-w-0" label="De"><input defaultValue={initial.startsAt} required name="startsAt" type="date" className={inputClass} /></Field>
+                <Field className="min-w-0" label="Até"><input defaultValue={initial.endsAt} required name="endsAt" type="date" className={inputClass} /></Field>
+              </div>}
             <div>
               <span className="mb-1 block text-xs font-medium text-muted">Horários</span>
               <div className="flex flex-wrap items-center gap-2">
@@ -150,6 +182,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
             <Button size="sm" onClick={selectVisible} disabled={!visible.some(group => !selected.includes(group.id))}>{term ? 'Selecionar exibidos' : 'Selecionar todos'}</Button>
             <Button size="sm" variant="ghost" onClick={() => setSelected([])} disabled={!selected.length}>Limpar</Button>
           </div>}
+          {!!groups.length && <GroupListsBar available={groups.map(group => group.id)} selected={selected} onSelect={setSelected} />}
           {/* Duas colunas: mais grupos à vista de uma vez. */}
           <ScrollArea always className="max-h-80 rounded border border-line">
             <ul className="grid min-w-0 grid-cols-1 sm:grid-cols-2">{visible.map(group => <li key={group.id} className="min-w-0 border-b border-line sm:odd:border-r">
@@ -180,7 +213,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
         <CampaignMediaInput value={media} onChange={setMedia} disabled={saving} />
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" variant="primary" loading={saving} disabled={saving || !selected.length}>{saving ? (media?.file && media.kind === 'video' ? 'Enviando e preparando o vídeo…' : 'Salvando…') : 'Salvar campanha'}</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={saving || !selected.length}>{saving ? (media?.file && media.kind === 'video' ? 'Enviando e preparando o vídeo…' : 'Salvando…') : isTemplate ? 'Salvar modelo' : 'Salvar campanha'}</Button>
           {saving && media?.file && media.kind === 'video' && <span className="text-xs text-muted">Vídeo fora do padrão do WhatsApp é convertido agora; pode levar até alguns minutos.</span>}
           {!!selected.length && <span className="text-xs text-muted">{selected.length} grupos · {duracaoRodada(selected.length)} por rodada</span>}
         </div>

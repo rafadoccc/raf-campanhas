@@ -19,6 +19,8 @@ export type AppConfig = {
   webDist: string | null;
   /** E-mail de contato para privacidade e suporte (CONTACT_EMAIL), mostrado nas páginas públicas. */
   contactEmail: string | null;
+  /** Envio de e-mail (RESEND_API_KEY + MAIL_FROM); null = o sistema não manda e-mail (ADR-047). */
+  mail: { apiKey: string; from: string } | null;
 };
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
@@ -84,6 +86,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const contactEmail = env.CONTACT_EMAIL?.trim() || null;
   if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new Error(`CONTACT_EMAIL inválido: "${contactEmail}".`);
 
+  // E-mail é opcional e só liga com as DUAS variáveis: a chave do serviço e o remetente (de um
+  // domínio validado nele). Sem isso, "esqueci minha senha" passa pelo administrador.
+  const mailKey = env.RESEND_API_KEY?.trim();
+  const mailFrom = env.MAIL_FROM?.trim();
+  if (Boolean(mailKey) !== Boolean(mailFrom)) throw new Error('Para enviar e-mail, defina RESEND_API_KEY e MAIL_FROM juntas (ou nenhuma das duas).');
+  if (mailFrom && !/[^\s@<]+@[^\s@>]+\.[^\s@>]+/.test(mailFrom)) throw new Error(`MAIL_FROM inválido: "${mailFrom}". Exemplo: DocDrop <avisos@seudominio.com.br>`);
+  const mail = mailKey && mailFrom ? { apiKey: mailKey, from: mailFrom } : null;
+
   const dist = path.resolve(env.WEB_DIST ?? path.join(__dirname, '..', '..', 'web', 'dist'));
 
   return {
@@ -102,5 +112,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sessionTtlMs: ttlHours * 3_600_000,
     webDist: existsSync(path.join(dist, 'index.html')) ? dist : null,
     contactEmail,
+    mail,
   };
 }

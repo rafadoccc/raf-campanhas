@@ -64,4 +64,6 @@ export {
   Share2 as IconShare,
   MessageSquarePlus as IconFeedback,
   ChartColumn as IconReport,
+  Bookmark as IconTemplate,
+  ListChecks as IconList,
 } from 'lucide-react';

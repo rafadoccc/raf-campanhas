@@ -19,6 +19,9 @@ import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
 import { deleteAccount, purgeExpiredData } from './legal';
 import { checkRejections, safetyPause, SAFETY_REASONS, REJECTIONS_TO_PAUSE } from './safety';
+import Fastify from 'fastify';
+import { registerAuth } from './auth';
+import { registerPasswordReset } from './password-reset';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -3284,8 +3287,162 @@ test('report: owner numbers, a public link with numbers only, revocable; day num
   for (const bad of ['2026-13-40', 'ontem', '2999-01-01', '2020-01-01']) assert.equal((await app.inject({ method: 'GET', url: `/api/dashboard/day?date=${bad}`, headers: as(session) })).statusCode, 400, bad);
 });
 
+// ─── Esqueci minha senha, modelos e listas de grupos (ADR-047) ──────────────────
+const fromIp = (remoteAddress: string, email: string) => app.inject({ method: 'POST', url: '/api/auth/forgot', headers: anon, remoteAddress, payload: { email } });
+
+test('forgot password: same answer for any e-mail; the admin issues a single-use link that ends the old sessions', async () => {
+  const owner = await lgpdUser('esqueceu@teste.local');
+  const admin = await lgpdUser('esqueceu-admin@teste.local', 'SUPER_ADMIN');
+  const unknown = await fromIp('198.51.100.21', 'ninguem@teste.local');
+  const known = await fromIp('198.51.100.22', 'ESQUECEU@teste.local ');
+  assert.equal(unknown.statusCode, 200);
+  assert.deepEqual(known.json(), unknown.json(), 'a resposta não revela se a conta existe');
+  assert.equal(known.json().delivery, 'admin', 'sem e-mail configurado, o administrador entrega o link');
+  await fromIp('198.51.100.23', 'esqueceu@teste.local');
+  assert.equal(await prisma.passwordReset.count({ where: { userId: owner.user.id } }), 1, 'um pedido por conta, sem acumular');
+  assert.equal(await prisma.passwordReset.count({ where: { user: { email: 'ninguem@teste.local' } } }), 0);
+
+  const listed = () => admin.call('GET', '/api/admin/users').then(r => r.json().find((u: { id: string }) => u.id === owner.user.id));
+  assert.ok((await listed()).passwordResetRequestedAt, 'o administrador vê o pedido');
+  const linkUrl = `/api/admin/users/${owner.user.id}/reset-link`;
+  assert.equal((await owner.call('POST', linkUrl, {})).statusCode, 403, 'só o administrador gera link');
+  assert.equal((await admin.call('POST', `/api/admin/users/${admin.user.id}/reset-link`, {})).statusCode, 400, 'não para a própria conta');
+  const issued = await admin.call('POST', linkUrl, {});
+  assert.equal(issued.statusCode, 200, issued.body);
+  assert.equal((await listed()).passwordResetRequestedAt, null, 'pedido atendido');
+  const token = String(issued.json().url).split('/redefinir-senha/')[1];
+  assert.match(token, /^[A-Za-z0-9_-]{43}$/);
+  const stored = await prisma.passwordReset.findFirstOrThrow({ where: { userId: owner.user.id } });
+  assert.notEqual(stored.tokenHash, token, 'o banco guarda só o hash do código');
+
+  const open = (method: 'GET' | 'POST', code: string, payload?: object) => app.inject({ method, url: `/api/auth/reset/${code}`, headers: anon, payload });
+  assert.equal((await open('GET', token)).json().name, 'esqueceu');
+  assert.equal((await open('GET', 'codigo-inventado-com-tamanho-suficiente-1234567')).statusCode, 404);
+  assert.equal((await open('POST', token, { password: 'curta' })).statusCode, 400);
+  assert.equal((await open('POST', token, { password: 'senha-nova-bem-forte-1' })).statusCode, 200);
+  assert.equal((await owner.call('GET', '/api/auth/me')).statusCode, 401, 'as sessões antigas caem');
+  assert.equal((await loginAs(app, 'esqueceu@teste.local')).status, 401, 'a senha antiga não entra mais');
+  assert.equal((await loginAs(app, 'esqueceu@teste.local', 'senha-nova-bem-forte-1')).status, 200);
+  assert.equal((await open('POST', token, { password: 'outra-senha-forte-22' })).statusCode, 404, 'o link só funciona uma vez');
+  assert.equal(await prisma.passwordReset.count({ where: { userId: owner.user.id } }), 0);
+
+  // Link vencido não vale.
+  const again = String((await admin.call('POST', linkUrl, {})).json().url).split('/redefinir-senha/')[1];
+  await prisma.passwordReset.updateMany({ where: { userId: owner.user.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+  assert.equal((await open('GET', again)).statusCode, 404);
+  await prisma.user.update({ where: { id: admin.user.id }, data: { role: 'USER', disabledAt: new Date() } });
+});
+
+test('forgot password: with e-mail configured the link goes by e-mail, and asking too much is rate limited', async () => {
+  await prisma.user.create({ data: { email: 'esqueceu-email@teste.local', name: 'Maria Souza', passwordHash: await hashPassword('senha-de-teste-123') } });
+  const sent: { to: string; subject: string; text: string }[] = [];
+  const mailApp = Fastify();
+  const config = loadConfig({});
+  registerAuth(mailApp, config);
+  registerPasswordReset(mailApp, config, { send: async message => { sent.push(message); } });
+  const ask = (email: string) => mailApp.inject({ method: 'POST', url: '/api/auth/forgot', headers: anon, payload: { email } });
+  try {
+    const answer = await ask('esqueceu-email@teste.local');
+    assert.deepEqual(answer.json(), { ok: true, delivery: 'email' });
+    assert.deepEqual((await ask('ninguem-aqui@teste.local')).json(), { ok: true, delivery: 'email' });
+    await waitFor(async () => sent.length === 1, 'e-mail enviado só para a conta que existe');
+    assert.equal(sent[0].to, 'esqueceu-email@teste.local');
+    assert.match(sent[0].text, /Olá, Maria Souza/);
+    const token = sent[0].text.match(/\/redefinir-senha\/([A-Za-z0-9_-]+)/)![1];
+    assert.equal((await mailApp.inject({ method: 'GET', url: `/api/auth/reset/${token}`, headers: anon })).statusCode, 200);
+    const stored = await prisma.passwordReset.findFirstOrThrow({ where: { user: { email: 'esqueceu-email@teste.local' } } });
+    assert.ok(stored.expiresAt!.getTime() - Date.now() <= 60 * 60_000, 'por e-mail vale 1 hora');
+    // 5 pedidos do mesmo lugar em 15 minutos; o 6º espera.
+    for (let i = 0; i < 3; i++) await ask(`outro-${i}@teste.local`);
+    assert.equal((await ask('mais-um@teste.local')).statusCode, 429);
+  } finally { await mailApp.close(); }
+});
+
+test('templates: saved from a campaign, kept out of the campaign list, never sent, and used to start a new draft', async () => {
+  const owner = await lgpdUser('modelos@teste.local');
+  const other = await lgpdUser('modelos-outro@teste.local');
+  const group = await prisma.group.create({ data: { name: 'Do modelo', userId: owner.user.id, externalId: 'modelo@g.us' } });
+  const base = { name: 'Sexta', mode: 'IMMEDIATE', messages: ['*Sexta* é aqui'], groupIds: [group.id] };
+  const created = await owner.call('POST', '/api/campaigns', base);
+  assert.equal(created.statusCode, 201, created.body);
+  const duplicate = (id: string, payload: object, who = owner) => who.call('POST', `/api/campaigns/${id}/duplicate`, payload);
+
+  const saved = await duplicate(created.json().id, { asTemplate: true });
+  assert.equal(saved.statusCode, 201, saved.body);
+  assert.equal(saved.json().name, 'Sexta', 'o modelo guarda o nome, sem numerar');
+  const templateId = saved.json().id as string;
+  const templates = (await owner.call('GET', '/api/templates')).json();
+  assert.deepEqual(templates.map((t: { id: string; name: string; groupCount: number; preview: string }) => [t.id, t.name, t.groupCount, t.preview]), [[templateId, 'Sexta', 1, '*Sexta* é aqui']]);
+  assert.deepEqual((await owner.call('GET', '/api/campaigns')).json().items.map((c: { id: string }) => c.id), [created.json().id], 'o modelo não aparece entre as campanhas');
+  assert.deepEqual((await other.call('GET', '/api/templates')).json(), [], 'modelos são de cada conta');
+  assert.equal((await duplicate(templateId, {}, other)).statusCode, 404);
+
+  // Um modelo não é enviado, encerrado nem reagendado.
+  const patch = (id: string, payload: object) => app.inject({ method: 'PATCH', url: `/api/campaigns/${id}`, payload, headers: as(owner.session) });
+  const status = await app.inject({ method: 'PATCH', url: `/api/campaigns/${templateId}/status`, payload: { status: 'ACTIVE', provider: 'simulator' }, headers: as(owner.session) });
+  assert.equal(status.statusCode, 400);
+  assert.match(status.json().error, /modelo não é enviado/);
+  assert.equal((await duplicate(templateId, { reschedule: true })).statusCode, 400);
+
+  // Editar um modelo não esbarra em data passada (as datas são refeitas ao usar); uma campanha sim.
+  const past = { ...base, mode: 'SCHEDULED', startsAt: '2026-01-05', endsAt: '2026-01-07', times: ['09:00'] };
+  assert.equal((await patch(created.json().id, past)).statusCode, 400, 'campanha comum: data passada é recusada');
+  assert.equal((await patch(templateId, past)).statusCode, 200, 'modelo: aceita');
+
+  // Usar o modelo: campanha nova em rascunho, com as datas a partir de hoje e o mesmo período.
+  const used = await duplicate(templateId, {});
+  assert.equal(used.statusCode, 201, used.body);
+  assert.equal(used.json().name, 'Sexta (2)', 'já existe a campanha "Sexta"');
+  const draft = await prisma.campaign.findUniqueOrThrow({ where: { id: used.json().id }, include: { groups: true, messages: true, schedules: true } });
+  assert.deepEqual([draft.isTemplate, draft.status, draft.mode, draft.groups.length, draft.messages[0].content, draft.schedules[0].time], [false, 'DRAFT', 'SCHEDULED', 1, '*Sexta* é aqui', '09:00']);
+  assert.ok(draft.startsAt.getTime() > Date.now() - 2 * 86_400_000, 'começa hoje, não em janeiro');
+  assert.equal(draft.endsAt.getTime() - draft.startsAt.getTime(), 2 * 86_400_000, 'mantém a duração do período');
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: templateId } })).isTemplate, true, 'o modelo fica como estava');
+  // Datas FUTURAS no modelo também não valem: são só as da campanha de onde ele saiu.
+  const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  assert.equal((await patch(templateId, { ...past, startsAt: day(30), endsAt: day(31) })).statusCode, 200);
+  const later = await prisma.campaign.findUniqueOrThrow({ where: { id: (await duplicate(templateId, {})).json().id } });
+  assert.ok(later.startsAt.getTime() < Date.now() + 2 * 86_400_000, 'começa hoje, não daqui a um mês');
+  assert.equal(later.endsAt.getTime() - later.startsAt.getTime(), 86_400_000);
+
+  // Excluir o modelo usa a mesma rota das campanhas.
+  assert.equal((await owner.call('DELETE', `/api/campaigns/${templateId}`)).statusCode, 200);
+  assert.deepEqual((await owner.call('GET', '/api/templates')).json(), []);
+});
+
+test('group lists: named sets of the account own groups, with rename, replace and delete', async () => {
+  const owner = await lgpdUser('listas@teste.local');
+  const other = await lgpdUser('listas-outro@teste.local');
+  const [a, b, c] = await Promise.all(['A', 'B', 'C'].map(name => prisma.group.create({ data: { name, userId: owner.user.id, externalId: `lista-${name}@g.us` } })));
+  const theirs = await prisma.group.create({ data: { name: 'De outro', userId: other.user.id } });
+  const post = (payload: object, who = owner) => who.call('POST', '/api/group-lists', payload);
+  assert.equal((await post({ name: '  ', groupIds: [a.id] })).statusCode, 400);
+  assert.equal((await post({ name: 'Vazia', groupIds: [] })).statusCode, 400);
+  assert.equal((await post({ name: 'Com alheio', groupIds: [a.id, theirs.id] })).statusCode, 400, 'grupo de outra conta não entra');
+  const made = await post({ name: ' Universitários ', groupIds: [a.id, b.id, a.id] });
+  assert.equal(made.statusCode, 201, made.body);
+  assert.equal(made.json().name, 'Universitários');
+  assert.deepEqual(made.json().groupIds.sort(), [a.id, b.id].sort());
+  assert.equal((await post({ name: 'Universitários', groupIds: [c.id] })).statusCode, 409, 'nome repetido');
+  assert.deepEqual((await other.call('GET', '/api/group-lists')).json(), [], 'listas são de cada conta');
+
+  const id = made.json().id as string;
+  const patch = (payload: object, session = owner.session) => app.inject({ method: 'PATCH', url: `/api/group-lists/${id}`, payload, headers: as(session) });
+  assert.equal((await patch({ name: 'Minha agora' }, other.session)).statusCode, 404);
+  const changed = await patch({ name: 'Sertanejo', groupIds: [c.id] });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.deepEqual([changed.json().name, changed.json().groupIds], ['Sertanejo', [c.id]]);
+  assert.deepEqual((await owner.call('GET', '/api/account/export')).json().listasDeGrupos.map((l: { nome: string; grupos: string[] }) => [l.nome, l.grupos]), [['Sertanejo', ['C']]]);
+  // Grupo apagado some da lista sozinho.
+  await prisma.group.delete({ where: { id: c.id } });
+  assert.deepEqual((await owner.call('GET', '/api/group-lists')).json()[0].groupIds, []);
+  assert.equal((await other.call('DELETE', `/api/group-lists/${id}`)).statusCode, 404);
+  assert.equal((await owner.call('DELETE', `/api/group-lists/${id}`)).statusCode, 200);
+  assert.deepEqual((await owner.call('GET', '/api/group-lists')).json(), []);
+});
+
 // ─── Proteção do número (ADR-041) ───────────────────────────────────────────────
-const spTime =(day: string, clock: string) => new Date(`${day}T${clock}:00-03:00`);
+const spTime = (day: string, clock: string) => new Date(`${day}T${clock}:00-03:00`);
 async function protectedQueue(email: string, rules: { quietStart?: number | null; quietEnd?: number | null; dailyLimit?: number | null; groupGapMinutes?: number | null; autoPause?: boolean }) {
   const user = await prisma.user.create({ data: { email, name: email.split('@')[0], passwordHash: 'x' } });
   await prisma.sendingPolicy.create({ data: { userId: user.id, quietStart: null, quietEnd: null, dailyLimit: null, groupGapMinutes: null, autoPause: true, ...rules } });

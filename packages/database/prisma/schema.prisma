@@ -49,9 +49,38 @@ model Group {
   updatedAt  DateTime        @updatedAt
   deliveries Delivery[]
   campaigns  CampaignGroup[]
+  lists      GroupListItem[]
 
   @@unique([userId, externalId])
   @@unique([userId, id])
+}
+
+// Listas de grupos (ADR-047): um nome para um conjunto de grupos ("Universitários"), para marcar
+// todos de uma vez ao montar a campanha. A lista é do usuário e só aponta para grupos dele (as
+// chaves compostas com userId fazem o banco recusar grupo de outra conta).
+model GroupList {
+  id        String          @id @default(cuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String          @db.VarChar(80)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  items     GroupListItem[]
+
+  @@unique([userId, name])
+  @@unique([userId, id])
+}
+
+model GroupListItem {
+  listId  String
+  groupId String
+  userId  String
+  list    GroupList @relation(fields: [userId, listId], references: [userId, id], onDelete: Cascade)
+  group   Group     @relation(fields: [userId, groupId], references: [userId, id], onDelete: Cascade)
+
+  @@id([listId, groupId])
+  @@index([userId, listId])
+  @@index([userId, groupId])
 }
 
 model Campaign {
@@ -77,6 +106,9 @@ model Campaign {
   // Link público do relatório (ADR-045): quem tem o código vê só os números da campanha, sem
   // login. null = sem link. O dono cria e desativa quando quiser.
   reportToken     String?            @unique @db.VarChar(64)
+  // Modelo (ADR-047): uma campanha guardada para reaproveitar. Fica sempre em rascunho, fora da
+  // lista de campanhas, nunca é enviada e não entra no prazo de guarda; "usar" cria uma cópia.
+  isTemplate      Boolean            @default(false)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   messages        CampaignMessage[]
@@ -243,6 +275,22 @@ model User {
   media        CampaignMedia[]
   sendingPolicy SendingPolicy?
   feedback     Feedback[]
+  groupLists   GroupList[]
+  passwordResets PasswordReset[]
+}
+
+// "Esqueci minha senha" (ADR-047). Uma linha por pedido. Sem tokenHash = a pessoa pediu e ainda
+// não há link (o administrador gera). Com tokenHash = link de uso único; aqui fica só o hash
+// SHA-256 do código, como nas sessões. Usar o link apaga todas as linhas da conta.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String?   @unique @db.Char(64)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }
 
 // Sugestões, críticas, problemas e elogios dos usuários sobre o sistema (ADR-045). O administrador

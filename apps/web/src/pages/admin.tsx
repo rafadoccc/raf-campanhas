@@ -6,7 +6,7 @@ import { AdminFeedback } from '../components/admin-feedback';
 import {
   Alert, Badge, Button, ButtonLink, Card, CardHeader, Dot, EmptyState, Field, Menu, Page, PageHeader, PasswordInput, Segmented, Select, Skeleton, Stat,
   IconActivity, IconAddUser, IconAdmin, IconCampaigns, IconDelete, IconDelivered, IconDisable, IconDisconnect, IconDispatcher, IconEnable,
-  IconLogout, IconPassword, IconQueue, IconSearch, IconSent, IconServer, IconSystem, IconWhatsApp,
+  IconCheck, IconLogout, IconPassword, IconQueue, IconSearch, IconSent, IconServer, IconShare, IconSystem, IconWhatsApp,
   dataHora, horaSeg, inputClass, numero, useConfirm, type MenuItem,
 } from '../design';
 
@@ -16,6 +16,8 @@ const roleFilters = [{ label: 'Todos', value: 'all' }, { label: 'Usuários', val
 
 type AdminUser = {
   id: string; email: string; name: string; role: 'SUPER_ADMIN' | 'USER'; disabledAt: string | null; createdAt: string; lastSeenAt: string | null;
+  /** A pessoa clicou em "Esqueci minha senha" e ainda não há link (ADR-047). */
+  passwordResetRequestedAt: string | null;
   whatsapp: { state: string; accountJid: string | null; lastConnectedAt: string | null; lastError: string | null; legacySession: boolean };
   counts: { campaigns: number; activeCampaigns: number; groups: number; sent: number; failed: number };
 };
@@ -202,7 +204,16 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
       setNotice(`Senha de ${user.name} alterada. A pessoa entra de novo com a senha nova.`);
     });
   };
+  // Link de uso único para a pessoa criar a própria senha (ADR-047): o administrador não fica
+  // sabendo a senha, só entrega o link (pelo WhatsApp, por exemplo).
+  const [resetLink, setResetLink] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const createResetLink = () => run(async () => {
+    setCopied(false); setResetting(false);
+    setResetLink(await api<{ url: string; expiresAt: string }>(`/admin/users/${user.id}/reset-link`, { method: 'POST', json: {} }));
+  });
   const actions: MenuItem[] = [
+    { label: 'Gerar link de nova senha', icon: IconShare, onSelect: () => void createResetLink() },
     { label: 'Encerrar sessões', icon: IconLogout, onSelect: () => void forceLogout() },
     ...(wa.state === 'connected' ? [{ label: 'Desconectar WhatsApp', icon: IconDisconnect, onSelect: () => void stopWhatsApp() }] : []),
     { label: user.role === 'SUPER_ADMIN' ? 'Tornar usuário' : 'Tornar administrador', icon: IconAdmin, onSelect: () => void changeRole() },
@@ -224,6 +235,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
             {self && <Badge tone="brand">Você</Badge>}
             {user.role === 'SUPER_ADMIN' && <Badge tone="info">Admin</Badge>}
             {disabled && <Badge tone="danger">Desativada</Badge>}
+            {user.passwordResetRequestedAt && !resetLink && <Badge tone="warning" title={`Pediu em ${dataHora(user.passwordResetRequestedAt)}. Use "Gerar link de nova senha" no menu de ações.`}>Pediu nova senha</Badge>}
           </p>
           <p className="truncate text-xs text-muted" title={user.email}>{user.email}</p>
           <p className="text-2xs text-slate-400">Último acesso: {user.lastSeenAt ? dataHora(user.lastSeenAt) : 'nunca'}</p>
@@ -258,6 +270,14 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
         <Button type="submit" variant="primary" loading={busy} disabled={busy}>Salvar senha</Button>
       </div>
     </form>}
+    {resetLink && <div className="mt-3 animate-fade-in space-y-2 rounded border border-line bg-slate-50 p-3">
+      <p className="text-xs text-muted">Envie este link para <strong className="text-ink">{user.name}</strong>. Por ele a pessoa cria a própria senha. Vale até {dataHora(resetLink.expiresAt)} e só funciona uma vez.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input readOnly value={resetLink.url} aria-label="Link de nova senha" onFocus={e => e.currentTarget.select()} className={`${inputClass} min-w-0 flex-1 text-xs`} />
+        <Button size="sm" icon={copied ? IconCheck : IconShare} onClick={() => { void navigator.clipboard.writeText(resetLink.url).then(() => setCopied(true)).catch(() => setError('Não foi possível copiar. Selecione o link e copie manualmente.')); }}>{copied ? 'Copiado' : 'Copiar'}</Button>
+        <Button size="sm" variant="ghost" onClick={() => setResetLink(null)}>Fechar</Button>
+      </div>
+    </div>}
     {notice && <div className="mt-2"><Alert tone="brand">{notice}</Alert></div>}
     {error && <div className="mt-2"><Alert>{error}</Alert></div>}
   </li>;

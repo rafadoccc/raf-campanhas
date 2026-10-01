@@ -80,7 +80,8 @@ export async function exportAccount(userId: string) {
       whatsapp: { select: { accountJid: true, state: true, lastConnectedAt: true } },
     },
   });
-  const [feedback, groups, media, campaigns] = await Promise.all([
+  const [lists, feedback, groups, media, campaigns] = await Promise.all([
+    prisma.groupList.findMany({ where: { userId }, orderBy: { name: 'asc' }, select: { name: true, createdAt: true, items: { select: { group: { select: { name: true } } } } } }),
     prisma.feedback.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, select: { kind: true, message: true, status: true, reply: true, repliedAt: true, createdAt: true } }),
     prisma.group.findMany({ where: { userId }, orderBy: { name: 'asc' }, select: { name: true, externalId: true, active: true, participants: true, isAdmin: true, createdAt: true } }),
     prisma.campaignMedia.findMany({ where: { userId }, select: { id: true, name: true, mimeType: true, kind: true, size: true, createdAt: true } }),
@@ -88,7 +89,7 @@ export async function exportAccount(userId: string) {
       where: { userId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       select: {
-        name: true, status: true, mode: true, startsAt: true, endsAt: true, intervalSeconds: true, mentionAll: true, createdAt: true, mediaId: true,
+        name: true, status: true, mode: true, startsAt: true, endsAt: true, intervalSeconds: true, mentionAll: true, createdAt: true, mediaId: true, isTemplate: true,
         messages: { orderBy: { position: 'asc' }, select: { content: true } },
         schedules: { select: { time: true, timezone: true } },
         groups: { orderBy: { position: 'asc' }, select: { group: { select: { name: true } } } },
@@ -107,6 +108,7 @@ export async function exportAccount(userId: string) {
     acessos: sessions,
     whatsapp,
     grupos: groups,
+    listasDeGrupos: lists.map(list => ({ nome: list.name, criadaEm: list.createdAt, grupos: list.items.map(item => item.group.name) })),
     midias: media,
     sugestoes: feedback,
     campanhas: campaigns.map(({ messages, schedules, groups: linked, deliveries, ...campaign }) => ({

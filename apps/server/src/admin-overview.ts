@@ -23,7 +23,7 @@ export async function adminOverview(manager: Pick<WhatsAppManager, 'owners' | 'p
       tx.user.count(),
       tx.user.count({ where: { disabledAt: { not: null } } }),
       tx.user.count({ where: { role: 'SUPER_ADMIN', disabledAt: null } }),
-      tx.campaign.groupBy({ by: ['status'], where: { deletedAt: null }, _count: { _all: true } }),
+      tx.campaign.groupBy({ by: ['status'], where: { deletedAt: null, isTemplate: false }, _count: { _all: true } }),
       tx.delivery.count({ where: { ...real, status: 'SENT', sentAt: period } }),
       tx.delivery.count({ where: { ...real, status: 'FAILED', updatedAt: period } }),
       tx.delivery.count({ where: { ...real, status: 'SENT', sentAt: period, deliveredAt: { not: null } } }),

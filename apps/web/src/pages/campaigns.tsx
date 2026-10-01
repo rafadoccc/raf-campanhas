@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { deleteCampaign, editAction, editCampaign } from '../lib/campaign-ops';
 import {
   Alert, Badge, Button, ButtonLink, EmptyState, IconButton, LoadMoreSentinel, Page, PageHeader, ScrollArea, Segmented, Skeleton,
-  IconAdd, IconCampaigns, IconDelete, IconEdit, IconReschedule, IconReuse, IconSearch, IconVideo, IconView,
+  IconAdd, IconCampaigns, IconDelete, IconEdit, IconReschedule, IconReuse, IconSearch, IconTemplate, IconVideo, IconView,
   accent, campaignStatus, inputClass, useConfirm, useInfiniteList,
 } from '../design';
 import { CampaignMeta } from '../components/campaign-meta';
+import { TemplateList, saveAsTemplate } from '../components/templates';
 
 type Campaign = {
   id: string; name: string; startsAt: string; endsAt: string; status: string; provider: string; createdAt: string;
@@ -16,15 +17,18 @@ type Campaign = {
   progress: Record<string, number>;
 };
 
+// "Modelos" (ADR-047) é uma aba à parte: mostra os modelos guardados, não campanhas filtradas.
+const TEMPLATES = 'modelos';
 const filters: { label: string; value: string }[] = [
   { label: 'Todas', value: '' },
   { label: 'Ativas', value: 'ACTIVE,PAUSED' },
   { label: 'Rascunhos', value: 'DRAFT' },
   { label: 'Concluídas', value: 'COMPLETED,CANCELLED' },
+  { label: 'Modelos', value: TEMPLATES },
 ];
 const editIcon = { edit: IconEdit, reuse: IconReuse, reschedule: IconReschedule } as const;
 
-function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign; onEdit: () => void; onDelete: () => void; busy: boolean }) {
+function CampaignCard({ campaign, onEdit, onDelete, onSaveTemplate, busy }: { campaign: Campaign; onEdit: () => void; onDelete: () => void; onSaveTemplate: () => void; busy: boolean }) {
   const status = campaignStatus[campaign.status] ?? campaignStatus.DRAFT;
   const color = accent(campaign.media?.color);
   const total = Object.values(campaign.progress).reduce((a, b) => a + b, 0);
@@ -58,18 +62,18 @@ function CampaignCard({ campaign, onEdit, onDelete, busy }: { campaign: Campaign
       <div className="mt-auto flex items-center gap-1.5 pt-4">
         <ButtonLink to={`/campanhas/${campaign.id}`} variant="primary" size="sm" icon={IconView}>Ver</ButtonLink>
         <Button size="sm" icon={EditIcon} title={edit.title} onClick={onEdit} disabled={busy}>{edit.label}</Button>
-        <IconButton icon={IconDelete} label="Excluir" variant="danger" className="ml-auto" onClick={onDelete} disabled={busy} />
+        <span className="ml-auto flex items-center gap-1">
+          <IconButton icon={IconTemplate} label="Salvar como modelo" onClick={onSaveTemplate} disabled={busy} />
+          <IconButton icon={IconDelete} label="Excluir" variant="danger" onClick={onDelete} disabled={busy} />
+        </span>
       </div>
     </div>
   </li>;
 }
 
-export default function CampaignsPage() {
+function CampaignList({ filter, query, onSavedTemplate }: { filter: string; query: string; onSavedTemplate: (name: string) => void }) {
   const navigate = useNavigate();
   const confirm = useConfirm();
-  const [filter, setFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [query, setQuery] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const list = useInfiniteList<Campaign>(async (cursor, signal) => {
@@ -84,15 +88,7 @@ export default function CampaignsPage() {
     finally { setBusy(null); }
   }
 
-  return <Page className="lg:overflow-hidden">
-    <PageHeader title="Campanhas" action={<ButtonLink to="/nova-campanha" variant="primary" icon={IconAdd}>Nova campanha</ButtonLink>} />
-    <div className="flex flex-wrap items-center gap-2">
-      <Segmented label="Filtrar campanhas" value={filter} onChange={setFilter} options={filters} />
-      <form className="relative ml-auto w-full sm:w-64" onSubmit={event => { event.preventDefault(); setQuery(search.trim()); }}>
-        <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
-        <input type="search" value={search} onChange={event => { setSearch(event.target.value); if (!event.target.value) setQuery(''); }} placeholder="Buscar pelo nome…" aria-label="Buscar campanha pelo nome" className={`${inputClass} pl-8`} />
-      </form>
-    </div>
+  return <>
     {actionError && <Alert>{actionError}</Alert>}
     {list.error && !list.items && <Alert tone="warning">Não foi possível carregar as campanhas. Confira se o sistema está ligado.</Alert>}
     <ScrollArea className="-mx-1 flex-1 px-1 pb-4">
@@ -102,10 +98,40 @@ export default function CampaignsPage() {
         : <>
           <ul className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{list.items.map(campaign => <CampaignCard key={campaign.id} campaign={campaign} busy={busy === campaign.id}
             onEdit={() => run(campaign, async () => { const id = await editCampaign(campaign, confirm); if (id) navigate(`/campanhas/${id}/editar`); })}
+            onSaveTemplate={() => run(campaign, async () => { onSavedTemplate((await saveAsTemplate(campaign.id)).name); })}
             onDelete={() => run(campaign, async () => { if (await deleteCampaign(campaign, confirm)) list.remove(campaign.id); })} />)}</ul>
           <LoadMoreSentinel active={list.hasMore} onVisible={() => void list.loadMore()} />
           {list.loadingMore && <p className="py-4 text-center text-xs text-muted">Carregando mais…</p>}
         </>}
     </ScrollArea>
+  </>;
+}
+
+export default function CampaignsPage() {
+  // ?aba=modelos abre direto nos modelos (é para onde o formulário volta ao salvar um modelo).
+  const [params, setParams] = useSearchParams();
+  const [filter, setFilterState] = useState(() => (params.get('aba') === TEMPLATES ? TEMPLATES : ''));
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [savedTemplate, setSavedTemplate] = useState('');
+  const templates = filter === TEMPLATES;
+  const setFilter = (value: string) => {
+    setFilterState(value); setSavedTemplate('');
+    setParams(value === TEMPLATES ? { aba: TEMPLATES } : {}, { replace: true });
+  };
+
+  return <Page className="lg:overflow-hidden">
+    <PageHeader title="Campanhas" action={<ButtonLink to="/nova-campanha" variant="primary" icon={IconAdd}>Nova campanha</ButtonLink>} />
+    <div className="flex flex-wrap items-center gap-2">
+      <Segmented label="Filtrar campanhas" value={filter} onChange={setFilter} options={filters} />
+      {!templates && <form className="relative ml-auto w-full sm:w-64" onSubmit={event => { event.preventDefault(); setQuery(search.trim()); }}>
+        <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+        <input type="search" value={search} onChange={event => { setSearch(event.target.value); if (!event.target.value) setQuery(''); }} placeholder="Buscar pelo nome…" aria-label="Buscar campanha pelo nome" className={`${inputClass} pl-8`} />
+      </form>}
+    </div>
+    {savedTemplate && <Alert tone="brand">Modelo "{savedTemplate}" salvo. <button type="button" className="font-medium underline" onClick={() => setFilter(TEMPLATES)}>Ver modelos</button></Alert>}
+    {templates
+      ? <ScrollArea className="-mx-1 flex-1 px-1 pb-4"><TemplateList /></ScrollArea>
+      : <CampaignList filter={filter} query={query} onSavedTemplate={setSavedTemplate} />}
   </Page>;
 }

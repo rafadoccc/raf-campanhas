@@ -18,6 +18,9 @@ async function requeueForRetry(tx: Parameters<typeof lockCampaign>[0], campaignI
   if (campaignStatus === 'COMPLETED') await tx.campaign.update({ where: { id: campaignId }, data: { status: 'ACTIVE', pausedAt: null, updatedAt: now } });
 }
 
+/** Teto de modelos por conta: é uma biblioteca pessoal, não um arquivo. */
+export const MAX_TEMPLATES = 50;
+
 export function registerCampaignRoutes(app: FastifyInstance) {
   app.get('/api/campaigns/:id', async (request, reply) => {
     await completeFinished(prisma);
@@ -60,13 +63,36 @@ export function registerCampaignRoutes(app: FastifyInstance) {
   });
   app.get('/api/dashboard', async request => dashboardSummary(request.user!.id));
 
+  // Modelos de campanha (ADR-047): só o que o cartão mostra. Editar e excluir usam as rotas da
+  // própria campanha (um modelo é uma campanha em rascunho marcada com isTemplate).
+  app.get('/api/templates', async request => {
+    const templates = await prisma.campaign.findMany({
+      where: { userId: request.user!.id, isTemplate: true, deletedAt: null },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: MAX_TEMPLATES,
+      select: {
+        id: true, name: true, mode: true, mentionAll: true, updatedAt: true,
+        schedules: { orderBy: { time: 'asc' }, select: { time: true } },
+        media: { select: { id: true, kind: true, color: true } },
+        messages: { orderBy: { position: 'asc' }, take: 1, select: { content: true } },
+        _count: { select: { groups: true } },
+      },
+    });
+    return templates.map(({ _count, messages, ...template }) => ({ ...template, groupCount: _count.groups, preview: messages[0]?.content.slice(0, 160) ?? '' }));
+  });
+
   // "Usar de novo" (ADR-026): nova campanha em RASCUNHO com os mesmos grupos, mensagens, mídia,
   // intervalo e horários. A original fica intacta, com o histórico e as métricas dela.
   // Com { reschedule: true } numa campanha ativa ou pausada, encerra os envios pendentes dela na
   // MESMA transação — é o "trocar o horário" sem risco de as duas rodadas enviarem juntas.
+  //
+  // Modelos (ADR-047) usam a mesma cópia: { asTemplate: true } guarda a campanha como modelo;
+  // duplicar um modelo (sem asTemplate) cria a campanha em rascunho a partir dele.
   app.post('/api/campaigns/:id/duplicate', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const reschedule = (request.body as { reschedule?: unknown } | null)?.reschedule === true;
+    const body = request.body as { reschedule?: unknown; asTemplate?: unknown } | null;
+    const reschedule = body?.reschedule === true;
+    const asTemplate = body?.asTemplate === true;
     const userId = request.user!.id;
     try {
       const copy = await prisma.$transaction(async tx => {
@@ -76,6 +102,10 @@ export function registerCampaignRoutes(app: FastifyInstance) {
           include: { groups: { orderBy: { position: 'asc' }, include: { group: { select: { active: true } } } }, messages: { orderBy: { position: 'asc' } }, schedules: true },
         });
         if (!source) throw new NotFoundError('Campanha não encontrada.');
+        if (reschedule && (asTemplate || source.isTemplate)) throw new Error('Reagendar não se aplica a modelos.');
+        if (asTemplate && await tx.campaign.count({ where: { userId, isTemplate: true, deletedAt: null } }) >= MAX_TEMPLATES) {
+          throw new Error(`Você já tem ${MAX_TEMPLATES} modelos. Exclua um para salvar outro.`);
+        }
         if (reschedule) {
           if (!['ACTIVE', 'PAUSED'].includes(source.status)) throw new Error('Só campanhas ativas ou pausadas podem ser reagendadas.');
           const now = await currentTime();
@@ -85,14 +115,19 @@ export function registerCampaignRoutes(app: FastifyInstance) {
         const groups = source.groups.filter(g => g.group.active);
         if (!groups.length) throw new Error('Nenhum grupo desta campanha está ativo. Sincronize os grupos.');
         const now = await currentTime();
-        // Datas que já passaram viram "a partir de hoje", mantendo a duração do período.
+        // Datas que já passaram viram "a partir de hoje", mantendo a duração do período. As de um
+        // modelo sempre: elas são só as da campanha de onde ele saiu, não um agendamento.
         const today = new Date(`${DateTime.fromJSDate(now, { zone: TIME_ZONE }).toISODate()}T00:00:00.000Z`);
         const span = source.endsAt.getTime() - source.startsAt.getTime();
-        const expired = source.endsAt < today;
+        const expired = source.endsAt < today || (source.isTemplate && !asTemplate);
         const base = source.name.replace(/ \(\d+\)$/, '');
-        const siblings = await tx.campaign.count({ where: { userId, name: { startsWith: base } } });
+        // Campanhas e modelos numeram em separado: o modelo "Sexta" gera a campanha "Sexta", e só
+        // a segunda vira "Sexta (2)". "Usar de novo" entre campanhas continua numerando sempre.
+        const siblings = await tx.campaign.count({ where: { userId, isTemplate: asTemplate, name: { startsWith: base }, ...(asTemplate ? { deletedAt: null } : {}) } });
+        const plain = asTemplate || source.isTemplate;
+        const name = plain && !siblings ? base : `${base} (${siblings + 1})`;
         return tx.campaign.create({ data: {
-          userId, name: `${base} (${siblings + 1})`.slice(0, 200), status: 'DRAFT', mode: source.mode, intervalSeconds: source.intervalSeconds, mentionAll: source.mentionAll, mediaId: source.mediaId,
+          userId, name: name.slice(0, 200), isTemplate: asTemplate, status: 'DRAFT', mode: source.mode, intervalSeconds: source.intervalSeconds, mentionAll: source.mentionAll, mediaId: source.mediaId,
           startsAt: expired ? today : source.startsAt, endsAt: expired ? new Date(today.getTime() + Math.max(0, span)) : source.endsAt,
           createdAt: now, updatedAt: now,
           groups: { create: groups.map((g, position) => ({ groupId: g.groupId, position })) },

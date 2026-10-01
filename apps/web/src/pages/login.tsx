@@ -36,6 +36,7 @@ export default function LoginPage() {
       <Field label="E-mail"><input name="email" type="email" required autoComplete="username" autoFocus className={inputClass} /></Field>
       <Field label="Senha"><PasswordInput name="password" required autoComplete="current-password" /></Field>
       <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
+      <p className="text-center text-xs"><Link className="text-muted underline hover:text-ink" to="/esqueci-senha">Esqueci minha senha</Link></p>
       <p className="text-center text-2xs text-muted">
         <Link className="hover:text-ink hover:underline" to="/termos">Termos de Uso</Link>
         <span aria-hidden> · </span>
