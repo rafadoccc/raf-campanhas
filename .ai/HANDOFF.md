@@ -5,6 +5,37 @@
 
 ---
 
+## 2026-10-01T21:18Z · claude
+
+**Fiz:** planos por cliente e regras de envio na Administração (ADR-050, commit `8ad11c8`). Em
+cada conta, o menu de ações ganhou "Plano e regras": nome e valor do plano, "pago até" (com +1
+mês), conta pausada, grupos por campanha e, embaixo, as regras de envio daquela conta. Conta
+vencida ou pausada continua entrando mas não envia. O cliente vê "Seu plano" em Minha conta e uma
+faixa no topo quando está para vencer.
+**Arquivos:** apps/server/src/{plans,number-protection-routes,app,campaign-routes,admin-routes,main,legal,integration.test}.ts, packages/database/prisma/{schema.prisma,migrations/20261002200000_subscription}, apps/web/src/{components/{account-plan,plan-notice,number-protection}.tsx,pages/{admin,account,settings}.tsx,design/icons.ts,lib/release-notes.ts,main.tsx}
+**Tarefas:** T-151 (concluída).
+**Estado:** compila · lint ok · unitários 94/94 + 7 do painel · integração 151/151. Conferido no
+navegador (dev): janela "Plano e regras", salvar plano, selo na lista de contas, faixa de
+vencimento e cartão "Seu plano" do cliente, recusa ao iniciar campanha acima do limite de grupos.
+**Armadilhas:**
+- **Só na dev.** O dono está com campanha rodando em produção e pediu para NÃO mexer na main. A
+  main está em `390c774`; não promover sem ele pedir.
+- **Mudança de contrato:** `/api/sending-policy` não existe mais; as regras são por conta em
+  `/api/admin/users/:id/sending-policy`. `NumberProtection` agora exige `userId`.
+- Toda rota nova que faça uma campanha voltar a enviar precisa chamar `assertCanSend` (plans.ts);
+  hoje são status→ACTIVE, retry e retry-failed.
+- O bloqueio NÃO está na fila: é a pausa das campanhas (na hora de salvar o plano e a cada
+  minuto). Uma campanha iniciada no último minuto do dia pago pode mandar um envio depois da
+  meia-noite antes de a conferência pausar.
+- `priceCents` é só anotação do administrador: nada é cobrado pelo sistema e o cliente não vê.
+- Com o servidor da dev ligado no Windows, `prisma generate` falha ao trocar o arquivo do motor
+  (EPERM), mas o cliente JS é gerado. Feche o servidor antes de `npm run build`.
+- Mexi em `apps/web/` (área do codex): admin.tsx, account.tsx, settings.tsx, main.tsx.
+**Próximo passo sugerido:** o dono confere a janela "Plano e regras" na dev e, fora de campanha,
+leva para a main. Depois: cobrança automática pelo Mercado Pago (precisa do domínio).
+
+---
+
 ## 2026-10-01T18:12Z · claude
 
 **Fiz:** a pedido do dono (ADR-049, commit `0c44327`): (1) intervalo entre envios de 1:30 a 3:00

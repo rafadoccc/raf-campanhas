@@ -1366,3 +1366,40 @@ para 1:30, e o cliente não vê nem muda as regras de proteção do número.
 - A interface deixa de mostrar a faixa: saiu o bloco "Intervalo entre grupos" do formulário e o
   "um a cada…" da confirmação de iniciar. Ficam só as durações aproximadas ("~24 min por rodada"),
   que já existiam no formulário e no resumo da campanha.
+
+---
+
+## ADR-050 · Plano por conta (vencimento, pausa, grupos por campanha) e regras de envio na Administração
+
+**Data:** 2026-10-01 · **Status:** aceita · **Autor:** claude · **Branch:** dev · **Fecha:** T-151 · **Ajusta:** ADR-049
+
+Pedido do dono: vender com mensalidade e "pausa" nos meses sem festa, cobrando por fora (Pix ou
+link do Mercado Pago), e ajustar as regras de cada cliente pela Administração.
+
+- **Tabela nova `Subscription`** (uma linha por conta, apagada em cascata): `plan` (nome livre),
+  `priceCents` (valor combinado, só o administrador vê), `dueDate` (último dia pago, data do
+  calendário de São Paulo), `pausedAt` (conta pausada) e `maxGroups` (grupos por campanha).
+  Sem linha = sem plano: nada vence e nada limita. **Administrador não tem plano** e nunca é
+  bloqueado.
+- **Vencida ou pausada = não envia, mas continua entrando.** Nada é apagado nem escondido.
+  - `PATCH /api/campaigns/:id/status` recusa iniciar ou retomar (pausar e encerrar continuam
+    valendo); `retry` e `retry-failed` recusam, porque reabrem a campanha.
+  - As campanhas ATIVAS da conta são pausadas do mesmo jeito do botão Pausar (`lockCampaign`,
+    `LOCKING_TRANSACTION`): na hora em que o administrador salva o plano e por uma conferência a
+    cada minuto (`startPlanSweep` em main.ts), que é o que faz o vencimento valer na virada do
+    dia. **`queue.ts` e `schedule.ts` não mudam**: a fila só vê campanhas pausadas.
+  - Vence DEPOIS do dia de `dueDate` (a conta envia até o fim daquele dia). Pausa ganha de
+    vencimento na situação mostrada.
+- **Grupos por campanha:** conferido ao criar e editar (mensagem na hora) e de novo ao iniciar ou
+  retomar (vale mesmo se o plano mudou depois ou a campanha veio de uma cópia).
+- **Contrato novo:** `GET /api/plan` (a própria conta, sem o valor); `GET/PUT
+  /api/admin/users/:id/plan`; `GET /api/admin/users` ganha `plan` em cada conta.
+- **Mudança de contrato (regras de envio):** `GET/PUT /api/sending-policy` saíram. No lugar,
+  `GET/PUT /api/admin/users/:id/sending-policy` (SUPER_ADMIN), para qualquer conta, inclusive a do
+  próprio administrador. O cartão saiu da tela WhatsApp; as regras ficam na janela "Plano e
+  regras" de cada conta, na Administração.
+- **Para o cliente:** cartão "Seu plano" em Minha conta e uma faixa no topo do painel quando
+  faltam 5 dias ou menos, quando venceu ou quando a conta está pausada.
+- **Fora desta decisão:** cobrança automática (Mercado Pago avisando o sistema para renovar a
+  data), que depende de domínio com HTTPS; limite de números por conta (hoje é sempre um).
+- Migration aditiva `20261002200000_subscription`.
