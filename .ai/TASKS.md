@@ -2,7 +2,7 @@
 
 > **Protocolo de lock:** reivindique antes de editar código. Veja `AGENTS.md`, Seção 2.
 >
-> `[ ]` aberta · `[~]` em andamento · `[x]` concluída · `[!]` bloqueada
+> `[ ]` aberta · `[~]` em andamento · `[x]` concluída · `[!]` bloqueada · `[-]` descartada (não se aplica mais; o motivo fica no título)
 >
 > `owner` é `claude`, `codex` ou `—`. `since` é UTC ISO-8601 (`2026-09-20T18:40Z`).
 > Lock com mais de 24h está expirado e pode ser assumido — registre isso no handoff.
@@ -12,6 +12,9 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[~] T-142  Canal de sugestões, críticas e problemas dos usuários, com resposta do admin  owner: claude   since: 2026-10-01T03:41Z
+[~] T-143  Relatório da campanha: página para imprimir/PDF e link para compartilhar  owner: claude   since: 2026-10-01T03:41Z
+[~] T-144  Início: clicar num dia do gráfico mostra os números daquele dia  owner: claude   since: 2026-10-01T03:41Z
 [x] T-141  Revisar concorrência na exclusão de conta, sessões web e encerramento do servidor  owner: —   since: —
 [x] T-125  Corrigir achados críticos de autenticação, concorrência e sessão; validar regressões  owner: —   since: —
 [!] T-126  Persistir eventos de entrega/recusa anteriores ao envio; aguarda aprovação da migration  owner: —   since: —
@@ -28,16 +31,16 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-042  (C) Token de autenticação obrigatório na API          owner: —        since: —      
 [x] T-043  (C) Parar de serializar o QR sem autenticação         owner: —        since: —      
 [x] T-044  (A) Worker separado removido: não há porta 3002         owner: —        since: —
-[ ] T-045  (A) Bind de Postgres e Redis em 127.0.0.1             owner: —        since: —
+[-] T-045  (A) Bind de Postgres e Redis em 127.0.0.1 (descartada: não há mais Postgres nem Redis; o MySQL da VPS já fica em 127.0.0.1, docs/deploy-vps.md)  owner: —   since: —
 [x] T-046  (A) requirepass no Redis — resolvido: Redis removido     owner: —        since: —
 [x] T-047  (A) select explícito em /deliveries (vaza messageBody)  owner: —        since: —      
-[ ] T-048  (A) bodyLimit por tipo e streaming de mídia           owner: —        since: —
+[x] T-048  (A) bodyLimit por tipo e mídia servida em trechos (feito na T-082/T-121)  owner: —   since: —
 [!] T-049  (A) npm audit fix para deepmerge-ts via prisma        owner: —        since: —
            Bloqueada: o fix rebaixa o Prisma CLI para 6.12 (client 6.19). Só afeta o CLI lendo
            config confiável (ADR-034). Desbloqueia quando o Prisma 6.x trouxer deepmerge-ts 8.
 [x] T-050  (M) Mapear erros internos antes de responder          owner: —        since: —      
 [x] T-051  (M) rate limiting na API                              owner: —        since: —      
-[ ] T-052  (M) Rotina de exclusão de mídia órfã e cota           owner: —        since: —
+[x] T-052  (M) Exclusão de mídia órfã (feito na ADR-040: sai em 1 dia)  owner: —   since: —
 [x] T-053  (M) SIGKILL de fallback no timeout do ffprobe         owner: —        since: —
 ```
 
@@ -47,41 +50,41 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-001  Protocolo multi-agente (AGENTS.md, CLAUDE.md, .ai/)   owner: —        since: —      
 [x] T-002  Limpeza de artefatos e docs mortos                     owner: —        since: —      
 [x] T-003  Auditoria de segurança da superfície atual             owner: —        since: —      
-[ ] T-004  Validação declarativa com Zod em apps/api              owner: —        since: —
-[ ] T-005  Logs estruturados (pino) + request id nos 3 serviços   owner: —        since: —
+[-] T-004  Validação declarativa com Zod (descartada: a validação manual ficou consolidada e testada)  owner: —   since: —
+[-] T-005  Logs estruturados nos 3 serviços (descartada: virou um processo só, com log do Fastify)  owner: —   since: —
 [x] T-006  CI no GitHub Actions: lint + test + build              owner: —        since: —
-[ ] T-007  Quebrar linhas de 400+ chars nos arquivos tocados      owner: —        since: —
+[-] T-007  Quebrar linhas de 400+ chars (descartada como tarefa: vale a regra 6.2 do AGENTS.md ao tocar no arquivo)  owner: —   since: —
 ```
 
 ## Fase 2 — Contas e autenticação
 
 ```
-[ ] T-010  ADR: estratégia de isolamento multi-tenant             owner: —        since: —
-[ ] T-011  Modelo Organization / User / Membership no Prisma      owner: —        since: —
-[ ] T-012  Migration + backfill de organização padrão             owner: —        since: —
-[ ] T-013  Autenticação por sessão (cookie httpOnly)              owner: —        since: —
-[ ] T-014  Papéis e autorização por rota                          owner: —        since: —
-[ ] T-015  Escopar todas as queries por organizationId            owner: —        since: —
-[ ] T-016  Telas de login, cadastro e troca de organização        owner: —        since: —
+[-] T-010  ADR: isolamento multi-tenant (substituída pelas ADR-016 a ADR-022: isolamento por usuário)  owner: —   since: —
+[-] T-011  Modelo Organization / User / Membership (substituída: o dono é o User, T-096/T-097)  owner: —   since: —
+[-] T-012  Migration + backfill de organização padrão (substituída pela T-097)  owner: —   since: —
+[-] T-013  Autenticação por sessão com cookie httpOnly (feita na T-081)  owner: —   since: —
+[-] T-014  Papéis e autorização por rota (feita na T-096)  owner: —   since: —
+[-] T-015  Escopar as queries por organizationId (feita por userId na T-098)  owner: —   since: —
+[-] T-016  Telas de login, cadastro e troca de organização (login na T-081; sem cadastro público por decisão)  owner: —   since: —
 ```
 
 ## Fase 3 — Múltiplas sessões de WhatsApp
 
 ```
-[ ] T-020  Modelo WhatsAppSession + migration                     owner: —        since: —
-[ ] T-021  Tornar WhatsAppProvider instanciável por sessão        owner: —        since: —
-[ ] T-022  Group.externalId único por sessão, não global          owner: —        since: —
-[ ] T-023  Fila BullMQ por sessão, remover lock global do worker  owner: —        since: —
-[ ] T-024  Criptografar credenciais de sessão em repouso          owner: —        since: —
+[-] T-020  Modelo WhatsAppSession + migration (feita na T-099)  owner: —   since: —
+[-] T-021  WhatsAppProvider instanciável por sessão (feita na T-100)  owner: —   since: —
+[-] T-022  Group.externalId único por sessão (feito por usuário na T-097)  owner: —   since: —
+[-] T-023  Fila BullMQ por sessão (substituída: fila no MySQL por número, T-095/T-105)  owner: —   since: —
+[~] T-024  Criptografar credenciais de sessão em repouso  owner: claude   since: 2026-10-01T03:41Z
 ```
 
 ## Fase 4 — Operação
 
 ```
-[ ] T-030  Mover mídia do Postgres para storage de objetos        owner: —        since: —
-[ ] T-031  Backup automatizado e procedimento de restauração      owner: —        since: —
-[ ] T-032  Health checks e métricas                               owner: —        since: —
-[ ] T-033  Deploy reprodutível (Dockerfile por serviço)           owner: —        since: —
+[-] T-030  Mover mídia para storage de objetos (descartada por ora: mídia no MySQL, com limpeza da ADR-040)  owner: —   since: —
+[-] T-031  Backup automatizado e restauração (duplicada da T-068)  owner: —   since: —
+[x] T-032  Health checks e métricas (health real na T-067; métricas no painel do admin, T-111)  owner: —   since: —
+[-] T-033  Deploy reprodutível com Dockerfile por serviço (descartada: processo único sem Docker)  owner: —   since: —
 ```
 
 ## Fase 1b — Inicialização local
@@ -116,7 +119,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-084  Registrar tempos, tentativas e código de erro por envio     owner: —        since: —      
 [x] T-085  Capturar recusa do servidor e recibo de entrega pós-envio   owner: —        since: —      
 [x] T-086  Grade planejada: descartada, dono manteve a ADR-003      owner: —        since: —
-[ ] T-087  Expirar recibos pendentes que nunca vão casar              owner: —        since: —
+[x] T-087  Expirar recibos pendentes que nunca vão casar (feito na revisão de 28/09)  owner: —   since: —
 [x] T-088  Bloquear envio a grupo só-admins quando a conta não é admin   owner: —        since: —
 [x] T-089  Selo só admins / você é admin na escolha de grupos       owner: —        since: —
 [x] T-090  Railway: bind 0.0.0.0 e PUBLIC_URL pelo domínio do Railway  owner: —        since: —
@@ -175,14 +178,14 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 ```
 [x] T-060  Config por env: hosts/origens/URL da API (remover hardcode de localhost)  owner: —        since: —      
 [x] T-061  Web fala com a API por rota same-origin (/api), sem NEXT_PUBLIC_API_URL   owner: —        since: —      
-[ ] T-062  Dockerfile multi-stage por serviço (api, worker, web)                     owner: —        since: —
-[ ] T-063  docker-compose.prod.yml: rede interna, sem portas de DB/Redis publicadas   owner: —        since: —
-[ ] T-064  Caddy como reverse proxy com HTTPS automático                              owner: —        since: —
-[ ] T-065  Remover ReferenceClock; usar NTP do host e now() do Postgres              owner: —        since: —
+[-] T-062  Dockerfile multi-stage por serviço (descartada: processo único sem Docker)  owner: —   since: —
+[-] T-063  docker-compose.prod.yml (descartada: processo único sem Docker)  owner: —   since: —
+[ ] T-064  Caddy como proxy com HTTPS automático na VPS (passo do docs/deploy-vps.md; entra no script de instalação)  owner: —   since: —
+[-] T-065  Remover ReferenceClock e usar now() do Postgres (descartada: o relógio de referência ficou, com teste)  owner: —   since: —
 [x] T-066  Trocar BullMQ/Redis por fila em Postgres                  owner: —        since: —
 [x] T-067  Migrations no release (migrate deploy) e healthchecks reais               owner: —        since: —      
-[ ] T-068  Backup diário do Postgres + volume de sessões, com restore testado        owner: —        since: —
-[ ] T-069  CI/CD: build de imagens no GitHub Actions e deploy por SSH                owner: —        since: —
+[ ] T-068  Backup diário do MySQL + sessões (script pronto: scripts/backup-vps.sh); falta testar a restauração numa VPS  owner: —   since: —
+[ ] T-069  Deploy automático na VPS a cada commit na main (o CI de build e testes já existe, T-006)  owner: —   since: —
 [ ] T-070  Hardening da VPS: firewall, SSH por chave, fail2ban, updates automáticos  owner: —        since: —
 ```
 

@@ -43,7 +43,9 @@ if (tasks) {
     vistos.set(id, true);
 
     if (!AGENTES.has(owner)) falha('.ai/TASKS.md', `${id}: dono "${owner}" desconhecido — use claude, codex ou —`);
-    if (!'  ~x!'.includes(mark)) falha('.ai/TASKS.md', `${id}: marcador "[${mark}]" inválido — use [ ] [~] [x] [!]`);
+    // [-] = descartada (não se aplica mais à arquitetura atual); o motivo fica no título.
+    if (!'  ~x!-'.includes(mark)) falha('.ai/TASKS.md', `${id}: marcador "[${mark}]" inválido — use [ ] [~] [x] [!] [-]`);
+    if (mark === '-' && owner !== '—') falha('.ai/TASKS.md', `${id}: descartada mas ainda com dono "${owner}" — libere o lock`);
 
     if (mark === '~' && owner === '—') falha('.ai/TASKS.md', `${id}: marcada em andamento sem dono — reivindique ou volte para [ ]`);
     if (mark === '~' && since === '—') falha('.ai/TASKS.md', `${id}: em andamento sem "since" — registre o horário UTC da reivindicação`);

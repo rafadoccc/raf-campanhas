@@ -36,7 +36,7 @@ const tasks = read('.ai/TASKS.md') ?? '';
 const rows = [...tasks.matchAll(/^\[(.)\]\s+(T-\d+)\s+(.+?)\s{2,}owner:\s*(\S+)\s+since:\s*(\S+)/gm)]
   .map(([, mark, id, title, owner, since]) => ({ mark, id, title: title.trim(), owner, since }));
 
-const open = rows.filter(r => r.mark !== 'x');
+const open = rows.filter(r => r.mark !== 'x' && r.mark !== '-'); // concluídas e descartadas não contam
 const mine = rows.filter(r => r.mark === '~');
 if (!rows.length) {
   console.log('  (nenhuma tarefa registrada)');
