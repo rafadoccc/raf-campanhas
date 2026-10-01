@@ -31,6 +31,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
+| 5m | Notas de atualização para o cliente em /notas, com ícone no menu | ✅ na dev (T-139) |
 | 5l | Envio sem resposta nunca trava a fila: teto de upload, vigia, faxina (ADR-044) | ✅ na dev (T-138) · o dono leva para a main |
 | 5k | Aquecimento de número novo, perguntado uma vez por número (ADR-043) | ✅ concluída (T-134) |
 | 5j | Intervalo entre envios sorteado de 1:45 a 3:00, sem escolha do cliente (ADR-042) | ✅ concluída (T-137) |

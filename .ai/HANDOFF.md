@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-10-01T00:14Z · claude
+
+**Fiz:** página de notas de atualização para o cliente (`/notas`), no visual do DocDrop e
+inspirada na tela de patch notes do dono (data e versão à esquerda, grupos Novo/Melhorado/
+Desempenho/Corrigido/Segurança/Removido à direita, 5 versões por página). Ícone discreto no menu,
+ao lado de Administração, com um pontinho enquanto a versão mais nova não foi aberta. As 8
+versões (26.09.1 a 26.09.8) foram escritas a partir do histórico do Git, em linguagem de cliente.
+**Arquivos:** apps/web/src/{lib/release-notes.ts,lib/release-notes.test.ts,lib/release-notes-seen.ts,pages/release-notes.tsx,components/navigation.tsx,design/icons.ts,main.tsx}, package.json (teste novo na lista)
+**Tarefas:** T-139 (concluída).
+**Estado:** compila · lint ok · unitários 84/84 + 7 do painel. Conferido no navegador (desktop e 375 px): página, paginação, ícone, pontinho que some depois de ler.
+**Armadilhas:**
+- **Para cada versão nova, acrescentar uma entrada NO TOPO de `lib/release-notes.ts`** (versão ano.mês.sequência, que bate com a data). `release-notes.test.ts` barra versão fora do formato, fora de ordem, grupo repetido e HTML no texto. Escreva para o cliente: o que ele ganha, sem nome de arquivo ou biblioteca.
+- A rota `/notas` é pública (como /termos): abre sem login. O pontinho do menu usa localStorage (`docdrop-notas-vistas`) e some sozinho se o navegador bloquear.
+- As datas das versões antigas seguem o histórico real (21 a 30/09).
+**Próximo passo sugerido:** o dono leva a dev para a main fora de campanha.
+
+---
+
 ## 2026-09-30T23:50Z · claude
 
 **Fiz:** corrigi o travamento da fila visto em produção (envio "Enviando há 158 min", 40 esperando)

@@ -159,6 +159,7 @@ Severidade entre parênteses. C = crítico, A = alto, M = médio. Detalhe comple
 [x] T-134  Anti-banimento: aquecimento de número novo                   owner: —        since: —
 [x] T-137  Intervalo aleatório 1:45 a 3:00, sem escolha do cliente       owner: —        since: —
 [x] T-138  Envio sem resposta não trava a fila (vigia, faxina)           owner: —        since: —
+[x] T-139  Notas de atualização (/notas) e ícone no menu                   owner: —        since: —
 [x] T-135  Anti-banimento: pausa automática com sinal de bloqueio       owner: —        since: —
 [x] T-120  Tela de Administração reestruturada (seções, contas, menu)   owner: —        since: —
 [x] T-121  Desempenho, limites contra abuso, VPS pequena (ADR-034)      owner: —        since: —
