@@ -38,6 +38,7 @@ function privacySections({ contactEmail, retentionDays }: LegalInfo): Section[] 
       <li><strong>Conta:</strong> nome, e-mail, senha (guardada cifrada, de forma que nem nós conseguimos lê-la) e a data em que você aceitou estes termos.</li>
       <li><strong>Acessos:</strong> endereço IP, navegador e horário de cada login, enquanto a sessão estiver aberta.</li>
       <li><strong>WhatsApp conectado:</strong> o número conectado e as chaves de conexão, guardadas no servidor e nunca exibidas.</li>
+      <li><strong>Avisos:</strong> se você ligar os avisos no WhatsApp, o número que escolher para recebê-los e o texto dos últimos avisos (por 30 dias).</li>
       <li><strong>Grupos:</strong> nome, identificador, número de membros e se você é administrador de cada grupo.</li>
       <li><strong>Campanhas:</strong> textos, imagens e vídeos que você envia, horários, e o histórico de cada envio (enviado, entregue, falhou).</li>
       <li><strong>Leituras:</strong> quantas pessoas leram cada mensagem. O número de telefone de quem leu é transformado em um código (hash) e usado só para contar; não guardamos a lista de quem leu.</li>

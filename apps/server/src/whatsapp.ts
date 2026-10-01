@@ -420,6 +420,24 @@ export class WhatsAppProvider {
     // O id só confirma que o pedido foi escrito no socket; entrega ou recusa chegam depois.
     return { messageId: result.key.id, context: group.context };
   }
+  /**
+   * Aviso para o dono (ADR-048): um texto simples para o próprio número conectado (a conversa
+   * "Você") ou para o número de avisos que ele escolheu. Não é envio de campanha: não passa pela
+   * fila, não conta no limite do dia e nunca vai para grupo.
+   */
+  async notify(text: string, phone?: string | null) {
+    const sock = this.connected();
+    let jid = this.data.accountJid;
+    if (phone) {
+      // O WhatsApp devolve o endereço certo do número (no Brasil, com ou sem o nono dígito).
+      const found = (await sock.onWhatsApp(phone))?.[0];
+      if (!found?.exists) throw new Error('O número de avisos não tem WhatsApp. Confira o número.');
+      jid = found.jid;
+    }
+    if (!jid || jid.endsWith('@g.us')) throw new Error('WhatsApp desconectado.');
+    const result = await sock.sendMessage(jid, { text });
+    if (!result?.key.id) throw new Error('O WhatsApp não confirmou o envio do aviso.');
+  }
   private async prepareSend(groupJid: string, text: string, accountJid: string | null, media?: { kind: string; mimeType: string; data: Uint8Array } | null, groupId?: string, options: { mentionAll?: boolean } = {}) {
     const sock = this.connected();
     if (accountJid !== this.data.accountJid) throw new Error('Número conectado difere do número da campanha.');

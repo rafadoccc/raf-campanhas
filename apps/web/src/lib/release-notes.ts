@@ -31,6 +31,7 @@ export const RELEASES: Release[] = [
         '**Modelos de campanha:** salve uma campanha como modelo e crie a próxima em dois cliques, já com texto, mídia, grupos e horários.',
         '**Listas de grupos:** dê um nome a um conjunto de grupos e marque todos de uma vez ao montar a campanha.',
         '**Esqueci minha senha:** peça uma senha nova na tela de entrada e receba um link de uso único para criar outra.',
+        '**Avisos no WhatsApp:** receba uma mensagem quando uma campanha terminar ou quando o sistema pausar os envios para proteger o número. Ligue na tela WhatsApp.',
       ] },
       { tipo: 'melhorado', itens: [
         'Resumo da campanha mais limpo: grupos, horários, período e duração da rodada, cada um com o seu ícone.',

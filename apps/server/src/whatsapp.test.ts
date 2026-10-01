@@ -39,6 +39,18 @@ test('submits text to the selected group through provider adapter', async () => 
   // Upload de mídia sempre com limite de tempo: sem ele o Baileys pode esperar para sempre (ADR-044).
   assert.deepEqual(options, [{ mediaUploadTimeoutMs: MEDIA_UPLOAD_TIMEOUT_MS }]);
 });
+test('owner notice (048): goes to the connected number itself, or to the chosen number at the address WhatsApp gives', async () => {
+  const { provider, sent } = fake();
+  const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;
+  Object.assign(socket, { onWhatsApp: async (phone: string) => (phone === '5511912345678' ? [{ jid: '551112345678@s.whatsapp.net', exists: true }] : []) });
+  await provider.notify('Terminou');
+  await provider.notify('Terminou', '5511912345678');
+  // O endereço vem do WhatsApp (aqui, sem o nono dígito), não do que a pessoa digitou.
+  assert.deepEqual(sent, [['5511000000000@s.whatsapp.net', { text: 'Terminou' }], ['551112345678@s.whatsapp.net', { text: 'Terminou' }]]);
+  await assert.rejects(provider.notify('Terminou', '5511900000000'), /não tem WhatsApp/);
+  assert.equal(sent.length, 2);
+  await assert.rejects(new WhatsAppProvider().notify('Terminou'), /desconectado/);
+});
 test('admin-only group without admin rights fails before anything is sent', async () => {
   const { provider, sent } = fake();
   const socket = (provider as unknown as { socket: Record<string, unknown> }).socket;

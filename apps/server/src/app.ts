@@ -20,6 +20,7 @@ import { registerReportRoutes } from './report';
 import { registerFeedbackRoutes } from './feedback-routes';
 import { registerPasswordReset } from './password-reset';
 import { registerGroupListRoutes } from './group-lists';
+import { registerAlertRoutes } from './owner-alerts';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -119,6 +120,8 @@ registerFeedbackRoutes(app);
 // Esqueci minha senha, listas de grupos (ADR-047). Os modelos de campanha ficam em campaign-routes.
 registerPasswordReset(app, config);
 registerGroupListRoutes(app);
+// Avisos no WhatsApp do dono (ADR-048): preferência da conta e aviso de teste.
+registerAlertRoutes(app, sending);
 // Painel do SUPER_ADMIN (Fase 6): toda rota passa por requireSuperAdmin.
 registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: provider } });
 // Lista paginada por cursor (rolagem infinita, ADR-026): só o que o cartão mostra — nada de

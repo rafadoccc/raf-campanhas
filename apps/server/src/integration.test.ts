@@ -22,6 +22,7 @@ import { checkRejections, safetyPause, SAFETY_REASONS, REJECTIONS_TO_PAUSE } fro
 import Fastify from 'fastify';
 import { registerAuth } from './auth';
 import { registerPasswordReset } from './password-reset';
+import { collectAlerts, deliverAlerts, registerAlertRoutes, parsePhone, ALERT_EXPIRY_MS } from './owner-alerts';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -3439,6 +3440,134 @@ test('group lists: named sets of the account own groups, with rename, replace an
   assert.equal((await other.call('DELETE', `/api/group-lists/${id}`)).statusCode, 404);
   assert.equal((await owner.call('DELETE', `/api/group-lists/${id}`)).statusCode, 200);
   assert.deepEqual((await owner.call('GET', '/api/group-lists')).json(), []);
+});
+
+// ─── Avisos no WhatsApp do dono (ADR-048) ───────────────────────────────────────
+test('owner alerts (048): preference per account, phone normalized, and the test notice goes to the saved destination', async () => {
+  const owner = await lgpdUser('avisos@teste.local');
+  const other = await lgpdUser('avisos-outro@teste.local');
+  const put = (payload: object, who = owner) => app.inject({ method: 'PUT', url: '/api/alerts', payload, headers: as(who.session) });
+  assert.deepEqual((await owner.call('GET', '/api/alerts')).json(), { enabled: false, phone: null, connected: false, recent: [] });
+  assert.equal((await put({ phone: null })).statusCode, 400, 'ligado ou desligado é obrigatório');
+  assert.equal((await put({ enabled: true, phone: '123' })).statusCode, 400, 'número curto demais');
+  assert.equal(parsePhone('+55 (011) 91234-5678'), '5511912345678');
+  assert.equal(parsePhone(''), null, 'vazio = o próprio número conectado');
+  assert.throws(() => parsePhone('abc'), /inválido/);
+
+  const saved = await put({ enabled: true, phone: '(11) 91234-5678' });
+  assert.equal(saved.statusCode, 200, saved.body);
+  assert.deepEqual([saved.json().enabled, saved.json().phone], [true, '5511912345678'], 'DDD + número ganha o 55');
+  const since = (await prisma.alertSettings.findUniqueOrThrow({ where: { userId: owner.user.id } })).enabledAt;
+  assert.ok(since, 'ligar marca desde quando vale');
+  await put({ enabled: true, phone: null });
+  const again = await prisma.alertSettings.findUniqueOrThrow({ where: { userId: owner.user.id } });
+  assert.deepEqual([again.phone, again.enabledAt?.getTime()], [null, since!.getTime()], 'salvar de novo ligado não recomeça a contagem');
+  assert.equal((await other.call('GET', '/api/alerts')).json().enabled, false, 'preferência é de cada conta');
+  assert.equal((await owner.call('POST', '/api/alerts/test', {})).statusCode, 409, 'sem WhatsApp conectado não há teste');
+  await put({ enabled: false, phone: null });
+  assert.equal((await prisma.alertSettings.findUniqueOrThrow({ where: { userId: owner.user.id } })).enabledAt, null);
+
+  // Com a conexão do dono: o teste sai na hora, para o destino salvo, e fica no histórico.
+  const notices: [string, string | null | undefined][] = [];
+  let broken = false;
+  const mini = Fastify();
+  registerAuth(mini, loadConfig({}));
+  registerAlertRoutes(mini, { forOwner: async userId => (userId === owner.user.id
+    ? { status: () => ({ state: 'connected' }), notify: async (text, phone) => { if (broken) throw new Error('Timed Out'); notices.push([text, phone]); } }
+    : null) });
+  const tryIt = (who = owner) => mini.inject({ method: 'POST', url: '/api/alerts/test', headers: as(who.session), payload: {} });
+  try {
+    await put({ enabled: true, phone: '11 91234-5678' });
+    const tested = await tryIt();
+    assert.equal(tested.statusCode, 200, tested.body);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0][0], /^\*DocDrop\* · Aviso de teste\n/);
+    assert.equal(notices[0][1], '5511912345678');
+    assert.deepEqual(tested.json().recent.map((r: { title: string; sentAt: string | null; error: string | null }) => [r.title, Boolean(r.sentAt), r.error]), [['Aviso de teste', true, null]]);
+    assert.equal((await tryIt(other)).statusCode, 409, 'cada conta só usa a própria conexão');
+    broken = true;
+    const failed = await tryIt();
+    assert.equal(failed.statusCode, 502);
+    assert.equal(failed.json().error, 'O WhatsApp não aceitou o aviso.', 'erro técnico não vai para a tela');
+    await tryIt();
+    assert.equal((await tryIt()).statusCode, 429, '3 testes a cada 10 minutos');
+    assert.equal(notices.length, 1);
+  } finally { await mini.close(); }
+});
+
+test('owner alerts (048): a finished real campaign and an automatic pause become one notice each, sent once through the owner connection', async () => {
+  const user = await prisma.user.create({ data: { email: 'avisado@teste.local', name: 'Avisado', passwordHash: 'x' } });
+  const quiet = await prisma.user.create({ data: { email: 'sem-aviso@teste.local', name: 'Sem aviso', passwordHash: 'x' } });
+  const now = new Date();
+  const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
+  let seq = 0;
+  async function finished(userId: string, name: string, attempts: { status: 'SENT' | 'FAILED'; at: Date }[], provider = 'baileys') {
+    const campaign = await prisma.campaign.create({ data: { userId, name, startsAt: new Date(0), endsAt: new Date(0), status: 'COMPLETED', provider } });
+    for (const [sequence, attempt] of attempts.entries()) {
+      const group = await prisma.group.create({ data: { userId, name: `${name} ${sequence}`, externalId: `aviso-${now.getTime()}-${seq++}@g.us` } });
+      await prisma.delivery.create({ data: { campaignId: campaign.id, groupId: group.id, messageBody: 'oi', provider, sequence, status: attempt.status, scheduledAt: attempt.at, attemptedAt: attempt.at } });
+    }
+    return campaign;
+  }
+  await prisma.alertSettings.create({ data: { userId: user.id, enabled: true, enabledAt: ago(60) } });
+  const done = await finished(user.id, 'Sexta', [{ status: 'SENT', at: ago(9) }, { status: 'SENT', at: ago(7) }, { status: 'FAILED', at: ago(5) }]);
+  const recent = await finished(user.id, 'Acabou agora', [{ status: 'SENT', at: ago(0.5) }]);
+  await finished(user.id, 'Antes de ligar', [{ status: 'SENT', at: ago(120) }]);
+  await finished(user.id, 'Simulada', [{ status: 'SENT', at: ago(5) }], 'simulator');
+  await finished(quiet.id, 'De outra conta', [{ status: 'SENT', at: ago(5) }]);
+  const origin = 'https://painel.teste';
+  const mine = () => prisma.ownerAlert.findMany({ where: { userId: user.id }, orderBy: [{ createdAt: 'asc' }, { key: 'asc' }] });
+
+  assert.equal(await collectAlerts(origin, now), 1, 'só a campanha real, já assentada, de depois de ligar os avisos');
+  assert.equal((await mine())[0].text, `*DocDrop* · Campanha concluída\n"Sexta": 2 de 3 envios feitos. 1 falhou.\n${origin}/campanhas/${done.id}`);
+  assert.equal(await collectAlerts(origin, now), 0, 'o mesmo fato não vira dois avisos');
+  assert.equal(await prisma.ownerAlert.count({ where: { userId: quiet.id } }), 0, 'conta sem avisos ligados não recebe nada');
+  // Dois minutos depois do último envio, a que acabou agora também avisa.
+  const later = new Date(now.getTime() + 3 * 60_000);
+  assert.equal(await collectAlerts(origin, later), 1);
+  assert.ok((await mine())[1].text.endsWith(`"Acabou agora": 1 de 1 envio feito.\n${origin}/campanhas/${recent.id}`));
+  // Pausa automática por sinal de restrição (ADR-041). No banco de teste ela vem desligada.
+  await prisma.sendingPolicy.create({ data: { userId: user.id, autoPause: true } });
+  const pausedAt = new Date(later.getTime() + 1000);
+  await safetyPause(user.id, SAFETY_REASONS.rateLimited, pausedAt);
+  assert.equal(await collectAlerts(origin, pausedAt), 1);
+  assert.match((await mine())[2].text, /^\*DocDrop\* · Campanhas pausadas\nO WhatsApp limitou os envios/);
+
+  const out: string[] = [];
+  let state = 'disconnected';
+  let broken = false;
+  const router = { forOwner: async (userId: string) => (userId === user.id
+    ? { status: () => ({ state }), notify: async (text: string) => { if (broken) throw new Error('Timed Out'); out.push(text.split('\n')[0]); } }
+    : null) };
+  assert.equal(await deliverAlerts(router, pausedAt), 0, 'sem a conexão do dono, o aviso espera');
+  state = 'connected';
+  const anyGroup = await prisma.group.findFirstOrThrow({ where: { userId: user.id } });
+  const busy = await prisma.delivery.create({ data: { campaignId: done.id, groupId: anyGroup.id, messageBody: 'oi', provider: 'baileys', sequence: 99, status: 'PROCESSING', scheduledAt: pausedAt } });
+  assert.equal(await deliverAlerts(router, pausedAt), 0, 'com um envio de campanha saindo agora, espera a próxima rodada');
+  await prisma.delivery.delete({ where: { id: busy.id } });
+  assert.equal(await deliverAlerts(router, pausedAt), 1, 'um aviso por conta a cada rodada');
+  assert.equal(await deliverAlerts(router, pausedAt), 1);
+  broken = true;
+  assert.equal(await deliverAlerts(router, pausedAt), 0);
+  broken = false;
+  assert.equal(await deliverAlerts(router, pausedAt), 0, 'aviso que falhou não é repetido');
+  assert.deepEqual(out, ['*DocDrop* · Campanha concluída', '*DocDrop* · Campanha concluída']);
+  assert.deepEqual((await mine()).map(alert => [Boolean(alert.sentAt), alert.error]), [[true, null], [true, null], [false, 'O WhatsApp não aceitou o aviso.']]);
+
+  // Aviso velho (o WhatsApp ficou desconectado) e avisos desligados: abandonados com o motivo.
+  const old = await prisma.ownerAlert.create({ data: { userId: user.id, key: 'fim:velho', text: 'velho', createdAt: new Date(pausedAt.getTime() - ALERT_EXPIRY_MS - 60_000) } });
+  await deliverAlerts(router, pausedAt);
+  assert.match((await prisma.ownerAlert.findUniqueOrThrow({ where: { id: old.id } })).error ?? '', /desconectado/);
+  await prisma.alertSettings.update({ where: { userId: user.id }, data: { enabled: false, enabledAt: null } });
+  const off = await prisma.ownerAlert.create({ data: { userId: user.id, key: 'fim:desligado', text: 'desligado', createdAt: pausedAt } });
+  assert.equal(await deliverAlerts(router, pausedAt), 0);
+  assert.match((await prisma.ownerAlert.findUniqueOrThrow({ where: { id: off.id } })).error ?? '', /desligados/);
+  assert.equal(out.length, 2);
+  // Excluir a conta leva os avisos junto.
+  await prisma.campaign.deleteMany({ where: { userId: user.id } });
+  await prisma.group.deleteMany({ where: { userId: user.id } });
+  await prisma.user.delete({ where: { id: user.id } });
+  assert.equal(await prisma.ownerAlert.count({ where: { userId: user.id } }) + await prisma.alertSettings.count({ where: { userId: user.id } }), 0);
 });
 
 // ─── Proteção do número (ADR-041) ───────────────────────────────────────────────

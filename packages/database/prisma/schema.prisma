@@ -277,6 +277,36 @@ model User {
   feedback     Feedback[]
   groupLists   GroupList[]
   passwordResets PasswordReset[]
+  alertSettings AlertSettings?
+  alerts       OwnerAlert[]
+}
+
+// Avisos no WhatsApp do dono (ADR-048): preferência da conta. Sem linha = desligado.
+model AlertSettings {
+  userId    String    @id
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled   Boolean   @default(false)
+  // Número que recebe os avisos (só dígitos, com DDI). null = o próprio número conectado.
+  phone     String?   @db.VarChar(20)
+  // Só o que acontecer depois disto vira aviso: ligar não despeja o que já passou.
+  enabledAt DateTime?
+  updatedAt DateTime  @updatedAt
+}
+
+// Um aviso para o dono (ADR-048). `key` identifica o fato (ex.: "fim:<campanha>:<último envio>"):
+// o mesmo fato nunca gera dois avisos. sentAt e error nulos = ainda na fila de saída.
+model OwnerAlert {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String    @unique @db.VarChar(120)
+  text      String    @db.VarChar(1000)
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+  error     String?   @db.VarChar(255)
+
+  @@index([userId, createdAt])
+  @@index([sentAt, createdAt])
 }
 
 // "Esqueci minha senha" (ADR-047). Uma linha por pedido. Sem tokenHash = a pessoa pediu e ainda

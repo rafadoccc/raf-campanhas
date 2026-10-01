@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, type SafetyNotice } from '../lib/api';
 import { NumberProtection, SafetyAlert, WarmupPanel, type Warmup } from '../components/number-protection';
+import { OwnerAlerts } from '../components/owner-alerts';
 import { startVisiblePolling, connectionPollDelay } from '../lib/visible-polling';
 import { screenCache } from '../lib/cache';
 import { Alert, Button, Card, Dot, Page, PageHeader, IconOpen, IconRefresh, IconWhatsApp, IconDisable, hora, useConfirm } from '../design';
@@ -117,6 +118,7 @@ export default function Settings() {
         </div>
       </Card>
       <NumberProtection />
+      <OwnerAlerts connected={connected} />
       <p className="text-2xs text-muted">As campanhas rodam com o navegador fechado, desde que o sistema fique ligado.</p>
     </div>
   </Page>;

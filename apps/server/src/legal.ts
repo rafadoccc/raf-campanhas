@@ -80,7 +80,8 @@ export async function exportAccount(userId: string) {
       whatsapp: { select: { accountJid: true, state: true, lastConnectedAt: true } },
     },
   });
-  const [lists, feedback, groups, media, campaigns] = await Promise.all([
+  const [alerts, lists, feedback, groups, media, campaigns] = await Promise.all([
+    prisma.alertSettings.findUnique({ where: { userId }, select: { enabled: true, phone: true } }),
     prisma.groupList.findMany({ where: { userId }, orderBy: { name: 'asc' }, select: { name: true, createdAt: true, items: { select: { group: { select: { name: true } } } } } }),
     prisma.feedback.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, select: { kind: true, message: true, status: true, reply: true, repliedAt: true, createdAt: true } }),
     prisma.group.findMany({ where: { userId }, orderBy: { name: 'asc' }, select: { name: true, externalId: true, active: true, participants: true, isAdmin: true, createdAt: true } }),
@@ -107,6 +108,7 @@ export async function exportAccount(userId: string) {
     conta: account,
     acessos: sessions,
     whatsapp,
+    avisos: alerts ? { ligados: alerts.enabled, numero: alerts.phone } : null,
     grupos: groups,
     listasDeGrupos: lists.map(list => ({ nome: list.name, criadaEm: list.createdAt, grupos: list.items.map(item => item.group.name) })),
     midias: media,
