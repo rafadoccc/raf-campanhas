@@ -42,12 +42,15 @@ async function main() {
   async function shutdown() {
     if (closing) return;
     closing = true;
-    await stopRetention?.().catch(error => console.error('[LGPD] Falha ao encerrar limpeza:', error));
-    await stopAlerts?.().catch(error => console.error('[Avisos] Falha ao encerrar:', error));
-    await stopPlans?.().catch(error => console.error('[Planos] Falha ao encerrar:', error));
+    // Impede novos envios imediatamente, mesmo enquanto outro serviço termina sua rodada.
+    await Promise.all([
+      stopRetention?.().catch(error => console.error('[LGPD] Falha ao encerrar limpeza:', error)),
+      stopAlerts?.().catch(error => console.error('[Avisos] Falha ao encerrar:', error)),
+      stopPlans?.().catch(error => console.error('[Planos] Falha ao encerrar:', error)),
+      dispatcher?.stop().catch(error => console.error('[Fila] Falha ao encerrar:', error)),
+    ]);
     // Cada etapa roda mesmo se a anterior falhar: em especial, não deixa o processo vivo
     // sem API/fila após um erro de partida ou de renovação da posse.
-    await dispatcher?.stop().catch(error => console.error('[Fila] Falha ao encerrar:', error));
     await manager.stopAll().catch(error => console.error('[WhatsApp] Falha ao encerrar conexões:', error));
     await provider.stop().catch(error => console.error('[WhatsApp] Falha ao encerrar sessão legada:', error));
     await app.close().catch(error => console.error('[API] Falha ao encerrar:', error));

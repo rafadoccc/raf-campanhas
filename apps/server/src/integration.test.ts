@@ -12,7 +12,8 @@ import { WhatsAppManager, type ManagedProvider } from './whatsapp-manager';
 import { loadConfig, TRUSTED_PROXIES } from './config';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
@@ -3996,6 +3997,70 @@ test('review: a stale sweep candidate cannot pause an account renewed before its
   } finally {
     prisma.subscription.findMany = original;
     await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'PAUSED' } });
+  }
+});
+
+test('review: pending alerts of a disconnected owner cannot starve another owner', async () => {
+  await prisma.ownerAlert.deleteMany();
+  const offline = await lgpdUser('review-alert-offline@teste.local');
+  const online = await lgpdUser('review-alert-online@teste.local');
+  const now = new Date();
+  await prisma.alertSettings.createMany({ data: [offline, online].map(o => ({ userId: o.user.id, enabled: true })) });
+  await prisma.ownerAlert.createMany({ data: Array.from({ length: 55 }, (_, i) => ({ userId: offline.user.id, key: `review:off:${i}`, text: 'Aviso pendente', createdAt: new Date(now.getTime() - 60_000) })) });
+  const wanted = await prisma.ownerAlert.create({ data: { userId: online.user.id, key: 'review:online', text: 'Aviso da conta conectada', createdAt: now } });
+  const sent: string[] = [];
+  const router = { forOwner: async (userId: string) => ({ status: () => ({ state: userId === online.user.id ? 'connected' : 'disconnected' }), notify: async (text: string) => { sent.push(text); } }) };
+  assert.equal(await deliverAlerts(router, now), 1);
+  assert.deepEqual(sent, [wanted.text]);
+  assert.ok((await prisma.ownerAlert.findUniqueOrThrow({ where: { id: wanted.id } })).sentAt);
+  assert.equal(await deliverAlerts(router, now), 0, 'aviso confirmado não é repetido');
+  assert.equal(await prisma.ownerAlert.count({ where: { userId: offline.user.id, sentAt: null } }), 55);
+});
+
+test('review: the compiled server starts on an isolated port with API and panel, without a paired WhatsApp', { timeout: 30_000 }, async () => {
+  await pauseEverything();
+  const sessions = mkdtempSync(join(tmpdir(), 'wa-startup-'));
+  const probe = createServer();
+  const port = await new Promise<number>((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      if (!address || typeof address === 'string') return reject(new Error('Porta de teste indisponível.'));
+      probe.close(error => error ? reject(error) : resolve(address.port));
+    });
+  });
+  const child = spawn(process.execPath, ['apps/server/dist/main.js'], {
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', PUBLIC_URL: `http://localhost:${port}`, SESSIONS_DIR: sessions, WHATSAPP_AUTO_CONNECT: '0' },
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Servidor isolado não iniciou no prazo.')), 20_000);
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`Servidor isolado encerrou antes de iniciar (${code}).`)); });
+      let output = '';
+      child.stdout.on('data', chunk => {
+        output = (output + String(chunk)).slice(-4000);
+        if (output.includes('Sistema pronto em')) { clearTimeout(timer); resolve(); }
+      });
+      // Drena o pipe sem imprimir configuração nem dados do ambiente.
+      child.stderr.on('data', () => undefined);
+    });
+    const base = `http://127.0.0.1:${port}`;
+    const health = await fetch(`${base}/api/health`);
+    assert.equal(health.status, 200);
+    assert.equal((await health.json() as { database: string }).database, 'ok');
+    const panel = await fetch(`${base}/campanhas`);
+    assert.equal(panel.status, 200);
+    assert.match(await panel.text(), /<div id="root"/);
+    assert.equal((await fetch(`${base}/api/whatsapp/status`)).status, 401);
+    assert.equal(existsSync(join(sessions, 'whatsapp', 'creds.json')), false);
+  } finally {
+    child.kill();
+    await exited;
+    rmSync(sessions, { recursive: true, force: true });
   }
 });
 

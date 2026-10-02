@@ -114,7 +114,25 @@ const failureOf = (error: unknown) => (error instanceof Error && /avisos|descone
  * O aviso é reservado ANTES de sair: se o envio falhar, fica o motivo e ele não é repetido.
  */
 export async function deliverAlerts(router: AlertRouter, now: Date) {
-  const pending = await prisma.ownerAlert.findMany({ where: { sentAt: null, error: null }, orderBy: { createdAt: 'asc' }, take: 50 });
+  // Muitos avisos parados de uma conta não podem ocupar todos os lugares da rodada.
+  // Escolhe o mais antigo de cada dono usando os índices existentes, ainda limitado a 50.
+  await prisma.ownerAlert.updateMany({
+    where: { sentAt: null, error: null, createdAt: { lt: new Date(now.getTime() - ALERT_EXPIRY_MS) } },
+    data: { error: 'Não enviado: o WhatsApp ficou desconectado.' },
+  });
+  const candidates = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT a.id FROM \`OwnerAlert\` a
+    WHERE a.\`sentAt\` IS NULL AND a.error IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM \`OwnerAlert\` older
+        WHERE older.\`userId\` = a.\`userId\` AND older.\`sentAt\` IS NULL AND older.error IS NULL
+          AND (older.\`createdAt\` < a.\`createdAt\` OR (older.\`createdAt\` = a.\`createdAt\` AND older.id < a.id))
+      )
+    ORDER BY a.\`createdAt\`, a.id LIMIT 50`;
+  const pending = await prisma.ownerAlert.findMany({
+    where: { id: { in: candidates.map(row => row.id) }, sentAt: null, error: null },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
   const handled = new Set<string>();
   let sent = 0;
   for (const alert of pending) {
