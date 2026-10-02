@@ -67,4 +67,6 @@ export {
   Bookmark as IconTemplate,
   ListChecks as IconList,
   SlidersHorizontal as IconPlan,
+  Maximize2 as IconExpand,
+  Minimize2 as IconShrink,
 } from 'lucide-react';

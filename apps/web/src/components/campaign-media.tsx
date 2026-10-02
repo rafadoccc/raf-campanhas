@@ -1,9 +1,46 @@
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, IconDelete, IconImage, IconUpload, IconVideo, tamanho } from '../design';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { Alert, Button, IconDelete, IconExpand, IconImage, IconRemove, IconShrink, IconUpload, IconVideo, tamanho } from '../design';
 
 export type CampaignMedia = { id?: string; name: string; kind: string; size: number; mimeType: string; color?: string | null; file?: File };
 
-export function MediaPreview({ media }: { media: CampaignMedia }) {
+/**
+ * Imagem em tela cheia. Abre inteira, ajustada à tela (sem cortar nada); um clique na imagem
+ * alterna para o tamanho real, com rolagem. Fecha no X, na tecla Esc ou clicando fora.
+ */
+export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [actual, setActual] = useState(false);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panel.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); previous?.focus(); };
+  }, []);
+  const tool = 'grid h-8 w-8 place-items-center rounded text-white/80 transition-colors hover:bg-white/10 hover:text-white';
+  const outside = (event: MouseEvent) => { if (event.target === event.currentTarget) onClose(); };
+  return <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={alt} className="fixed inset-0 z-50 flex animate-overlay-in flex-col bg-ink/90 outline-none">
+    <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-2.5" onMouseDown={outside}>
+      <span className="truncate text-xs text-white/80">{alt}</span>
+      <span className="flex shrink-0 items-center gap-1">
+        <button type="button" className={tool} aria-label={actual ? 'Ajustar à tela' : 'Ver no tamanho real'} title={actual ? 'Ajustar à tela' : 'Ver no tamanho real'} onClick={() => setActual(value => !value)}>
+          {actual ? <IconShrink className="h-4 w-4" aria-hidden /> : <IconExpand className="h-4 w-4" aria-hidden />}
+        </button>
+        <button type="button" className={tool} aria-label="Fechar" title="Fechar" onClick={onClose}><IconRemove className="h-4 w-4" aria-hidden /></button>
+      </span>
+    </div>
+    {/* m-auto na imagem: centraliza quando cabe e deixa rolar por inteiro quando é maior que a tela. */}
+    <div className="scroll-area flex min-h-0 flex-1 overflow-auto p-4 pt-0" onMouseDown={outside}>
+      <img src={src} alt={alt} onClick={() => setActual(value => !value)}
+        className={`m-auto block animate-pop-in rounded ${actual ? 'max-w-none cursor-zoom-out' : 'max-h-full max-w-full cursor-zoom-in object-contain'}`} />
+    </div>
+  </div>;
+}
+
+/** Endereço da mídia: o arquivo recém-escolhido (ainda no navegador) ou o já salvo no servidor. */
+function useMediaSource(media: CampaignMedia) {
   const [local, setLocal] = useState('');
   useEffect(() => {
     if (!media.file) { setLocal(''); return; }
@@ -11,13 +48,34 @@ export function MediaPreview({ media }: { media: CampaignMedia }) {
     return () => URL.revokeObjectURL(url);
   }, [media.file]);
   // Mesma origem: o cookie de sessão acompanha a imagem/vídeo.
-  const src = media.file ? local : `/api/media/${media.id}`;
+  return media.file ? local : `/api/media/${media.id}`;
+}
+
+/**
+ * Miniatura da mídia: a imagem inteira (sem corte), que abre em tela cheia ao clicar; vídeo toca
+ * no próprio lugar. `className` dimensiona a moldura e `imageClassName`, a imagem dentro dela.
+ */
+export function MediaThumb({ media, className = '', imageClassName = 'w-full' }: { media: CampaignMedia; className?: string; imageClassName?: string }) {
+  const src = useMediaSource(media);
+  const [open, setOpen] = useState(false);
+  if (!src) return null;
+  if (media.kind !== 'image') return <video src={src} controls preload="metadata" className={`rounded border border-line bg-slate-50 ${className}`} />;
+  const label = `Mídia da campanha: ${media.name}`;
+  return <>
+    <button type="button" onClick={() => setOpen(true)} title="Ampliar a imagem" aria-label={`Ampliar a imagem ${media.name}`}
+      className={`group relative block cursor-zoom-in overflow-hidden rounded border border-line bg-slate-50 ${className}`}>
+      <img src={src} alt={label} loading="lazy" decoding="async" className={`block h-auto ${imageClassName}`} />
+      <span aria-hidden className="absolute bottom-1 right-1 grid h-6 w-6 place-items-center rounded bg-ink/70 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"><IconExpand className="h-3.5 w-3.5" /></span>
+    </button>
+    {open && <ImageLightbox src={src} alt={media.name} onClose={() => setOpen(false)} />}
+  </>;
+}
+
+export function MediaPreview({ media }: { media: CampaignMedia }) {
   const Icon = media.kind === 'image' ? IconImage : IconVideo;
   return <div className="mt-3 space-y-2">
     <p className="flex items-center gap-1.5 break-all text-xs text-muted"><Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />{media.name} · {tamanho(media.size)}</p>
-    {src && (media.kind === 'image'
-      ? <img src={src} alt={`Mídia da campanha: ${media.name}`} loading="lazy" decoding="async" className="max-h-64 max-w-full rounded object-contain" />
-      : <video src={src} controls preload="metadata" className="max-h-64 max-w-full rounded" />)}
+    <MediaThumb media={media} className={media.kind === 'image' ? 'w-fit max-w-full' : 'max-h-64 max-w-full'} imageClassName="max-h-56 w-auto max-w-full" />
   </div>;
 }
 

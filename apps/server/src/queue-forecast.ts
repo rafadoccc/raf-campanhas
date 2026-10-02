@@ -47,6 +47,19 @@ function ruleReason(block: RuleBlock, rules: SendingRules, now: Date) {
   return `Intervalo de ${label} neste grupo · sai ${when(block.until, now)}`;
 }
 
+/** Tipo da espera, para a tela escolher um selo curto sem interpretar o texto do motivo. */
+export type WaitKind = 'sending' | 'now' | 'quiet' | 'daily' | 'group' | 'retry' | 'offline' | 'paused' | 'pace' | 'scheduled';
+const KINDS: [string, WaitKind][] = [
+  ['Enviando', 'sending'], ['Campanha pausada', 'paused'], ['WhatsApp desconectado', 'offline'], ['Nova tentativa', 'retry'],
+  ['Horário de silêncio', 'quiet'], ['Aquecendo o número', 'daily'], ['Limite de', 'daily'], ['Intervalo de', 'group'],
+  ['Atrasado', 'now'], ['Saindo agora', 'now'], ['Aguardando o intervalo', 'pace'],
+];
+/** Os motivos são montados logo acima (ruleReason e forecastQueue): mudou o texto lá, mude aqui. */
+export function waitKind(wait: Wait, status: string): WaitKind {
+  if (status === 'PROCESSING') return 'sending';
+  return KINDS.find(([start]) => wait.reason?.startsWith(start))?.[1] ?? 'scheduled';
+}
+
 export function forecastQueue(items: ForecastItem[], campaign: ForecastCampaign, now: Date, connected: boolean, maxAttempts: number, limits?: ForecastRules) {
   const result = new Map<string, Wait>();
   if (!['ACTIVE', 'PAUSED'].includes(campaign.status)) return result;

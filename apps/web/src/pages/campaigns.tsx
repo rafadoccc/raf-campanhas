@@ -51,7 +51,7 @@ function CampaignCard({ campaign, onEdit, onDelete, onSaveTemplate, busy }: { ca
           </div>
           <div className="mt-1.5">
             <CampaignMeta groups={campaign.groupCount} mode={campaign.mode} schedules={campaign.schedules} startsAt={campaign.startsAt} endsAt={campaign.endsAt}
-              mentionAll={campaign.mentionAll} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
+              mentionAll={campaign.mentionAll} status={campaign.status} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
           </div>
         </div>
       </div>

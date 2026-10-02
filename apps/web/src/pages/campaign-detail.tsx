@@ -1,15 +1,15 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { MediaPreview, type CampaignMedia } from '../components/campaign-media';
+import { MediaThumb, type CampaignMedia } from '../components/campaign-media';
 import { CampaignActions } from '../components/campaign-actions';
-import { WhatsAppPreview, plainSummary } from '../components/message-editor';
+import { MessageText } from '../components/message-editor';
 import { api, errorMessage, connectionState as readConnection } from '../lib/api';
 import { retryAllFailed, retryDelivery } from '../lib/campaign-ops';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, Button, ButtonLink, Card, CardHeader, EmptyState, IconButton, LoadMoreSentinel, Page, ScrollArea, Skeleton, Stat,
-  IconBack, IconChevron, IconClock, IconMention, IconMessage, IconRefresh, IconReport, IconVideo,
-  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, tempoRelativo, useConfirm, useInfiniteList, type Wait,
+  IconBack, IconChevron, IconClock, IconRefresh, IconReport,
+  accent, campaignStatus, deliveryStatus, hora, horaSeg, membros, tamanho, tempoRelativo, useConfirm, useInfiniteList, type Wait,
 } from '../design';
 import { CampaignMeta } from '../components/campaign-meta';
 
@@ -26,35 +26,48 @@ type Delivery = {
   errorCode: string | null; attempts: number; group: Group; _count: { reads: number }; wait: Wait | null;
 };
 
+/** Texto da mensagem recolhido em poucas linhas; "Ver tudo" só aparece quando há mais para mostrar. */
+function MessageBody({ text, mentionAll }: { text: string; mentionAll: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && !open) setLong(el.scrollHeight > el.clientHeight + 1);
+  }, [text, mentionAll, open]);
+  if (!text.trim()) return <p className="text-sm text-slate-400">Sem texto.</p>;
+  return <div className="space-y-1.5">
+    <div ref={box} className={`relative text-sm leading-relaxed text-ink ${open ? '' : 'max-h-40 overflow-hidden'}`}>
+      <MessageText text={text} mentionAll={mentionAll} />
+      {long && !open && <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-white to-transparent" />}
+    </div>
+    {long && <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className="inline-flex items-center gap-1 text-xs font-medium text-muted hover:text-ink">
+      {open ? 'Mostrar menos' : 'Ver mensagem inteira'}<IconChevron className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+    </button>}
+  </div>;
+}
+
 /**
- * O que a campanha envia (imagem/vídeo + texto). Fechado: miniatura e o começo do texto, para
- * reconhecer a campanha de relance. Aberto: a mensagem completa, como vai para o grupo.
+ * O que a campanha envia: a mídia ao lado do texto, como a pessoa vai conferir de relance. A
+ * imagem aparece inteira (sem corte) e abre em tela cheia ao clicar; o texto longo fica recolhido.
  */
 function Template({ campaign }: { campaign: Campaign }) {
-  const [open, setOpen] = useState(campaign.status === 'DRAFT'); // rascunho: aberto para conferir
   const media = campaign.media;
-  const color = accent(media?.color);
   const messages = campaign.messages;
   return <Card>
-    <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)}
-      className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${open ? 'rounded-t-lg' : 'rounded-lg'}`}>
-      {media?.kind === 'image'
-        ? <img src={`/api/media/${media.id}/thumb`} alt="" width={40} height={40} className="h-10 w-10 shrink-0 rounded object-cover" style={{ background: color.soft }} />
-        : <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-slate-100 text-slate-400">{media?.kind === 'video' ? <IconVideo className="h-5 w-5" aria-hidden /> : <IconMessage className="h-5 w-5" aria-hidden />}</span>}
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold">Modelo da mensagem</span>
-        <span className="block truncate text-xs text-muted">{plainSummary(messages[0]?.content ?? '') || 'Sem texto'}</span>
-      </span>
-      <IconChevron className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
-    </button>
-    {open && <div className="animate-fade-in space-y-3 border-t border-line p-4">
-      {media && <MediaPreview media={media} />}
-      {messages.map((m, i) => <div key={i} className="space-y-1">
-        {messages.length > 1 && <p className="text-2xs font-medium text-muted">Mensagem {i + 1} de {messages.length} · alterna a cada {campaign.mode === 'IMMEDIATE' ? 'grupo' : 'rodada'}</p>}
-        <WhatsAppPreview text={m.content} mentionAll={campaign.mentionAll} />
-      </div>)}
-      {campaign.mentionAll && <p className="flex items-center gap-1 text-2xs text-muted"><IconMention className="h-3.5 w-3.5" aria-hidden />Com @todos: notifica todos os membros (oculto em grupos acima de 32 membros onde você não é admin)</p>}
-    </div>}
+    <CardHeader title="Mensagem" action={media && <span className="tabular text-2xs text-muted">{media.kind === 'image' ? 'Imagem' : 'Vídeo'} · {tamanho(media.size)}</span>} />
+    <div className="flex items-start gap-4 p-4">
+      {media && <MediaThumb media={media} className={media.kind === 'image' ? 'w-24 shrink-0 sm:w-32' : 'w-32 shrink-0 sm:w-40'} />}
+      <div className="min-w-0 flex-1 space-y-3">
+        {messages.map((m, i) => <div key={i} className={`space-y-1 ${i ? 'border-t border-line pt-3' : ''}`}>
+          {messages.length > 1 && <p className="text-2xs font-medium uppercase tracking-wide text-muted">Mensagem {i + 1} de {messages.length} · alterna a cada {campaign.mode === 'IMMEDIATE' ? 'grupo' : 'rodada'}</p>}
+          <MessageBody text={m.content} mentionAll={campaign.mentionAll} />
+        </div>)}
+        {campaign.mentionAll && <p className="flex flex-wrap items-center gap-1.5 text-2xs text-muted" title="Em grupos com mais de 32 membros em que você não é admin, a marcação vai oculta: notifica do mesmo jeito, só não aparece o destaque.">
+          <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 font-semibold text-ink">@todos</span>Notifica todos os membros.
+        </p>}
+      </div>
+    </div>
   </Card>;
 }
 
@@ -117,6 +130,9 @@ export default function CampaignPage() {
   const refresh = () => { reload(); deliveries.reload(); };
   // Tentar de novo (ADR-030): só faz sentido fora de uma campanha encerrada (aí é "usar de novo").
   const canRetry = campaign.status !== 'CANCELLED';
+  // Em andamento (ativa ou pausada) há fila para acompanhar; fora disso, "aguardando" e a barra
+  // de progresso não dizem nada.
+  const running = campaign.status === 'ACTIVE' || campaign.status === 'PAUSED';
   async function retry(deliveryId: string) {
     setRetrying(deliveryId); setRetryError('');
     try { if (await retryDelivery(deliveryId, confirm)) refresh(); }
@@ -141,7 +157,7 @@ export default function CampaignPage() {
                 <h1 className="truncate text-lg font-semibold" title={campaign.name}>{campaign.name}</h1>
                 <div className="mt-2">
                   <CampaignMeta detailed groups={campaign.groups.length} mode={campaign.mode} schedules={campaign.schedules} startsAt={campaign.startsAt} endsAt={campaign.endsAt}
-                    mentionAll={campaign.mentionAll} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
+                    mentionAll={campaign.mentionAll} status={campaign.status} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
                 </div>
               </div>
               <Badge tone={status.tone}>{status.label}</Badge>
@@ -150,14 +166,14 @@ export default function CampaignPage() {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
                 <Stat label="Enviados" value={`${sent}/${total}`} />
                 {campaign.provider === 'baileys' && <Stat label="Entregues" value={campaign.delivered ?? 0} tone="text-brand-700" />}
-                <Stat label="Aguardando" value={pending} />
+                {(running || pending > 0) && <Stat label="Aguardando" value={pending} />}
                 <Stat label="Falhas" value={p.FAILED ?? 0} tone={p.FAILED ? 'text-red-700' : 'text-ink'} />
               </div>
-              <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full transition-[width] duration-500 ease-out" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>
+              {running && <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full transition-[width] duration-500 ease-out" style={{ width: `${(sent / total) * 100}%`, background: color.solid }} /></div>}
             </>}
             {/* Próximo envio: cada informação na sua linha (nada de "·" solto quando a linha quebra). O
                 motivo "WhatsApp desconectado" não entra aqui: a faixa logo abaixo já diz, com o link. */}
-            {next && <div className="flex items-start gap-2.5 rounded bg-slate-50 px-3 py-2.5 text-xs">
+            {next && campaign.status === 'ACTIVE' && <div className="flex items-start gap-2.5 rounded bg-slate-50 px-3 py-2.5 text-xs">
               <IconClock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
               <div className="min-w-0 space-y-0.5">
                 <p className="text-2xs font-medium uppercase tracking-wide text-muted">Próximo envio</p>
@@ -166,9 +182,9 @@ export default function CampaignPage() {
                 {next.wait!.reason && !(connection !== 'connected' && next.wait!.reason.startsWith('WhatsApp desconectado')) && <p className="text-amber-700">{next.wait!.reason}</p>}
               </div>
             </div>}
-            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} groupCount={campaign.groups.length} />
-            {/* Relatório (ADR-045): só faz sentido depois que algo saiu. */}
-            {sent > 0 && <ButtonLink to={`/campanhas/${campaign.id}/relatorio`} variant="ghost" size="sm" icon={IconReport} className="w-fit">Ver relatório para compartilhar</ButtonLink>}
+            {/* Relatório (ADR-045): só faz sentido depois que algo saiu. Fica na linha das ações. */}
+            <CampaignActions onChanged={refresh} connectionState={connection} id={campaign.id} name={campaign.name} status={campaign.status} groupCount={campaign.groups.length}
+              extra={sent > 0 && <ButtonLink to={`/campanhas/${campaign.id}/relatorio`} icon={IconReport} title="Relatório para imprimir, salvar em PDF ou compartilhar">Ver relatório</ButtonLink>} />
           </div>
         </Card>
 

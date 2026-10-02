@@ -22,7 +22,8 @@ async function requeueForRetry(tx: Parameters<typeof lockCampaign>[0], campaignI
 /** Teto de modelos por conta: é uma biblioteca pessoal, não um arquivo. */
 export const MAX_TEMPLATES = 50;
 
-export function registerCampaignRoutes(app: FastifyInstance) {
+/** `connectedOf`: a conexão do WhatsApp daquela conta está de pé agora (para a previsão do Início). */
+export function registerCampaignRoutes(app: FastifyInstance, connectedOf: (userId: string) => Promise<boolean> = async () => false) {
   app.get('/api/campaigns/:id', async (request, reply) => {
     await completeFinished(prisma);
     const { id } = request.params as { id: string };
@@ -62,7 +63,7 @@ export function registerCampaignRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: publicMessage(error, 'Falha ao excluir.') });
     }
   });
-  app.get('/api/dashboard', async request => dashboardSummary(request.user!.id));
+  app.get('/api/dashboard', async request => dashboardSummary(request.user!.id, await connectedOf(request.user!.id)));
 
   // Modelos de campanha (ADR-047): só o que o cartão mostra. Editar e excluir usam as rotas da
   // própria campanha (um modelo é uma campanha em rascunho marcada com isTemplate).

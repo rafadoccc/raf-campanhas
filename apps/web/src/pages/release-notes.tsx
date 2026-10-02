@@ -3,22 +3,16 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { LATEST_RELEASE, NOTE_KINDS, RELEASES, dataPorExtenso, noteParts, type NoteKind } from '../lib/release-notes';
 import { markReleaseNotesSeen } from '../lib/release-notes-seen';
-import { IconBack, IconNext, IconPrevious, Logo } from '../design';
+import { Badge, IconBack, IconNext, IconPrevious, Logo, type Tone } from '../design';
 
 // Notas de atualização (/notas). Página de LEITURA, fora da moldura do painel: a data e o número
 // da versão à esquerda, o que mudou à direita. O texto vive em lib/release-notes.ts.
 
 const PAGE_SIZE = 5;
 const rotulo = Object.fromEntries(NOTE_KINDS.map(k => [k.tipo, k.rotulo])) as Record<NoteKind, string>;
-// Cor só na etiqueta, que já diz o tipo; o texto do item fica na cor normal.
-const tagClass: Record<NoteKind, string> = {
-  novo: 'bg-emerald-100 text-emerald-800',
-  melhorado: 'bg-amber-100 text-amber-800',
-  desempenho: 'bg-blue-100 text-blue-800',
-  corrigido: 'bg-slate-200 text-slate-700',
-  seguranca: 'bg-red-100 text-red-800',
-  removido: 'bg-gray-200 text-gray-600',
-};
+// Cor só na etiqueta, que já diz o tipo, e nos tons do design system (os mesmos selos do painel);
+// o texto do item fica na cor normal.
+const tagTone: Record<NoteKind, Tone> = { novo: 'brand', melhorado: 'info', desempenho: 'info', corrigido: 'neutral', seguranca: 'warning', removido: 'muted' };
 const pageHref = (page: number) => (page === 1 ? '/notas' : `/notas?pagina=${page}`);
 
 /** Páginas a mostrar: todas se forem poucas; senão a 1ª, a última e as vizinhas da atual ("…" = 0). */
@@ -29,23 +23,23 @@ export function pageWindow(page: number, total: number) {
   return pages.flatMap((n, i) => (i > 0 && n - pages[i - 1] > 1 ? [0, n] : [n]));
 }
 
-// Paginação: um bloco só, no centro. Setas nas pontas e os números no meio; a página atual fica
-// preenchida. Cada página é um endereço próprio (?pagina=2), então o Voltar do navegador funciona.
+// Paginação: uma linha discreta no centro, sem moldura. Setas nas pontas, números no meio e a
+// página atual marcada como nos filtros do painel. Cada página é um endereço próprio (?pagina=2),
+// então o Voltar do navegador funciona.
 function Pagination({ page, total }: { page: number; total: number }) {
-  const cell = 'tabular inline-flex h-8 min-w-8 items-center justify-center rounded px-2 text-xs font-medium transition-colors';
+  const cell = 'tabular inline-flex h-7 min-w-7 items-center justify-center rounded px-1.5 text-xs transition-colors';
+  const link = `${cell} text-muted hover:bg-slate-100 hover:text-ink`;
   const arrow = (to: number, label: string, IconCmp: typeof IconNext) => to >= 1 && to <= total
-    ? <Link to={pageHref(to)} aria-label={label} title={label} className={`${cell} text-muted hover:bg-slate-100 hover:text-ink`}><IconCmp className="h-4 w-4" aria-hidden /></Link>
-    : <span aria-hidden className={`${cell} text-slate-300`}><IconCmp className="h-4 w-4" /></span>;
-  return <nav aria-label="Páginas das notas de atualização" className="mt-8 flex justify-center">
-    <div className="inline-flex items-center gap-0.5 rounded-md border border-line bg-white p-1 shadow-card">
-      {arrow(page - 1, 'Notas mais recentes', IconPrevious)}
-      {pageWindow(page, total).map((n, i) => n === 0
-        ? <span key={`gap-${i}`} aria-hidden className={`${cell} text-slate-400`}>…</span>
-        : n === page
-          ? <span key={n} aria-current="page" aria-label={`Página ${n} de ${total}`} className={`${cell} bg-ink text-white`}>{n}</span>
-          : <Link key={n} to={pageHref(n)} aria-label={`Ir para a página ${n}`} className={`${cell} text-muted hover:bg-slate-100 hover:text-ink`}>{n}</Link>)}
-      {arrow(page + 1, 'Notas mais antigas', IconNext)}
-    </div>
+    ? <Link to={pageHref(to)} aria-label={label} title={label} className={link}><IconCmp className="h-3.5 w-3.5" aria-hidden /></Link>
+    : <span aria-hidden className={`${cell} text-slate-300`}><IconCmp className="h-3.5 w-3.5" /></span>;
+  return <nav aria-label="Páginas das notas de atualização" className="mt-6 flex items-center justify-center gap-0.5">
+    {arrow(page - 1, 'Notas mais recentes', IconPrevious)}
+    {pageWindow(page, total).map((n, i) => n === 0
+      ? <span key={`gap-${i}`} aria-hidden className={`${cell} text-slate-400`}>…</span>
+      : n === page
+        ? <span key={n} aria-current="page" aria-label={`Página ${n} de ${total}`} className={`${cell} bg-slate-100 font-semibold text-ink`}>{n}</span>
+        : <Link key={n} to={pageHref(n)} aria-label={`Ir para a página ${n}`} className={link}>{n}</Link>)}
+    {arrow(page + 1, 'Notas mais antigas', IconNext)}
   </nav>;
 }
 
@@ -76,25 +70,25 @@ export default function ReleaseNotesPage() {
     </header>
 
     <main className="mx-auto w-full max-w-3xl px-5 pb-16 pt-2 sm:px-7">
-      <h1 className="text-2xl font-bold tracking-tight">Notas de atualização</h1>
+      <h1 className="text-xl font-semibold tracking-tight">Notas de atualização</h1>
 
       {/* key = página: troca o bloco inteiro e a animação de entrada roda de novo. */}
       <div key={page} className={direction}>
-        {releases.map((release, index) => <article key={release.versao} className="grid grid-cols-1 gap-3.5 border-t border-line py-7 first-of-type:border-t-0 first-of-type:pt-6 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-6 sm:py-8">
+        {releases.map((release, index) => <article key={release.versao} className="grid min-w-0 grid-cols-1 gap-3 border-t border-line py-6 first-of-type:border-t-0 first-of-type:pt-5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-6 sm:py-7">
           <aside className="flex flex-wrap items-center gap-x-2.5 gap-y-1 sm:sticky sm:top-16 sm:flex-col sm:items-start sm:self-start">
-            <time dateTime={release.data} className="whitespace-nowrap text-2xs font-semibold uppercase tracking-wider text-muted">{dataPorExtenso(release.data)}</time>
+            <time dateTime={release.data} className="whitespace-nowrap text-2xs font-medium uppercase tracking-wide text-muted">{dataPorExtenso(release.data)}</time>
             <span className="tabular inline-flex items-center gap-1.5 text-sm font-semibold">
               v{release.versao}
               {/* Só a primeira da primeira página: é a versão no ar (LATEST_RELEASE). */}
               {page === 1 && index === 0 && release.versao === LATEST_RELEASE && <span role="img" aria-label="Versão no ar" title="Versão no ar" className="h-1.5 w-1.5 shrink-0 cursor-help rounded-full bg-brand-500" />}
             </span>
           </aside>
-          <div className="space-y-5">
+          <div className="min-w-0 space-y-5">
             {release.grupos.map(group => <section key={group.tipo}>
-              <span className={`inline-block select-none rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tagClass[group.tipo]}`}>{rotulo[group.tipo]}</span>
-              <ul className="mt-2.5 space-y-2">
-                {group.itens.map(item => <li key={item} className="relative pl-4 text-sm leading-relaxed text-slate-700 before:absolute before:left-0 before:top-[0.7em] before:h-px before:w-1.5 before:bg-slate-400">
-                  {noteParts(item).map((part, i) => part.bold ? <strong key={i} className="font-semibold">{part.text}</strong> : <span key={i}>{part.text}</span>)}
+              <Badge tone={tagTone[group.tipo]}>{rotulo[group.tipo]}</Badge>
+              <ul className="mt-2 space-y-2">
+                {group.itens.map(item => <li key={item} className="break-words text-sm leading-relaxed text-slate-700">
+                  {noteParts(item).map((part, i) => part.bold ? <strong key={i} className="font-semibold text-ink">{part.text}</strong> : <span key={i}>{part.text}</span>)}
                 </li>)}
               </ul>
             </section>)}
@@ -104,11 +98,10 @@ export default function ReleaseNotesPage() {
 
       {totalPages > 1 && <Pagination page={page} total={totalPages} />}
 
-      <footer className="mt-8 border-t border-line pt-5 text-center text-xs text-muted">
-        {/* O convite só para quem está logado: a tela de sugestões fica dentro do painel. */}
-        {user && <p className="mb-2 text-sm text-ink">Tem uma ideia ou encontrou um problema? <Link to="/sugestoes" className="font-medium underline">Envie uma sugestão ou crítica</Link>.</p>}
-        As versões seguem <strong className="font-semibold">ano.mês.sequência</strong>: 26.09.3, por exemplo, é a terceira versão de setembro de 2026.
-      </footer>
+      {/* O convite só para quem está logado: a tela de sugestões fica dentro do painel. */}
+      {user && <footer className="mt-6 border-t border-line pt-5 text-center text-sm text-muted">
+        Tem uma ideia ou encontrou um problema? <Link to="/sugestoes" className="font-medium text-ink underline">Envie uma sugestão ou crítica</Link>.
+      </footer>}
     </main>
   </div>;
 }

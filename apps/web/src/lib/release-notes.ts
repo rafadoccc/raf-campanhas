@@ -22,13 +22,17 @@ export const NOTE_KINDS: { tipo: NoteKind; rotulo: string }[] = [
 export const RELEASES: Release[] = [
   {
     versao: '26.10.2',
-    data: '2026-10-01',
+    data: '2026-10-02',
     grupos: [
       { tipo: 'novo', itens: [
         '**Seu plano:** em Minha conta você vê o plano, até quando ele está pago e quantos grupos cabem numa campanha.',
         'Um aviso aparece no topo do painel quando a assinatura está para vencer. Depois do vencimento, os envios ficam parados até a renovação; suas campanhas, grupos e modelos continuam guardados.',
+        '**Imagem em tela cheia:** clique na imagem da campanha para ver inteira e no tamanho real.',
       ] },
       { tipo: 'melhorado', itens: [
+        '**Em andamento, no Início:** cada campanha mostra a situação real do próximo envio (em silêncio, limite do dia, sem WhatsApp), quantos já foram entregues e quantos faltam.',
+        'A mensagem da campanha aparece com a imagem ao lado do texto, e o resumo mostra só o que importa em cada situação.',
+        'Ao agendar, o horário novo já começa na hora atual.',
         'A campanha mostra só a duração aproximada de cada rodada; o intervalo entre grupos continua automático.',
         'Sugestões e críticas: o formulário avisa quando falta texto, em vez de deixar o botão apagado.',
       ] },

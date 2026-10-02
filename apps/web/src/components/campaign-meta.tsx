@@ -5,6 +5,9 @@ import { IconClock, IconGroups, IconMention, IconPeriod, IconQueue, dia, duracao
 // sai, em que período e se marca todos. Um lugar só para o cartão da lista e para o topo do
 // detalhe, para os dois dizerem a mesma coisa do mesmo jeito. Sem separadores de texto ("·"):
 // quando a linha quebra, um separador ficava solto no começo da linha de baixo.
+//
+// Só entra o que ainda serve na situação da campanha: horários e duração da rodada são o PLANO,
+// e deixam de importar quando ela termina (aí ficam os grupos e o período em que rodou).
 
 type Props = {
   groups: number;
@@ -12,9 +15,11 @@ type Props = {
   schedules: { time: string }[];
   startsAt?: string; endsAt?: string;
   mentionAll: boolean;
+  /** Situação da campanha; sem ela (modelos), mostra o plano inteiro. */
+  status?: string;
   /** Campanha antiga que rodou em simulação (o modo saiu da tela, o histórico ficou). */
   simulated?: boolean;
-  /** No detalhe há espaço para a duração aproximada da rodada. */
+  /** Topo do detalhe: há espaço para a duração da rodada, e o "marca todos" fica junto da mensagem. */
   detailed?: boolean;
 };
 
@@ -26,19 +31,20 @@ function Item({ icon: IconCmp, title, children }: { icon: Icon; title?: string; 
   </span>;
 }
 
-export function CampaignMeta({ groups, mode, schedules, startsAt, endsAt, mentionAll, simulated, detailed }: Props) {
+export function CampaignMeta({ groups, mode, schedules, startsAt, endsAt, mentionAll, status, simulated, detailed }: Props) {
   const immediate = mode === 'IMMEDIATE';
+  const ended = status === 'COMPLETED' || status === 'CANCELLED';
   const times = schedules.map(s => s.time).sort();
   const shown = times.slice(0, MAX_TIMES).join(' · ') + (times.length > MAX_TIMES ? ` +${times.length - MAX_TIMES}` : '');
   const period = startsAt && endsAt ? (dia(startsAt) === dia(endsAt) ? dia(startsAt) : `${dia(startsAt)} a ${dia(endsAt)}`) : null;
   return <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted">
     <Item icon={IconGroups}>{groups} {groups === 1 ? 'grupo' : 'grupos'}</Item>
-    {immediate
+    {!ended && (immediate
       ? <Item icon={IconClock}>Fila única</Item>
-      : <Item icon={IconClock} title={`Horários: ${times.join(', ')}`}><span className="tabular">{shown}</span></Item>}
+      : <Item icon={IconClock} title={`Horários: ${times.join(', ')}`}><span className="tabular">{shown}</span></Item>)}
     {!immediate && period && <Item icon={IconPeriod}><span className="tabular">{period}</span></Item>}
-    {detailed && groups > 1 && <Item icon={IconQueue} title="Tempo aproximado para passar por todos os grupos.">{duracaoRodada(groups)} por rodada</Item>}
-    {mentionAll && <Item icon={IconMention}>Marca todos</Item>}
+    {detailed && !ended && groups > 1 && <Item icon={IconQueue} title="Tempo aproximado para passar por todos os grupos.">{duracaoRodada(groups)} por rodada</Item>}
+    {!detailed && mentionAll && <Item icon={IconMention}>Marca todos</Item>}
     {simulated && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-2xs">simulação</span>}
   </div>;
 }

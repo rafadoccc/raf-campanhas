@@ -1,6 +1,6 @@
 import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { prisma, rulesFor, releaseStuckSends, SEND_TIMEOUT_CODE, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
+import { prisma, localMinute, rulesFor, releaseStuckSends, SEND_TIMEOUT_CODE, applyServerEvent, lockCampaign, LOCKING_TRANSACTION, acquireLease, renewLease, releaseLease, claimDelivery, finishDelivery, resumeAt, recordRead, currentTime, persistRead, flushPendingReads } from '@campaign/database';
 import { buildApp } from './app';
 import { hashPassword, requireSuperAdmin, bootstrapAdmin, SESSION_MAX_AGE_MS } from './auth';
 import { startDispatcher, type SendingProvider } from './dispatcher';
@@ -24,6 +24,7 @@ import { registerAuth } from './auth';
 import { registerPasswordReset } from './password-reset';
 import { collectAlerts, deliverAlerts, registerAlertRoutes, parsePhone, ALERT_EXPIRY_MS } from './owner-alerts';
 import { pauseBlockedAccounts, planOf, todayOf } from './plans';
+import { registerCampaignRoutes } from './campaign-routes';
 
 const database = process.env.CAMPAIGN_TEST_DATABASE;
 if (!database || !/^campaign_test_[a-f0-9]{16}$/.test(database) || new URL(process.env.DATABASE_URL!).pathname !== `/${database}`) throw Error('Testes só podem executar no banco descartável.');
@@ -627,7 +628,7 @@ test('published URL: secure cookie, only its host and origin accepted, security 
 test('panel is served on the same port with SPA fallback, and API 404s stay JSON', async () => {
   const dist = mkdtempSync(join(tmpdir(), 'painel-'));
   mkdirSync(join(dist, 'assets'));
-  writeFileSync(join(dist, 'index.html'), '<!doctype html><div id="root"></div>');
+  writeFileSync(join(dist, 'index.html'), '<!doctype html><meta property="og:image" content="__PUBLIC_URL__/og.png"><div id="root"></div>');
   writeFileSync(join(dist, 'assets', 'app-abc123.js'), 'console.log(1)');
   const probe = buildApp(fakeProvider, loadConfig({ WEB_DIST: dist }));
   try {
@@ -635,6 +636,8 @@ test('panel is served on the same port with SPA fallback, and API 404s stay JSON
       const page = await probe.inject({ method: 'GET', url, headers: { host: 'localhost' } });
       assert.equal(page.statusCode, 200, url);
       assert.match(page.body, /id="root"/, url);
+      // A imagem de compartilhamento sai com o endereço público completo, em qualquer tela.
+      assert.match(page.body, /content="https?:\/\/[^"/]+\/og\.png"/, url);
     }
     const asset = await probe.inject({ method: 'GET', url: '/assets/app-abc123.js', headers: { host: 'localhost' } });
     assert.equal(asset.statusCode, 200);
@@ -3646,6 +3649,43 @@ test('number protection: only the administrator sees or changes the rules, accou
   // O administrador ajusta as regras da própria conta pelo mesmo caminho.
   assert.equal((await put(admin, admin.user.id, body)).statusCode, 200);
   assert.equal((await prisma.sendingPolicy.findUniqueOrThrow({ where: { userId: admin.user.id } })).dailyLimit, 200);
+});
+
+test('dashboard: each running campaign shows the real state of its next send (quiet hours, offline), not "sending"', async () => {
+  await pauseEverything();
+  const owner = await lgpdUser('inicio-real@teste.local');
+  const groups = [];
+  for (let i = 0; i < 3; i++) groups.push(await prisma.group.create({ data: { userId: owner.user.id, name: `Início ${i}`, externalId: `inicio-${Date.now()}-${i}@g.us` } }));
+  const past = new Date(Date.now() - 600_000);
+  const campaign = await prisma.campaign.create({ data: { userId: owner.user.id, name: 'No ar', startsAt: past, endsAt: past, status: 'ACTIVE', provider: 'baileys', accountJid: `55${Date.now()}@s.whatsapp.net`, mode: 'IMMEDIATE', nextAvailableAt: past } });
+  await prisma.delivery.create({ data: { campaignId: campaign.id, groupId: groups[0].id, messageBody: 'oi', provider: 'baileys', sequence: 0, status: 'SENT', scheduledAt: past, attemptedAt: past, sentAt: past, deliveredAt: past } });
+  await prisma.delivery.create({ data: { campaignId: campaign.id, groupId: groups[1].id, messageBody: 'oi', provider: 'baileys', sequence: 1, status: 'FAILED', scheduledAt: past, attemptedAt: past, error: 'x' } });
+  await prisma.delivery.create({ data: { campaignId: campaign.id, groupId: groups[2].id, messageBody: 'oi', provider: 'baileys', sequence: 2, status: 'PENDING', scheduledAt: past } });
+  const running = async () => (await owner.call('GET', '/api/dashboard')).json().runningCampaigns.find((c: { id: string }) => c.id === campaign.id);
+
+  // Sem regra nenhuma e com o WhatsApp da conta fora do ar: o envio espera a conexão.
+  let row = await running();
+  assert.deepEqual([row.sent, row.failed, row.pending, row.delivered, row.total], [1, 1, 1, 1, 3]);
+  assert.deepEqual([row.next.group, row.next.kind], ['Início 2', 'offline']);
+
+  // Horário de silêncio cobrindo agora: o Início diz "em silêncio" e quando sai, nunca "saindo agora".
+  const minute = localMinute(new Date());
+  const quietEnd = (minute + 120) % 1440;
+  await prisma.sendingPolicy.create({ data: { userId: owner.user.id, quietStart: (minute + 1380) % 1440, quietEnd, autoPause: true } });
+  const connected = Fastify();
+  registerAuth(connected, loadConfig({}));
+  registerCampaignRoutes(connected, async () => true);
+  try {
+    row = (await connected.inject({ method: 'GET', url: '/api/dashboard', headers: as(owner.session) })).json().runningCampaigns.find((c: { id: string }) => c.id === campaign.id);
+    assert.equal(row.next.kind, 'quiet');
+    assert.match(row.next.reason, /^Horário de silêncio · sai /);
+    assert.equal(localMinute(new Date(row.next.expectedAt)), quietEnd, 'a previsão é o fim do silêncio');
+    // Fora do silêncio e conectado: aí sim está saindo.
+    await prisma.sendingPolicy.update({ where: { userId: owner.user.id }, data: { quietStart: null, quietEnd: null } });
+    row = (await connected.inject({ method: 'GET', url: '/api/dashboard', headers: as(owner.session) })).json().runningCampaigns.find((c: { id: string }) => c.id === campaign.id);
+    assert.equal(row.next.kind, 'now');
+  } finally { await connected.close(); }
+  await pauseEverything();
 });
 
 // ─── Planos por cliente (ADR-050) ───────────────────────────────────────────────

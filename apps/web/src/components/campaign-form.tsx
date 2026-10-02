@@ -38,13 +38,28 @@ function GroupLabel({ group }: { group: Group }) {
 // Busca sem acento e sem diferenciar maiúsculas: "sao paulo" encontra "São Paulo".
 const normalize = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
+const two = (n: number) => String(n).padStart(2, '0');
+/** A hora de agora em São Paulo, arredondada para os próximos 5 minutos: ponto de partida de um horário. */
+function nowTime() {
+  const [hour, minute] = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()).split(':').map(Number);
+  const total = (hour * 60 + (Math.floor(minute / 5) + 1) * 5) % 1440;
+  return `${two(Math.floor(total / 60))}:${two(total % 60)}`;
+}
+/** Horário novo na lista: uma hora depois do último (o jeito mais comum de espaçar rodadas). */
+function nextTime(times: string[]) {
+  const last = times[times.length - 1];
+  if (!last || !/^[0-9]{2}:[0-9]{2}$/.test(last)) return nowTime();
+  const [hour, minute] = last.split(':').map(Number);
+  return `${two((hour + 1) % 24)}:${two(minute)}`;
+}
+
 export default function CampaignForm({ campaignId }: { campaignId?: string }) {
   const navigate = useNavigate();
   const [media, setMedia] = useState<CampaignMedia | null>(null);
   const [groups, setGroups] = useState<Group[]>(() => screenCache.get<Group[]>('grupos') ?? []); const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<'IMMEDIATE' | 'SCHEDULED'>('IMMEDIATE');
   const [mentionAll, setMentionAll] = useState(false);
-  const [times, setTimes] = useState(['09:00']); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
+  const [times, setTimes] = useState(() => [nowTime()]); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(!campaignId);
   const [search, setSearch] = useState('');
   const [groupsLoaded, setGroupsLoaded] = useState(() => Boolean(screenCache.get('grupos')));
@@ -82,7 +97,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
       setMedia(data.media ?? null); setIsTemplate(data.isTemplate === true);
       setInitial({ name: data.name, startsAt: data.startsAt.slice(0, 10), endsAt: data.endsAt.slice(0, 10), messages: data.messages.map(m => m.content) });
       setSelected(data.groups.map(g => g.groupId)); setMode(data.mode === 'SCHEDULED' ? 'SCHEDULED' : 'IMMEDIATE'); setMentionAll(data.mentionAll ?? false);
-      setTimes(data.schedules.length ? data.schedules.map(s => s.time) : ['09:00']); setLoaded(true);
+      setTimes(data.schedules.length ? data.schedules.map(s => s.time) : [nowTime()]); setLoaded(true);
     }).catch(e => { if (!controller.signal.aborted && screenCache.generation() === generation) setError(e instanceof Error ? e.message : 'Não foi possível carregar a campanha.'); });
     return () => controller.abort();
   }, [campaignId]);
@@ -155,7 +170,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
                   <input aria-label={`Horário ${i + 1}`} required type="time" value={time} onChange={e => setTimes(current => current.map((t, n) => n === i ? e.target.value : t))} className={`${inputClass} !w-auto`} />
                   {times.length > 1 && <IconButton icon={IconRemove} label={`Remover horário ${i + 1}`} onClick={() => setTimes(current => current.filter((_, n) => n !== i))} />}
                 </span>)}
-                <Button size="sm" variant="ghost" icon={IconAdd} disabled={times.length >= 24} onClick={() => setTimes(current => [...current, '18:00'])}>Horário</Button>
+                <Button size="sm" variant="ghost" icon={IconAdd} disabled={times.length >= 24} onClick={() => setTimes(current => [...current, nextTime(current)])}>Horário</Button>
               </div>
             </div>
           </div>}

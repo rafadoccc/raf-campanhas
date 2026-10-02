@@ -22,7 +22,7 @@ const FORMAT = /(```[^`]+```|\*[^\s*](?:[^*\n]*[^\s*])?\*|_[^\s_](?:[^_\n]*[^\s_
 function renderLine(line: string, key: string): ReactNode[] {
   return line.split(FORMAT).filter(Boolean).map((part, i) => {
     const k = `${key}-${i}`;
-    if (part === MENTION_TOKEN) return <span key={k} className="font-medium text-sky-600">@todos</span>;
+    if (part === MENTION_TOKEN) return <span key={k} className="font-medium text-sky-700">@todos</span>;
     if (part.startsWith('```') && part.endsWith('```') && part.length > 6) return <code key={k} className="font-mono text-[0.85em]">{part.slice(3, -3)}</code>;
     if (part.length > 2 && part[0] === part[part.length - 1]) {
       const inner = part.slice(1, -1);
@@ -43,7 +43,13 @@ export function plainSummary(text: string) {
     .trim();
 }
 
-/** Balão no jeito do WhatsApp, com a formatação e o @todos (usado no editor e no detalhe). */
+/** O texto com a formatação do WhatsApp e o @todos no lugar, sem moldura (o detalhe da campanha usa assim). */
+export function MessageText({ text, mentionAll }: { text: string; mentionAll: boolean }) {
+  const shown = mentionAll ? placeMentionAll(text) : text;
+  return <>{shown.split('\n').map((line, i) => <p key={i} className="min-h-[1.25rem] whitespace-pre-wrap break-words">{renderLine(line, String(i))}</p>)}</>;
+}
+
+/** Balão no jeito do WhatsApp, com a formatação e o @todos (prévia do editor). */
 export function WhatsAppPreview({ text, mentionAll }: { text: string; mentionAll: boolean }) {
   const shown = mentionAll ? placeMentionAll(text) : text;
   return <div className="rounded-md bg-[#efeae2] p-3">

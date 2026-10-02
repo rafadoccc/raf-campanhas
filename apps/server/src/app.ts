@@ -110,7 +110,7 @@ app.post('/api/groups', async (request, reply) => {
 });
 
 registerMediaRoutes(app);
-registerCampaignRoutes(app);
+registerCampaignRoutes(app, async userId => (await sending.forOwner(userId))?.status().state === 'connected');
 // LGPD (ADR-040): páginas públicas, aceite dos termos, baixar e excluir os dados da conta.
 registerLegalRoutes(app, config, manager);
 // Proteção do número (ADR-041): regras de envio da conta e aviso de pausa automática.

@@ -7,27 +7,82 @@ import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, ButtonLink, Card, CardHeader, Dot, EmptyState, Page, PageHeader, ScrollArea, Skeleton, Stat,
   IconAdd, IconCampaigns, IconDelivered, IconOpen, IconQueue, IconReach, IconReads, IconSent,
-  dataHora, hora, numero, tempoRelativo,
+  dataHora, hora, numero, type Tone,
 } from '../design';
 
 type NextDelivery = { campaignId: string; provider: string; status: string; nextAt: string; campaign: { name: string }; group: { name: string } };
+// Situação real do próximo envio (a mesma previsão do detalhe da campanha): o servidor diz o
+// tipo da espera e a tela só escolhe o selo e a frase.
+type WaitKind = 'sending' | 'now' | 'quiet' | 'daily' | 'group' | 'retry' | 'offline' | 'paused' | 'pace' | 'scheduled';
+type Running = {
+  id: string; name: string; provider: string; sent: number; total: number; failed: number; pending: number; delivered: number;
+  next: { group: string; expectedAt: string; reason: string | null; kind: WaitKind } | null;
+};
 type Dashboard = {
   serverNow: string; activeCampaigns: number; sentToday: number; failedToday: number; readsToday: number;
   successRate: number | null; deliveredToday: number; deliveryRate: number | null;
   groupsReachedToday: number; membersReachedToday: number; pendingNow: number;
   last7Days: { day: string; sent: number }[];
   nextDelivery: NextDelivery | null;
-  runningCampaigns: { id: string; name: string; provider: string; sent: number; total: number; nextDelivery: NextDelivery | null }[];
+  runningCampaigns: Running[];
   recentActivity: { id: string; campaignId: string; status: string; at: string; deliveredAt?: string | null; group: { name: string }; campaign: { name: string; deletedAt: string | null } }[];
 };
 
 const weekday = (iso: string) => new Intl.DateTimeFormat('pt-BR', { weekday: 'short', timeZone: 'UTC' }).format(new Date(`${iso}T12:00:00Z`)).replace('.', '');
 
-function when(next: NextDelivery, now: string, connected: boolean) {
-  if (next.provider === 'baileys' && !connected) return 'aguardando o WhatsApp conectar';
-  if (next.status === 'PROCESSING') return 'enviando agora';
-  const inMs = Date.parse(next.nextAt) - Date.parse(now);
-  return inMs > 30_000 ? `às ${hora(next.nextAt)} · ${tempoRelativo(next.nextAt, Date.parse(now))}` : 'saindo agora';
+const kindChip: Record<WaitKind, { label: string; tone: Tone }> = {
+  sending: { label: 'Enviando', tone: 'brand' },
+  now: { label: 'Saindo agora', tone: 'brand' },
+  scheduled: { label: 'Na fila', tone: 'info' },
+  pace: { label: 'No intervalo', tone: 'neutral' },
+  quiet: { label: 'Em silêncio', tone: 'neutral' },
+  group: { label: 'Intervalo do grupo', tone: 'neutral' },
+  daily: { label: 'Limite do dia', tone: 'warning' },
+  retry: { label: 'Nova tentativa', tone: 'warning' },
+  offline: { label: 'Sem WhatsApp', tone: 'warning' },
+  paused: { label: 'Pausada', tone: 'muted' },
+};
+
+const spDay = (at: string | number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(at));
+/** "às 18:40", "amanhã às 08:00" ou "04/10 às 08:00" (horário de São Paulo). */
+function quando(at: string, now: string) {
+  const day = spDay(at);
+  if (day === spDay(now)) return `às ${hora(at)}`;
+  if (day === spDay(Date.parse(now) + 86_400_000)) return `amanhã às ${hora(at)}`;
+  return `${day.slice(8, 10)}/${day.slice(5, 7)} às ${hora(at)}`;
+}
+
+/** O que acontece com o próximo envio, numa frase. */
+function nextLine(next: NonNullable<Running['next']>, now: string) {
+  if (next.kind === 'sending') return `Enviando para ${next.group}`;
+  if (next.kind === 'now') return `Próximo: ${next.group} · saindo agora`;
+  if (next.kind === 'offline') return `Próximo: ${next.group} · sai quando o WhatsApp conectar`;
+  return `Próximo: ${next.group} · ${quando(next.expectedAt, now)}`;
+}
+
+/** Uma campanha em andamento: nome e situação real, progresso, números do que já saiu e o próximo envio. */
+function RunningCampaign({ campaign: c, now }: { campaign: Running; now: string }) {
+  const chip = c.next ? kindChip[c.next.kind] : null;
+  const real = c.provider === 'baileys';
+  return <li>
+    <Link to={`/campanhas/${c.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50">
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <span className="truncate text-sm font-medium">{c.name}{!real && <span className="ml-1.5 text-2xs font-normal text-slate-400">simulação</span>}</span>
+          {chip && <Badge tone={chip.tone} title={c.next?.reason ?? undefined}>{chip.label}</Badge>}
+        </div>
+        <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full bg-brand-600 transition-[width] duration-500 ease-out" style={{ width: `${(c.sent / Math.max(1, c.total)) * 100}%` }} /></div>
+        <p className="tabular flex flex-wrap gap-x-3 text-2xs text-muted">
+          <span><strong className="font-semibold text-ink">{c.sent}</strong> de {c.total} enviados</span>
+          {real && <span>{c.delivered} {c.delivered === 1 ? 'entregue' : 'entregues'}</span>}
+          {c.failed > 0 && <span className="text-red-700">{c.failed} {c.failed === 1 ? 'falha' : 'falhas'}</span>}
+          <span>{c.pending === 1 ? 'falta 1' : `faltam ${c.pending}`}</span>
+        </p>
+        {c.next && <p className="truncate text-2xs text-muted" title={c.next.reason ?? undefined}>{nextLine(c.next, now)}</p>}
+      </div>
+      <IconOpen className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
+    </Link>
+  </li>;
 }
 
 // Cada barra é um botão: clicar abre os números daquele dia (DayDetails, ADR-045).
@@ -91,16 +146,7 @@ export default function DashboardPage() {
           <ScrollArea className="flex-1">
             {!d ? <div className="space-y-2 p-4"><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
               : d.runningCampaigns.length === 0 ? <EmptyState title="Nenhuma campanha ativa." />
-              : <ul className="divide-y divide-line">{d.runningCampaigns.map(c => <li key={c.id}>
-                <Link to={`/campanhas/${c.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-medium">{c.name}</span><span className="tabular shrink-0 text-xs text-muted">{c.sent}/{c.total}</span></div>
-                    <div className="mt-1.5 h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full bg-brand-600 transition-[width] duration-500 ease-out" style={{ width: `${(c.sent / Math.max(1, c.total)) * 100}%` }} /></div>
-                    {c.nextDelivery && <p className="mt-1 truncate text-2xs text-muted">Próximo: {c.nextDelivery.group.name} · {when(c.nextDelivery, d.serverNow, connected)}{c.provider === 'simulator' && ' · simulação'}</p>}
-                  </div>
-                  <IconOpen className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
-                </Link>
-              </li>)}</ul>}
+              : <ul className="divide-y divide-line">{d.runningCampaigns.map(c => <RunningCampaign key={c.id} campaign={c} now={d.serverNow} />)}</ul>}
           </ScrollArea>
         </Card>
       </div>
