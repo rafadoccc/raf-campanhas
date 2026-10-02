@@ -1432,6 +1432,11 @@ precisava de ícone e de metadados para busca e compartilhamento.
 - **Arquivos públicos novos** em `apps/web/public`: favicon.svg, PNGs gerados por
   `scripts/make-icons.cjs`, site.webmanifest, robots.txt (libera só /login, /notas, /privacidade
   e /termos) e og.png.
+- **Adendo (T-155, 2026-10-02):** a resposta do painel ganha, de forma aditiva, `usage` (envios do
+  número hoje, limite que vale hoje, aquecimento e janela de silêncio, só leitura) e `media` em
+  cada item de `runningCampaigns`. A tela deixou de usar `recentActivity`, que continua na resposta.
+  O cliente passa a VER o limite do dia e o horário de silêncio da própria conta (pedido do dono),
+  mas continua sem poder mudá-los (ADR-049/050).
 - **Limite:** o painel fica atrás de login. Estas tags deixam o link correto ao ser compartilhado
   e legível para buscadores, mas posição no Google depende de página pública com conteúdo
   (uma página de apresentação), que não existe.

@@ -5,6 +5,25 @@
 
 ---
 
+## 2026-10-02T04:55Z · claude
+
+**Fiz:** Início redesenhado a pedido do dono (commit `157e55c`): "Em andamento" em cartões (imagem da
+campanha, selo da situação, barra de enviados e falhas, números e próximo envio) e bloco "Hoje"
+(uso do dia contra o limite, aquecimento e horário de silêncio) no lugar de "Atividade recente".
+**Arquivos:** apps/server/src/{dashboard,integration.test}.ts, apps/web/src/{pages/dashboard.tsx,lib/release-notes.ts}
+**Tarefas:** T-155 (concluída).
+**Estado:** compila · lint ok · unitários 94/94 + 9 do painel · integração 165/165. Conferido no
+navegador (dev) com duas campanhas simuladas, em 1024 px e 375 px.
+**Armadilhas:**
+- Só na dev: o dono não pediu para levar esta mudança para a main.
+- O cliente agora VÊ o limite do dia e o horário de silêncio no bloco Hoje (adendo na ADR-051);
+  mudar continua sendo só do administrador.
+- `recentActivity` segue na resposta de `/api/dashboard`, mas a tela não usa mais.
+- Notas 26.10.4 criadas para esta mudança (a 26.10.3 do codex já estava na main).
+**Próximo passo sugerido:** o dono confere o Início na dev e decide se sobe para a main.
+
+---
+
 ## 2026-10-02T04:30Z · codex
 
 **Fiz:** promoção autorizada pelo dono da revisão `8f13c4e` da dev para main por avanço
