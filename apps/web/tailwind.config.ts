@@ -16,6 +16,7 @@ const config: Config = {
       },
       fontFamily: {
         // Fonte do sistema: carrega na hora e não depende de CDN (a CSP só permite 'self').
+        hand: ['"Segoe Print"', '"Bradley Hand"', '"Chalkboard SE"', '"Comic Neue"', '"Comic Sans MS"', 'cursive'],
         sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
       },
       fontSize: { '2xs': ['0.6875rem', { lineHeight: '1rem' }] },
@@ -31,6 +32,10 @@ const config: Config = {
         // Troca de página (notas de atualização): o conteúdo entra do lado para onde se avançou.
         'slide-from-right': { from: { opacity: '0', transform: 'translateX(14px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
         'slide-from-left': { from: { opacity: '0', transform: 'translateX(-14px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
+        // Página de apresentação: rabisco balançando, flutuando ao fundo e a faixa correndo.
+        'doodle-wiggle': { '0%, 100%': { transform: 'rotate(0deg)' }, '25%': { transform: 'rotate(-7deg)' }, '75%': { transform: 'rotate(7deg)' } },
+        'doodle-float': { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
+        'doodle-marquee': { from: { transform: 'translateX(0)' }, to: { transform: 'translateX(-50%)' } },
       },
       animation: {
         'fade-in': 'fade-in 200ms ease-out backwards',
@@ -38,6 +43,9 @@ const config: Config = {
         'overlay-in': 'overlay-in 150ms ease-out backwards',
         'slide-from-right': 'slide-from-right 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards',
         'slide-from-left': 'slide-from-left 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards',
+        'doodle-wiggle': 'doodle-wiggle 500ms ease-in-out',
+        'doodle-float': 'doodle-float 7s ease-in-out infinite',
+        'doodle-marquee': 'doodle-marquee 28s linear infinite',
       },
     },
     borderRadius: {

@@ -1,5 +1,6 @@
 # DocDrop: o painel fica atrás de login. Só as páginas públicas interessam a buscadores.
 User-agent: *
+Allow: /conheca
 Allow: /login
 Allow: /notas
 Allow: /privacidade

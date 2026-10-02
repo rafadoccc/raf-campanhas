@@ -65,6 +65,8 @@ const ForgotPasswordPage = lazy(() => import('./pages/password-reset'));
 const ResetPasswordPage = lazy(() => import('./pages/password-reset').then(module => ({ default: module.ResetPasswordPage })));
 // Privacidade e Termos: públicas (abrem sem login), carregadas só quando alguém abre.
 const LegalPage = lazy(() => import('./pages/legal'));
+// Página de apresentação pública, com o visual rabiscado (só ela; o painel segue neutro).
+const LandingPage = lazy(() => import('./pages/landing'));
 // Notas de atualização: página de leitura, fora da moldura do painel.
 const ReleaseNotesPage = lazy(() => import('./pages/release-notes'));
 
@@ -143,6 +145,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/login" element={<LoginPage />} />
             <Route path="/esqueci-senha" element={<Suspense fallback={<Pending />}><ForgotPasswordPage /></Suspense>} />
             <Route path="/redefinir-senha/:token" element={<Suspense fallback={<Pending />}><ResetPasswordPage /></Suspense>} />
+            <Route path="/conheca" element={<Suspense fallback={<Pending />}><LandingPage /></Suspense>} />
             <Route path="/privacidade" element={<Suspense fallback={<Pending />}><LegalPage kind="privacy" /></Suspense>} />
             <Route path="/termos" element={<Suspense fallback={<Pending />}><LegalPage kind="terms" /></Suspense>} />
             <Route path="/notas" element={<Suspense fallback={<Pending />}><ReleaseNotesPage /></Suspense>} />
