@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-10-02T05:35Z · claude
+
+**Fiz:** página de apresentação de EXEMPLO em `/conheca` (commit `ae48631`), pública, no estilo
+rabiscado que o dono pediu (referência: fecler.com, sem som): desenhos em SVG com filtro de
+tremido, títulos em letra manuscrita, marca-texto amarelo, faixa correndo.
+**Arquivos:** apps/web/src/{pages/landing.tsx,components/doodles.tsx,main.tsx}, apps/web/{tailwind.config.ts,public/robots.txt}
+**Tarefas:** T-156 (concluída).
+**Estado:** compila · lint ok · testes do painel 9/9 (nenhuma mudança no servidor). Conferido no
+navegador (dev) em 1024 px e 375 px, sem rolagem lateral.
+**Armadilhas:**
+- É um EXEMPLO para o dono aprovar o estilo: textos e desenhos são ponto de partida. Só na dev.
+- A letra manuscrita usa fontes do aparelho (`font-hand`: Segoe Print, Bradley Hand, Chalkboard,
+  Comic Sans, cursive): muda de cara entre Windows, iPhone e Android. Para ficar igual em todos,
+  falta escolher uma fonte e servi-la do próprio site (a CSP só aceita `font-src self`).
+- O estilo rabiscado é SÓ desta página; o painel segue o design system neutro.
+- A raiz `/` continua sendo o painel (login). A apresentação não virou a página inicial.
+- O botão "Quero usar" só aparece com `CONTACT_EMAIL` definido; sem ele, vai para o login.
+**Próximo passo sugerido:** o dono avalia o estilo e os textos; se aprovar, escolher a fonte
+manuscrita definitiva e decidir se `/` abre a apresentação para quem não está logado.
+
+---
+
 ## 2026-10-02T04:55Z · claude
 
 **Fiz:** Início redesenhado a pedido do dono (commit `157e55c`): "Em andamento" em cartões (imagem da
