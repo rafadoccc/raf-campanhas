@@ -98,6 +98,7 @@ export function registerCampaignRoutes(app: FastifyInstance, connectedOf: (userI
     const userId = request.user!.id;
     try {
       const copy = await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
         await lockCampaign(tx, id);
         const source = await tx.campaign.findFirst({
           where: { id, userId, deletedAt: null },

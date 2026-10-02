@@ -3911,6 +3911,28 @@ test('review: concurrent forgot requests and link issuance leave one pending req
   assert.equal(checks.filter(r => r.statusCode === 200).length, 1);
 });
 
+test('review: parallel feedback requests cannot exceed the account quota', async () => {
+  const owner = await lgpdUser('review-feedback@teste.local');
+  await prisma.feedback.createMany({ data: Array.from({ length: 4 }, () => ({ userId: owner.user.id, kind: 'sugestao', message: 'Mensagem de teste isolado' })) });
+  const responses = await Promise.all(Array.from({ length: 3 }, () => owner.call('POST', '/api/feedback', { kind: 'sugestao', message: 'Uma sugestão de teste' })));
+  assert.deepEqual(responses.map(r => r.statusCode).sort(), [201, 429, 429]);
+  assert.equal(await prisma.feedback.count({ where: { userId: owner.user.id } }), 5);
+});
+
+test('review: parallel group list creation and templates from different sources respect the account quotas', async () => {
+  const owner = await lgpdUser('review-quotas@teste.local');
+  const sources = await Promise.all(['Primeira', 'Segunda'].map(name => lgpdCampaign(owner.user.id, name)));
+  const group = await prisma.group.findFirstOrThrow({ where: { userId: owner.user.id } });
+  await prisma.groupList.createMany({ data: Array.from({ length: 49 }, (_, i) => ({ userId: owner.user.id, name: `Lista ${i}` })) });
+  const lists = await Promise.all(['Última A', 'Última B'].map(name => owner.call('POST', '/api/group-lists', { name, groupIds: [group.id] })));
+  assert.deepEqual(lists.map(r => r.statusCode).sort(), [201, 400]);
+  assert.equal(await prisma.groupList.count({ where: { userId: owner.user.id } }), 50);
+  await prisma.campaign.createMany({ data: Array.from({ length: 49 }, (_, i) => ({ userId: owner.user.id, name: `Modelo ${i}`, isTemplate: true, startsAt: new Date(), endsAt: new Date() })) });
+  const templates = await Promise.all(sources.map(s => owner.call('POST', `/api/campaigns/${s.id}/duplicate`, { asTemplate: true })));
+  assert.deepEqual(templates.map(r => r.statusCode).sort(), [201, 400]);
+  assert.equal(await prisma.campaign.count({ where: { userId: owner.user.id, isTemplate: true } }), 50);
+});
+
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
   await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto

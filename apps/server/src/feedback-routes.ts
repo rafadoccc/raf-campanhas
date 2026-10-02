@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '@campaign/database';
+import { prisma, LOCKING_TRANSACTION } from '@campaign/database';
 import { requireSuperAdmin } from './auth';
 
 // Sugestões, críticas, problemas e elogios (ADR-045). Qualquer usuário envia e acompanha os
@@ -26,9 +26,14 @@ export function registerFeedbackRoutes(app: FastifyInstance) {
     if (message.length < FEEDBACK_MIN_LENGTH) return reply.code(400).send({ error: 'Conte um pouco mais (pelo menos 10 caracteres).' });
     if (message.length > FEEDBACK_MAX_LENGTH) return reply.code(400).send({ error: `O texto pode ter no máximo ${FEEDBACK_MAX_LENGTH} caracteres.` });
     const userId = request.user!.id;
-    const recent = await prisma.feedback.count({ where: { userId, createdAt: { gt: new Date(Date.now() - 3_600_000) } } });
-    if (recent >= FEEDBACK_PER_HOUR) return reply.code(429).send({ error: 'Você já enviou várias mensagens na última hora. Tente de novo mais tarde.' });
-    return reply.code(201).send(await prisma.feedback.create({ data: { userId, kind, message }, select: own }));
+    const feedback = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+      const recent = await tx.feedback.count({ where: { userId, createdAt: { gt: new Date(Date.now() - 3_600_000) } } });
+      if (recent >= FEEDBACK_PER_HOUR) return null;
+      return tx.feedback.create({ data: { userId, kind, message }, select: own });
+    }, LOCKING_TRANSACTION);
+    if (!feedback) return reply.code(429).send({ error: 'Você já enviou várias mensagens na última hora. Tente de novo mais tarde.' });
+    return reply.code(201).send(feedback);
   });
 
   // Só os envios de quem está logado, mais novos primeiro.

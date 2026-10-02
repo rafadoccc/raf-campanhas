@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '@campaign/database';
+import { prisma, LOCKING_TRANSACTION } from '@campaign/database';
 
 // Listas de grupos (ADR-047): um nome para um conjunto de grupos, para marcar todos de uma vez ao
 // montar a campanha. Tudo pelo usuário da sessão; o banco também recusa grupo de outra conta
@@ -42,8 +42,11 @@ export function registerGroupListRoutes(app: FastifyInstance) {
       const body = request.body as Body;
       const name = parseName(body?.name);
       const groupIds = await parseGroups(body?.groupIds, userId);
-      if (await prisma.groupList.count({ where: { userId } }) >= MAX_LISTS) throw new ListError(`Você já tem ${MAX_LISTS} listas. Exclua uma para criar outra.`);
-      const list = await prisma.groupList.create({ data: { userId, name, items: { create: groupIds.map(groupId => ({ groupId })) } }, select: withItems });
+      const list = await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+        if (await tx.groupList.count({ where: { userId } }) >= MAX_LISTS) throw new ListError(`Você já tem ${MAX_LISTS} listas. Exclua uma para criar outra.`);
+        return tx.groupList.create({ data: { userId, name, items: { create: groupIds.map(groupId => ({ groupId })) } }, select: withItems });
+      }, LOCKING_TRANSACTION);
       return reply.code(201).send(view(list));
     } catch (error) {
       if (error instanceof ListError) return reply.code(error.status).send({ error: error.message });
@@ -61,12 +64,15 @@ export function registerGroupListRoutes(app: FastifyInstance) {
       const name = body?.name === undefined ? undefined : parseName(body.name);
       const groupIds = body?.groupIds === undefined ? undefined : await parseGroups(body.groupIds, userId);
       if (name === undefined && groupIds === undefined) throw new ListError('Nada a alterar.');
-      if (!await prisma.groupList.count({ where: { id, userId } })) throw new ListError('Lista não encontrada.', 404);
-      const list = await prisma.groupList.update({
-        where: { id },
-        data: { ...(name === undefined ? {} : { name }), ...(groupIds === undefined ? {} : { items: { deleteMany: {}, create: groupIds.map(groupId => ({ groupId })) } }) },
-        select: withItems,
-      });
+      const list = await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`GroupList\` WHERE id = ${id} FOR UPDATE`;
+        if (!await tx.groupList.count({ where: { id, userId } })) throw new ListError('Lista não encontrada.', 404);
+        return tx.groupList.update({
+          where: { id },
+          data: { ...(name === undefined ? {} : { name }), ...(groupIds === undefined ? {} : { items: { deleteMany: {}, create: groupIds.map(groupId => ({ groupId })) } }) },
+          select: withItems,
+        });
+      }, LOCKING_TRANSACTION);
       return view(list);
     } catch (error) {
       if (error instanceof ListError) return reply.code(error.status).send({ error: error.message });
