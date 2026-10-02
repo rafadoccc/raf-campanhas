@@ -3857,6 +3857,60 @@ test('warmup: the queue holds the number at the warmup limit of the day', async 
   assert.ok(await claimDelivery(prisma, next.id, at), 'sem aquecimento (e sem limite diário nesta conta), sai');
 });
 
+// Revisão 2026-10-02: concorrência real em MySQL, sem WhatsApp nem dados de produção.
+for (const byAdmin of [false, true]) test(`review: ${byAdmin ? 'admin' : 'own'} password change revokes outstanding reset links`, async () => {
+  const owner = await lgpdUser(`review-password-${byAdmin}@teste.local`);
+  const admin = await lgpdUser(`review-password-admin-${byAdmin}@teste.local`, 'SUPER_ADMIN');
+  const link = await admin.call('POST', `/api/admin/users/${owner.user.id}/reset-link`, {});
+  assert.equal(link.statusCode, 200, link.body);
+  const token = String(link.json().url).split('/redefinir-senha/')[1];
+  const changed = byAdmin
+    ? await admin.call('POST', `/api/admin/users/${owner.user.id}/password`, { password: 'review-nova-senha-123' })
+    : await owner.call('POST', '/api/auth/password', { current: 'senha-de-teste-123', next: 'review-nova-senha-123' });
+  assert.equal(changed.statusCode, 200, changed.body);
+  const stale = await app.inject({ method: 'POST', url: `/api/auth/reset/${token}`, headers: anon, payload: { password: 'review-link-antigo-123' } });
+  assert.equal(stale.statusCode, 404, 'link anterior não pode substituir a senha nova');
+  assert.equal(await prisma.passwordReset.count({ where: { userId: owner.user.id } }), 0);
+  assert.equal((await loginAs(app, owner.user.email, 'review-nova-senha-123')).status, 200);
+});
+
+test('review: reset expiry is rechecked after the slow hash and account lock', async () => {
+  const owner = await lgpdUser('review-expiry@teste.local');
+  const admin = await lgpdUser('review-expiry-admin@teste.local', 'SUPER_ADMIN');
+  const link = await admin.call('POST', `/api/admin/users/${owner.user.id}/reset-link`, {});
+  const token = String(link.json().url).split('/redefinir-senha/')[1];
+  let observed!: () => void;
+  const found = new Promise<void>(resolve => { observed = resolve; });
+  const original = prisma.passwordReset.findFirst;
+  // A leitura inicial ainda encontra o link válido. Ele vence antes da transação que o consome.
+  prisma.passwordReset.findFirst = (async (...args: Parameters<typeof original>) => {
+    const result = await original.apply(prisma.passwordReset, args);
+    await prisma.passwordReset.updateMany({ where: { userId: owner.user.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    observed();
+    return result;
+  }) as typeof original;
+  try {
+    const response = app.inject({ method: 'POST', url: `/api/auth/reset/${token}`, headers: anon, payload: { password: 'review-vencido-123' } });
+    await found;
+    assert.equal((await response).statusCode, 404);
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: owner.user.id } })).passwordHash, owner.user.passwordHash);
+    assert.equal((await owner.call('GET', '/api/auth/me')).statusCode, 200);
+  } finally { prisma.passwordReset.findFirst = original; }
+});
+
+test('review: concurrent forgot requests and link issuance leave one pending request or valid link', async () => {
+  const owner = await lgpdUser('review-forgot@teste.local');
+  const admin = await lgpdUser('review-forgot-admin@teste.local', 'SUPER_ADMIN');
+  const responses = await Promise.all(Array.from({ length: 3 }, (_, i) => fromIp(`198.51.100.${110 + i}`, owner.user.email)));
+  assert.ok(responses.every(r => r.statusCode === 200));
+  assert.equal(await prisma.passwordReset.count({ where: { userId: owner.user.id, tokenHash: null } }), 1);
+  const links = await Promise.all(Array.from({ length: 3 }, () => admin.call('POST', `/api/admin/users/${owner.user.id}/reset-link`, {})));
+  assert.ok(links.every(r => r.statusCode === 200), links.map(r => r.body).join('\n'));
+  assert.equal(await prisma.passwordReset.count({ where: { userId: owner.user.id } }), 1);
+  const checks = await Promise.all(links.map(r => app.inject({ method: 'GET', url: `/api/auth/reset/${String(r.json().url).split('/redefinir-senha/')[1]}`, headers: anon })));
+  assert.equal(checks.filter(r => r.statusCode === 200).length, 1);
+});
+
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
   await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto

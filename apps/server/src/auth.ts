@@ -328,6 +328,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, limiter = 
         if (!updated.count) return false;
         const current = readCookie(request, SESSION_COOKIE);
         await tx.authSession.deleteMany({ where: { userId: user.id, NOT: { tokenHash: tokenHash(current ?? '') } } });
+        await tx.passwordReset.deleteMany({ where: { userId: user.id } });
         return true;
       });
       if (!changed) return reply.code(409).send({ error: 'A senha foi alterada em outra sessão. Entre novamente e tente de novo.' });

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '@campaign/database';
+import { prisma, LOCKING_TRANSACTION } from '@campaign/database';
 import type { AppConfig } from './config';
 import { LoginLimiter, hashPassword, normalizeEmail, requireSuperAdmin, validateNewPassword } from './auth';
 import { sendMail, type Message } from './mailer';
@@ -23,10 +23,15 @@ const hashOf = (token: string) => createHash('sha256').update(token).digest('hex
 async function issueLink(config: AppConfig, userId: string, ttlMs: number) {
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + ttlMs);
-  await prisma.$transaction([
-    prisma.passwordReset.deleteMany({ where: { userId } }),
-    prisma.passwordReset.create({ data: { userId, tokenHash: hashOf(token), expiresAt } }),
-  ]);
+  const issued = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { disabledAt: true } });
+    if (!user || user.disabledAt) return false;
+    await tx.passwordReset.deleteMany({ where: { userId } });
+    await tx.passwordReset.create({ data: { userId, tokenHash: hashOf(token), expiresAt } });
+    return true;
+  }, LOCKING_TRANSACTION);
+  if (!issued) return null;
   return { url: `${config.publicUrl.origin}/redefinir-senha/${token}`, expiresAt };
 }
 
@@ -53,15 +58,24 @@ export function registerPasswordReset(app: FastifyInstance, config: AppConfig, o
     if (user && !user.disabledAt) {
       await prisma.passwordReset.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - REQUEST_KEEP_MS) } } }).catch(() => undefined);
       if (send) {
-        const { url } = await issueLink(config, user.id, RESET_TTL_MS.email);
+        const link = await issueLink(config, user.id, RESET_TTL_MS.email);
+        if (!link) return { ok: true, delivery: 'email' };
+        const { url } = link;
         // Sem esperar o envio: o tempo de resposta não pode revelar se a conta existe.
         void send({
           to: email, subject: 'DocDrop: criar uma nova senha',
           text: `Olá, ${user.name}.\n\nRecebemos um pedido para criar uma nova senha no DocDrop. Abra o link abaixo (vale por 1 hora e só funciona uma vez):\n\n${url}\n\nSe não foi você, ignore este e-mail: a sua senha continua a mesma.`,
         }).catch(error => console.error('[E-mail] Não foi possível enviar o link de nova senha:', error instanceof Error ? error.message : error));
-      } else if (!await prisma.passwordReset.count({ where: { userId: user.id, tokenHash: null } })) {
+      } else {
         // Sem e-mail: fica o pedido para o administrador (um por conta, sem acumular).
-        await prisma.passwordReset.create({ data: { userId: user.id } });
+        await prisma.$transaction(async tx => {
+          await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${user.id} FOR UPDATE`;
+          const current = await tx.user.findUnique({ where: { id: user.id }, select: { disabledAt: true } });
+          if (!current || current.disabledAt) return;
+          if (!await tx.passwordReset.count({ where: { userId: user.id, tokenHash: null } })) {
+            await tx.passwordReset.create({ data: { userId: user.id } });
+          }
+        }, LOCKING_TRANSACTION);
       }
     }
     // delivery diz só COMO o sistema entrega links (igual para qualquer e-mail digitado).
@@ -86,14 +100,14 @@ export function registerPasswordReset(app: FastifyInstance, config: AppConfig, o
       // Mesma trava do login e da troca de senha: a conta muda de senha uma vez, e inteira.
       await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${reset.userId} FOR UPDATE`;
       // Uso único: quem apagar a linha do link é quem troca a senha (dois cliques não trocam duas vezes).
-      if (!(await tx.passwordReset.deleteMany({ where: { id: reset.id } })).count) return false;
+      if (!(await tx.passwordReset.deleteMany({ where: { id: reset.id, expiresAt: { gt: new Date() } } })).count) return false;
       const { count } = await tx.user.updateMany({ where: { id: reset.userId, disabledAt: null }, data: { passwordHash } });
       if (!count) return false;
       // Senha nova derruba todas as sessões abertas e qualquer outro pedido ou link da conta.
       await tx.authSession.deleteMany({ where: { userId: reset.userId } });
       await tx.passwordReset.deleteMany({ where: { userId: reset.userId } });
       return true;
-    });
+    }, LOCKING_TRANSACTION);
     if (!done) return reply.code(404).send({ error: 'Este link não vale mais. Peça um novo.' });
     return { ok: true };
   });
@@ -105,6 +119,8 @@ export function registerPasswordReset(app: FastifyInstance, config: AppConfig, o
     const user = await prisma.user.findUnique({ where: { id }, select: { disabledAt: true } });
     if (!user) return reply.code(404).send({ error: 'Usuário não encontrado.' });
     if (user.disabledAt) return reply.code(400).send({ error: 'Reative a conta antes de gerar o link.' });
-    return issueLink(config, id, RESET_TTL_MS.admin);
+    const link = await issueLink(config, id, RESET_TTL_MS.admin);
+    if (!link) return reply.code(400).send({ error: 'Reative a conta antes de gerar o link.' });
+    return link;
   });
 }

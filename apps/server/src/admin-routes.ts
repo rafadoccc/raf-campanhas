@@ -149,7 +149,10 @@ export function registerAdminRoutes(app: FastifyInstance, { manager, legacy }: D
     const updated = await prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${id} FOR UPDATE`;
       const changed = await tx.user.updateMany({ where: { id }, data: { passwordHash: nextHash } });
-      if (changed.count) await tx.authSession.deleteMany({ where: { userId: id } });
+      if (changed.count) {
+        await tx.authSession.deleteMany({ where: { userId: id } });
+        await tx.passwordReset.deleteMany({ where: { userId: id } });
+      }
       return changed.count;
     });
     if (!updated) return reply.code(404).send({ error: 'Usuário não encontrado.' });
