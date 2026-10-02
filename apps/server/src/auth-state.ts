@@ -31,12 +31,15 @@ const fixFileName = (file: string) => file.replace(/\//g, '__').replace(/:/g, '-
 
 // Um arquivo por vez: leituras e gravações do mesmo arquivo nunca se cruzam.
 const locks = new Map<string, Promise<unknown>>();
-function withLock<T>(file: string, task: () => Promise<T>): Promise<T> {
-  const previous = locks.get(file) ?? Promise.resolve();
+// Separada da trava de leitura/credenciais: writeAtomic também é usado dentro dela.
+// Reutilizar a mesma trava aqui esperaria pela própria gravação e causaria deadlock.
+const atomicWrites = new Map<string, Promise<unknown>>();
+function withLock<T>(file: string, task: () => Promise<T>, queue = locks): Promise<T> {
+  const previous = queue.get(file) ?? Promise.resolve();
   const run = previous.then(task, task);
   const settled = run.catch(() => undefined);
-  locks.set(file, settled);
-  void settled.then(() => { if (locks.get(file) === settled) locks.delete(file); });
+  queue.set(file, settled);
+  void settled.then(() => { if (queue.get(file) === settled) queue.delete(file); });
   return run;
 }
 
@@ -50,20 +53,22 @@ async function renameWithRetry(from: string, to: string) {
   }
 }
 
-/** Grava por inteiro ou não grava: temporário + rename. `durable` força o disco (fsync). */
-export async function writeAtomic(file: string, content: string, durable = false) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    const handle = await open(temporary, 'w', 0o600);
+/** Grava por inteiro e na ordem das chamadas: temporário + rename. `durable` faz fsync. */
+export function writeAtomic(file: string, content: string, durable = false): Promise<void> {
+  return withLock(path.resolve(file), async () => {
+    const temporary = `${file}.${randomUUID()}.tmp`;
     try {
-      await handle.writeFile(content, 'utf8');
-      if (durable) await handle.sync();
-    } finally { await handle.close(); }
-    await renameWithRetry(temporary, file);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+      const handle = await open(temporary, 'w', 0o600);
+      try {
+        await handle.writeFile(content, 'utf8');
+        if (durable) await handle.sync();
+      } finally { await handle.close(); }
+      await renameWithRetry(temporary, file);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+  }, atomicWrites);
 }
 
 export async function useDurableAuthState(folder: string, baileys: Baileys, log: (message: string) => void = console.warn) {

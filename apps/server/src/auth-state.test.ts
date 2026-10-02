@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { useDurableAuthState, writeAtomic } from './auth-state';
 import { LOCK_STALE_MS, SessionLock, lockHeld } from './session-lock';
@@ -80,8 +80,16 @@ test('auth (036): writes are whole or nothing, leave no temporary files, and key
     // Muitas gravações do mesmo arquivo ao mesmo tempo: a última vence e o arquivo é JSON válido.
     const target = path.join(dir, 'concorrente.json');
     await Promise.all(Array.from({ length: 30 }, (_, i) => writeAtomic(target, JSON.stringify({ i, dado: 'x'.repeat(5000) }))));
-    assert.doesNotThrow(() => JSON.parse(readFileSync(target, 'utf8')));
+    assert.equal(JSON.parse(readFileSync(target, 'utf8')).i, 29, 'última chamada vence, não o último rename a terminar');
     assert.deepEqual(readdirSync(dir).filter(name => name.endsWith('.tmp')), [], 'nenhum temporário sobrando');
+    // Uma gravação que falha deve liberar sua trava, não envenenar as seguintes.
+    const missingFolder = path.join(dir, 'criada-depois');
+    const failedTarget = path.join(missingFolder, 'chave.json');
+    await assert.rejects(writeAtomic(failedTarget, '{}'), { code: 'ENOENT' });
+    mkdirSync(missingFolder);
+    await writeAtomic(failedTarget, '{"ok":true}');
+    assert.deepEqual(JSON.parse(readFileSync(failedTarget, 'utf8')), { ok: true });
+    assert.deepEqual(readdirSync(missingFolder), ['chave.json']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
