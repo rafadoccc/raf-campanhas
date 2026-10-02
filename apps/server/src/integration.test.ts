@@ -3947,6 +3947,58 @@ test('review: parallel report sharing returns the same link, which revocation di
   assert.equal((await app.inject({ method: 'GET', url: `/api/public/report/${token}`, headers: anon })).statusCode, 404);
 });
 
+for (const action of ['activate', 'retry', 'retry-failed']) test(`review: ${action} rechecks the plan after waiting for an account update`, async () => {
+  const owner = await lgpdUser(`review-plan-${action}@teste.local`);
+  const campaign = await lgpdCampaign(owner.user.id, `Plano ${action}`, { status: action === 'activate' ? 'DRAFT' : 'COMPLETED' });
+  await prisma.campaign.update({ where: { id: campaign.id }, data: { mode: 'IMMEDIATE' } });
+  const group = await prisma.group.findFirstOrThrow({ where: { userId: owner.user.id } });
+  const delivery = action === 'activate' ? null : await prisma.delivery.create({ data: { campaignId: campaign.id, groupId: group.id, scheduledAt: new Date(), messageBody: 'teste', status: 'FAILED', error: 'Falha segura', provider: 'simulator', sequence: 0 } });
+  let locked!: () => void;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { locked = resolve; });
+  const unblock = new Promise<void>(resolve => { release = resolve; });
+  const update = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${owner.user.id} FOR UPDATE`;
+    locked();
+    await unblock;
+    await tx.subscription.create({ data: { userId: owner.user.id, pausedAt: new Date() } });
+  }, { ...LOCKING_TRANSACTION, timeout: 15_000 });
+  await held;
+  const response = action === 'activate'
+    ? app.inject({ method: 'PATCH', url: `/api/campaigns/${campaign.id}/status`, headers: as(owner.session), payload: { status: 'ACTIVE', provider: 'simulator' } })
+    : owner.call('POST', action === 'retry' ? `/api/deliveries/${delivery!.id}/retry` : `/api/campaigns/${campaign.id}/retry-failed`, {});
+  try {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    release();
+    await update;
+    const result = await response;
+    assert.equal(result.statusCode, 400, result.body);
+    assert.match(result.json().error, /conta está pausada/);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, action === 'activate' ? 'DRAFT' : 'COMPLETED');
+    if (delivery) assert.equal((await prisma.delivery.findUniqueOrThrow({ where: { id: delivery.id } })).status, 'FAILED');
+    else assert.equal(await prisma.delivery.count({ where: { campaignId: campaign.id } }), 0);
+  } finally { release(); await update; }
+});
+
+test('review: a stale sweep candidate cannot pause an account renewed before its lock is acquired', async () => {
+  const owner = await lgpdUser('review-renewal@teste.local');
+  const campaign = await lgpdCampaign(owner.user.id, 'Renovação concorrente', { status: 'ACTIVE' });
+  await prisma.subscription.create({ data: { userId: owner.user.id, pausedAt: new Date() } });
+  const original = prisma.subscription.findMany;
+  prisma.subscription.findMany = (async (...args: Parameters<typeof original>) => {
+    const result = await original.apply(prisma.subscription, args);
+    await prisma.subscription.update({ where: { userId: owner.user.id }, data: { pausedAt: null } });
+    return result;
+  }) as typeof original;
+  try {
+    assert.equal(await pauseBlockedAccounts(new Date(), owner.user.id), 0);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, 'ACTIVE');
+  } finally {
+    prisma.subscription.findMany = original;
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'PAUSED' } });
+  }
+});
+
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
   await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto

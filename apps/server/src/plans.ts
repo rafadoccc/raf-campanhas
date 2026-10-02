@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { DateTime } from 'luxon';
 import { prisma, currentTime, lockCampaign, LOCKING_TRANSACTION, TIME_ZONE } from '@campaign/database';
 import { requireSuperAdmin } from './auth';
+import type { Prisma } from '@prisma/client';
+
+type PlanDb = Pick<Prisma.TransactionClient, 'user'>;
 
 // Plano da conta (ADR-050). O administrador define, por conta: nome do plano, valor combinado,
 // vencimento, pausa e quantos grupos cabem numa campanha. A cobrança acontece fora do sistema
@@ -36,8 +39,8 @@ const BLOCK = {
 };
 
 /** O plano como a conta enxerga (sem o valor, que é controle do administrador). */
-export async function planOf(userId: string, now: Date) {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, subscription: true } });
+export async function planOf(userId: string, now: Date, db: PlanDb = prisma) {
+  const user = await db.user.findUnique({ where: { id: userId }, select: { role: true, subscription: true } });
   const row = user?.role === 'SUPER_ADMIN' ? null : user?.subscription ?? null;
   const today = todayOf(now);
   const state = planState(row, today);
@@ -48,30 +51,28 @@ export async function planOf(userId: string, now: Date) {
 }
 
 /** Recusa (com a mensagem para a tela) se a conta não pode enviar agora. */
-export async function assertCanSend(userId: string, now: Date) {
-  const { blocked } = await planOf(userId, now);
+export async function assertCanSend(userId: string, now: Date, db: PlanDb = prisma) {
+  const { blocked } = await planOf(userId, now, db);
   if (blocked) throw new Error(blocked);
 }
 
 /** Recusa se a campanha tem mais grupos do que o plano permite. */
-export async function assertGroupLimit(userId: string, groups: number, now: Date) {
-  const { maxGroups } = await planOf(userId, now);
+export async function assertGroupLimit(userId: string, groups: number, now: Date, db: PlanDb = prisma) {
+  const { maxGroups } = await planOf(userId, now, db);
   if (maxGroups !== null && groups > maxGroups) {
     throw new Error(`Seu plano permite até ${maxGroups} ${maxGroups === 1 ? 'grupo' : 'grupos'} por campanha (esta tem ${groups}). Tire alguns grupos ou fale com o administrador.`);
   }
 }
 
 /** Pausa as campanhas ativas de uma conta (o envio em andamento termina). Devolve quantas pausou. */
-async function pauseCampaigns(userId: string, now: Date) {
-  return prisma.$transaction(async tx => {
-    const active = await tx.campaign.findMany({ where: { userId, status: 'ACTIVE', deletedAt: null }, select: { id: true }, orderBy: { id: 'asc' } });
-    let count = 0;
-    for (const { id } of active) {
-      await lockCampaign(tx, id);
-      count += (await tx.campaign.updateMany({ where: { id, status: 'ACTIVE' }, data: { status: 'PAUSED', pausedAt: now, updatedAt: now } })).count;
-    }
-    return count;
-  }, LOCKING_TRANSACTION);
+async function pauseCampaigns(tx: Prisma.TransactionClient, userId: string, now: Date) {
+  const active = await tx.campaign.findMany({ where: { userId, status: 'ACTIVE', deletedAt: null }, select: { id: true }, orderBy: { id: 'asc' } });
+  let count = 0;
+  for (const { id } of active) {
+    await lockCampaign(tx, id);
+    count += (await tx.campaign.updateMany({ where: { id, status: 'ACTIVE' }, data: { status: 'PAUSED', pausedAt: now, updatedAt: now } })).count;
+  }
+  return count;
 }
 
 /**
@@ -90,7 +91,12 @@ export async function pauseBlockedAccounts(now: Date, only?: string) {
   });
   let paused = 0;
   for (const { userId } of blocked) {
-    const count = await pauseCampaigns(userId, now).catch(error => {
+    const count = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+      // A lista é apenas candidata: uma renovação/promoção pode ter ocorrido enquanto esperamos.
+      if (!(await planOf(userId, now, tx)).blocked) return 0;
+      return pauseCampaigns(tx, userId, now);
+    }, LOCKING_TRANSACTION).catch(error => {
       console.error('[Planos] Não foi possível pausar as campanhas de', userId, error instanceof Error ? error.message : error);
       return 0;
     });
@@ -120,7 +126,9 @@ export function startPlanSweep(options: { intervalMs?: number } = {}) {
   };
 }
 
-class PlanError extends Error {}
+class PlanError extends Error {
+  constructor(message: string, readonly status = 400) { super(message); }
+}
 
 function parse(body: unknown) {
   const b = (body ?? {}) as { plan?: unknown; priceCents?: unknown; dueDate?: unknown; paused?: unknown; maxGroups?: unknown };
@@ -176,13 +184,23 @@ export function registerPlanRoutes(app: FastifyInstance) {
       if (error instanceof PlanError) return reply.code(400).send({ error: error.message });
       throw error;
     }
-    const now = await currentTime();
     const { paused, ...fields } = input;
-    // Pausar de novo não muda a data da pausa; despausar zera.
-    const data = { ...fields, pausedAt: paused ? user.subscription?.pausedAt ?? now : null };
-    const saved = await prisma.subscription.upsert({ where: { userId: user.id }, update: data, create: { userId: user.id, ...data } });
-    // Vencida ou pausada a partir de agora: as campanhas param já, sem esperar a conferência.
-    const pausedCampaigns = await pauseBlockedAccounts(now, user.id);
-    return { ...adminView(saved, todayOf(now)), limits: PLAN_LIMITS, pausedCampaigns };
+    try {
+      return await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${user.id} FOR UPDATE`;
+        const current = await tx.user.findUnique({ where: { id: user.id }, select: { role: true, subscription: true } });
+        if (!current) throw new PlanError('Usuário não encontrado.', 404);
+        if (current.role === 'SUPER_ADMIN') throw new PlanError('Administrador não tem plano: a conta nunca vence nem é pausada.');
+        const now = await currentTime();
+        // Plano e pausa são salvos juntos, na mesma ordem de trava usada para iniciar/retomar.
+        const data = { ...fields, pausedAt: paused ? current.subscription?.pausedAt ?? now : null };
+        const saved = await tx.subscription.upsert({ where: { userId: user.id }, update: data, create: { userId: user.id, ...data } });
+        const pausedCampaigns = planState(saved, todayOf(now)) === 'active' ? 0 : await pauseCampaigns(tx, user.id, now);
+        return { ...adminView(saved, todayOf(now)), limits: PLAN_LIMITS, pausedCampaigns };
+      }, LOCKING_TRANSACTION);
+    } catch (error) {
+      if (error instanceof PlanError) return reply.code(error.status).send({ error: error.message });
+      throw error;
+    }
   });
 }

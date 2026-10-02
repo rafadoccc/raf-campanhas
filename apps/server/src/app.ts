@@ -285,8 +285,8 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
   try {
     await completeFinished(prisma);
     // Conta vencida ou pausada não inicia nem retoma campanha (ADR-050). Pausar e encerrar, sim.
-    if (next === 'ACTIVE') await assertCanSend(request.user!.id, await currentTime());
     const updated = await prisma.$transaction(async tx => {
+      if (next === 'ACTIVE') await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${request.user!.id} FOR UPDATE`;
       await lockCampaign(tx, id);
       const campaign = await tx.campaign.findUnique({ where: { id }, include: { groups: { orderBy: { position: 'asc' }, include: { group: true } }, messages: { orderBy: { position: 'asc' } }, schedules: true } });
       if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
@@ -298,7 +298,8 @@ app.patch('/api/campaigns/:id/status', async (request, reply) => {
       const now = await currentTime(); let nextAvailableAt = campaign.nextAvailableAt;
       if (next === 'ACTIVE') {
         // O plano pode ter mudado depois de a campanha ser montada (ou ela veio de uma cópia).
-        await assertGroupLimit(campaign.userId, campaign.groups.length, now);
+        await assertCanSend(campaign.userId, now, tx);
+        await assertGroupLimit(campaign.userId, campaign.groups.length, now, tx);
         if (campaign.status === 'DRAFT') campaignProvider = body.provider ?? 'simulator';
         if (!['simulator', 'baileys'].includes(campaignProvider)) throw new Error('Provedor inválido.');
         if (campaignProvider === 'baileys') {

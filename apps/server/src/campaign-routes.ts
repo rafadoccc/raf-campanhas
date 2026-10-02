@@ -153,8 +153,9 @@ export function registerCampaignRoutes(app: FastifyInstance, connectedOf: (userI
     const userId = request.user!.id;
     try {
       // Tentar de novo reabre a campanha: conta vencida ou pausada não envia (ADR-050).
-      await assertCanSend(userId, await currentTime());
       const outcome = await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+        await assertCanSend(userId, await currentTime(), tx);
         // A primeira leitura só identifica qual campanha travar. Estado e autorização são
         // revalidados depois do lock, inclusive se outro retry ou encerramento ganhou a disputa.
         const target = await tx.delivery.findUnique({ where: { id }, select: { campaignId: true } });
@@ -184,8 +185,9 @@ export function registerCampaignRoutes(app: FastifyInstance, connectedOf: (userI
     const { id } = request.params as { id: string };
     const userId = request.user!.id;
     try {
-      await assertCanSend(userId, await currentTime());
       const result = await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+        await assertCanSend(userId, await currentTime(), tx);
         await lockCampaign(tx, id);
         const campaign = await tx.campaign.findFirst({ where: { id, userId, deletedAt: null } });
         if (!campaign) throw new NotFoundError('Campanha não encontrada.');
