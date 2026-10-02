@@ -12,6 +12,7 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[x] T-152  Polimento do painel: ícone e metadados do site, mensagem da campanha com imagem ampliável, notas de atualização, Em andamento com situação real (ADR-051)  owner: —   since: —
 [x] T-151  Planos por cliente (plano, vencimento, pausa, grupos por campanha) e regras de envio de cada conta na Administração (ADR-050)  owner: —   since: —
 [x] T-150  Intervalo 1:30 a 3:00 sem faixa na tela; regras de envio só para o administrador; formulário de sugestões explica o mínimo (ADR-049)  owner: —   since: —
 [ ] T-149  Validar os avisos num WhatsApp real: "Enviar aviso de teste" no próprio número e em outro número (ADR-048)  owner: —   since: —

@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-10-02T03:40Z · claude
+
+**Fiz:** polimento pedido pelo dono (ADR-051, commits `cc1f744` e `b7204b2`): ícone e metadados
+do site; detalhe da campanha com a imagem ao lado do texto e tela cheia ao clicar; "Em andamento"
+do Início com a previsão real do próximo envio; notas de atualização sem marcadores, com selos do
+design system e paginação compacta; horário novo na hora atual; teto de altura nas caixas de
+texto; "x" dos campos de busca na cor neutra. O dono pediu para levar a dev para a main.
+**Arquivos:** apps/web/{index.html,public/*}, scripts/make-icons.cjs, apps/server/src/{security,dashboard,running-forecast,queue-forecast,campaign-routes,app,integration.test}.ts, apps/web/src/{main.tsx,styles.css,pages/{campaign-detail,campaigns,dashboard,release-notes}.tsx,components/{campaign-media,campaign-meta,campaign-actions,campaign-form,message-editor}.tsx,design/icons.ts,lib/release-notes.ts}
+**Tarefas:** T-152 (concluída).
+**Estado:** compila · lint ok · unitários 94/94 + 7 do painel · integração 152/152. Conferido no
+navegador (dev): cartão Mensagem e tela cheia, Em andamento, notas em 320 px, horários, ícone e
+tags servidos com o endereço público.
+**Armadilhas:**
+- O index.html sai pelo `onRequest` de `registerWeb` com `__PUBLIC_URL__` trocado. Quem editar o
+  index.html e precisar do endereço completo usa esse marcador; nunca um endereço fixo.
+- `waitKind` depende do COMEÇO dos textos de motivo em queue-forecast.ts. Trocar um texto sem
+  atualizar a tabela `KINDS` faz o Início mostrar "Na fila" no lugar do selo certo.
+- O resumo da campanha (`CampaignMeta`) agora depende de `status`: encerrada ou concluída não
+  mostra horários nem duração da rodada. Rascunho continua mostrando (é o plano a conferir).
+- Os PNGs de `apps/web/public` são gerados por `node scripts/make-icons.cjs` e ficam versionados;
+  mudou o favicon.svg, rode de novo.
+- "Atividade recente" NÃO mudou: o dono pediu só ideias, que foram entregues no chat.
+- Mexi em `apps/web/` (área do codex) em várias telas; nada de reformatação em massa.
+**Próximo passo sugerido:** o dono escolhe o que entra no lugar de "Atividade recente" e valida
+os avisos num número real (T-149).
+
+---
+
 ## 2026-10-01T21:18Z · claude
 
 **Fiz:** planos por cliente e regras de envio na Administração (ADR-050, commit `8ad11c8`). Em

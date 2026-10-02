@@ -1403,3 +1403,35 @@ link do Mercado Pago), e ajustar as regras de cada cliente pela Administração.
 - **Fora desta decisão:** cobrança automática (Mercado Pago avisando o sistema para renovar a
   data), que depende de domínio com HTTPS; limite de números por conta (hoje é sempre um).
 - Migration aditiva `20261002200000_subscription`.
+
+---
+
+## ADR-051 · Início com a previsão real do próximo envio; index.html com o endereço público
+
+**Data:** 2026-10-02 · **Status:** aceita · **Autor:** claude · **Branch:** dev · **Fecha:** T-152
+
+Pedido do dono: o bloco "Em andamento" dizia "enviando" em pleno horário de silêncio, e o site
+precisava de ícone e de metadados para busca e compartilhamento.
+
+- **Previsão real no Início.** `GET /api/dashboard` passa a calcular, para cada campanha em
+  andamento, o próximo envio com a MESMA previsão do detalhe (`forecastQueue`): silêncio, limite
+  do dia, intervalo do grupo, relógio do número e conexão do dono. Mudança ADITIVA na resposta:
+  cada item de `runningCampaigns` ganha `failed`, `pending`, `delivered` e
+  `next: { group, expectedAt, reason, kind } | null`. `nextDelivery` continua igual.
+  - `kind` (`waitKind` em queue-forecast.ts) é o tipo da espera para a tela escolher o selo sem
+    interpretar texto: sending, now, quiet, daily, group, retry, offline, paused, pace, scheduled.
+    Ele sai dos prefixos dos motivos montados no mesmo arquivo: mudou o texto lá, mude a tabela.
+  - A previsão roda FORA da transação de leitura do painel (`running-forecast.ts`) e olha só os
+    5 primeiros envios da fila de cada campanha. `queue.ts` e `schedule.ts` não mudam.
+  - `registerCampaignRoutes(app, connectedOf)` recebe quem sabe se a conexão da conta está de pé.
+- **index.html pelo servidor.** O `onRequest` de `registerWeb` e o fallback do painel devolvem o
+  index.html com `__PUBLIC_URL__` trocado por `PUBLIC_URL` (og:image, og:url e dados
+  estruturados precisam de endereço completo). O arquivo é relido quando muda; os demais arquivos
+  continuam pelo `@fastify/static`. Consequência: o index.html não usa mais a versão
+  pré-comprimida (é pequeno).
+- **Arquivos públicos novos** em `apps/web/public`: favicon.svg, PNGs gerados por
+  `scripts/make-icons.cjs`, site.webmanifest, robots.txt (libera só /login, /notas, /privacidade
+  e /termos) e og.png.
+- **Limite:** o painel fica atrás de login. Estas tags deixam o link correto ao ser compartilhado
+  e legível para buscadores, mas posição no Google depende de página pública com conteúdo
+  (uma página de apresentação), que não existe.
