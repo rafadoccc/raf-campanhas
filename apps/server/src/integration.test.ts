@@ -3681,6 +3681,10 @@ test('dashboard: each running campaign shows the real state of its next send (qu
     assert.equal(row.next.kind, 'quiet');
     assert.match(row.next.reason, /^Horário de silêncio · sai /);
     assert.equal(localMinute(new Date(row.next.expectedAt)), quietEnd, 'a previsão é o fim do silêncio');
+    // Bloco Hoje: os envios do número no dia e a janela de silêncio, só para leitura.
+    const usage = (await connected.inject({ method: 'GET', url: '/api/dashboard', headers: as(owner.session) })).json().usage;
+    assert.deepEqual([usage.used, usage.limit, usage.warmup, usage.quiet.active], [0, null, null, true]);
+    assert.equal(localMinute(new Date(usage.quiet.until)), quietEnd);
     // Fora do silêncio e conectado: aí sim está saindo.
     await prisma.sendingPolicy.update({ where: { userId: owner.user.id }, data: { quietStart: null, quietEnd: null } });
     row = (await connected.inject({ method: 'GET', url: '/api/dashboard', headers: as(owner.session) })).json().runningCampaigns.find((c: { id: string }) => c.id === campaign.id);

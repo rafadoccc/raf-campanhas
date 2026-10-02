@@ -6,8 +6,8 @@ import { SafetyAlert } from '../components/number-protection';
 import { usePolling } from '../lib/use-polling';
 import {
   Alert, Badge, ButtonLink, Card, CardHeader, Dot, EmptyState, Page, PageHeader, ScrollArea, Skeleton, Stat,
-  IconAdd, IconCampaigns, IconDelivered, IconOpen, IconQueue, IconReach, IconReads, IconSent,
-  dataHora, hora, numero, type Tone,
+  IconAdd, IconCampaigns, IconClock, IconDelivered, IconMessage, IconQueue, IconReach, IconReads, IconSent, IconVideo,
+  accent, hora, numero, type Tone,
 } from '../design';
 
 type NextDelivery = { campaignId: string; provider: string; status: string; nextAt: string; campaign: { name: string }; group: { name: string } };
@@ -16,6 +16,7 @@ type NextDelivery = { campaignId: string; provider: string; status: string; next
 type WaitKind = 'sending' | 'now' | 'quiet' | 'daily' | 'group' | 'retry' | 'offline' | 'paused' | 'pace' | 'scheduled';
 type Running = {
   id: string; name: string; provider: string; sent: number; total: number; failed: number; pending: number; delivered: number;
+  media: { id: string; kind: string; color: string | null } | null;
   next: { group: string; expectedAt: string; reason: string | null; kind: WaitKind } | null;
 };
 type Dashboard = {
@@ -25,7 +26,8 @@ type Dashboard = {
   last7Days: { day: string; sent: number }[];
   nextDelivery: NextDelivery | null;
   runningCampaigns: Running[];
-  recentActivity: { id: string; campaignId: string; status: string; at: string; deliveredAt?: string | null; group: { name: string }; campaign: { name: string; deletedAt: string | null } }[];
+  /** Uso do dia: envios do número hoje contra o limite, aquecimento e janela de silêncio. */
+  usage: { used: number; limit: number | null; warmup: { day: number; days: number } | null; quiet: { start: string; end: string; active: boolean; until: string | null } | null };
 };
 
 const weekday = (iso: string) => new Intl.DateTimeFormat('pt-BR', { weekday: 'short', timeZone: 'UTC' }).format(new Date(`${iso}T12:00:00Z`)).replace('.', '');
@@ -60,29 +62,85 @@ function nextLine(next: NonNullable<Running['next']>, now: string) {
   return `Próximo: ${next.group} · ${quando(next.expectedAt, now)}`;
 }
 
-/** Uma campanha em andamento: nome e situação real, progresso, números do que já saiu e o próximo envio. */
+/** Um número com o rótulo embaixo (os três do cartão de campanha). */
+function Figure({ value, label, tone = 'text-ink' }: { value: number; label: string; tone?: string }) {
+  return <div className="min-w-0">
+    <p className={`tabular text-base font-semibold leading-tight ${tone}`}>{numero(value)}</p>
+    <p className="truncate text-2xs text-muted">{label}</p>
+  </div>;
+}
+
+/**
+ * Uma campanha em andamento, em cartão: a imagem dela (para reconhecer de relance), a situação
+ * real do próximo envio, a barra dividida em enviados, falhas e o que falta, e os números.
+ */
 function RunningCampaign({ campaign: c, now }: { campaign: Running; now: string }) {
   const chip = c.next ? kindChip[c.next.kind] : null;
   const real = c.provider === 'baileys';
-  return <li>
-    <Link to={`/campanhas/${c.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50">
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex items-center justify-between gap-3">
-          <span className="truncate text-sm font-medium">{c.name}{!real && <span className="ml-1.5 text-2xs font-normal text-slate-400">simulação</span>}</span>
-          {chip && <Badge tone={chip.tone} title={c.next?.reason ?? undefined}>{chip.label}</Badge>}
+  const color = accent(c.media?.color);
+  const share = (n: number) => `${(n / Math.max(1, c.total)) * 100}%`;
+  const live = c.next?.kind === 'sending' || c.next?.kind === 'now';
+  return <li className="min-w-0">
+    <Link to={`/campanhas/${c.id}`} className="group flex h-full flex-col gap-3 rounded-lg border border-line bg-white p-3.5 transition-[border-color,box-shadow] hover:border-slate-300 hover:shadow-card">
+      <div className="flex items-center gap-3">
+        {c.media?.kind === 'image'
+          ? <img src={`/api/media/${c.media.id}/thumb`} alt="" width={40} height={40} className="h-10 w-10 shrink-0 rounded object-cover" style={{ background: color.soft }} />
+          : <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-slate-100 text-slate-400">{c.media?.kind === 'video' ? <IconVideo className="h-5 w-5" aria-hidden /> : <IconMessage className="h-5 w-5" aria-hidden />}</span>}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold" title={c.name}>{c.name}</p>
+          <p className="tabular text-2xs text-muted">{Math.round((c.sent / Math.max(1, c.total)) * 100)}% concluído{!real && ' · simulação'}</p>
         </div>
-        <div className="h-1 overflow-hidden rounded-sm bg-slate-100"><div className="h-full bg-brand-600 transition-[width] duration-500 ease-out" style={{ width: `${(c.sent / Math.max(1, c.total)) * 100}%` }} /></div>
-        <p className="tabular flex flex-wrap gap-x-3 text-2xs text-muted">
-          <span><strong className="font-semibold text-ink">{c.sent}</strong> de {c.total} enviados</span>
-          {real && <span>{c.delivered} {c.delivered === 1 ? 'entregue' : 'entregues'}</span>}
-          {c.failed > 0 && <span className="text-red-700">{c.failed} {c.failed === 1 ? 'falha' : 'falhas'}</span>}
-          <span>{c.pending === 1 ? 'falta 1' : `faltam ${c.pending}`}</span>
-        </p>
-        {c.next && <p className="truncate text-2xs text-muted" title={c.next.reason ?? undefined}>{nextLine(c.next, now)}</p>}
+        {chip && <Badge tone={chip.tone} title={c.next?.reason ?? undefined}>
+          {/* Ponto pulsando só quando algo está saindo de verdade. */}
+          {live && <span aria-hidden className="relative flex h-1.5 w-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-500 opacity-70" /><span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-600" /></span>}
+          {chip.label}
+        </Badge>}
       </div>
-      <IconOpen className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
+      <div className="flex h-1.5 overflow-hidden rounded-sm bg-slate-100" role="img" aria-label={`${c.sent} de ${c.total} enviados`}>
+        <div className="h-full transition-[width] duration-500 ease-out" style={{ width: share(c.sent), background: color.solid }} />
+        {c.failed > 0 && <div className="h-full bg-red-400 transition-[width] duration-500 ease-out" style={{ width: share(c.failed) }} />}
+      </div>
+      <div className={`grid gap-3 ${real ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        <Figure value={c.sent} label={`de ${numero(c.total)} enviados`} />
+        {real && <Figure value={c.delivered} label={c.delivered === 1 ? 'entregue' : 'entregues'} tone="text-brand-700" />}
+        <Figure value={c.pending} label={c.pending === 1 ? 'na fila' : 'na fila'} />
+        <Figure value={c.failed} label={c.failed === 1 ? 'falha' : 'falhas'} tone={c.failed ? 'text-red-700' : 'text-slate-400'} />
+      </div>
+      {c.next && <p className="mt-auto flex items-center gap-1.5 border-t border-line pt-2.5 text-2xs text-muted" title={c.next.reason ?? undefined}>
+        <IconClock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden /><span className="truncate">{nextLine(c.next, now)}</span>
+      </p>}
     </Link>
   </li>;
+}
+
+/**
+ * Bloco "Hoje": quanto do limite do dia o número já usou, o aquecimento e o horário de silêncio.
+ * Só leitura: as regras são ajustadas pelo administrador.
+ */
+function Today({ usage, now }: { usage: Dashboard['usage']; now: string }) {
+  const { used, limit, warmup, quiet } = usage;
+  const ratio = limit ? Math.min(1, used / limit) : 0;
+  const left = limit === null ? null : Math.max(0, limit - used);
+  const tone = limit !== null && left === 0 ? 'bg-red-500' : ratio >= 0.8 ? 'bg-amber-500' : 'bg-brand-600';
+  return <div className="space-y-4 p-4">
+    <div>
+      <p className="tabular flex items-baseline gap-1.5"><span className="text-2xl font-semibold leading-none">{numero(used)}</span><span className="text-xs text-muted">{limit === null ? (used === 1 ? 'envio hoje' : 'envios hoje') : `de ${numero(limit)} envios hoje`}</span></p>
+      {limit !== null && <>
+        <div className="mt-2.5 h-1.5 overflow-hidden rounded-sm bg-slate-100" role="img" aria-label={`${used} de ${limit} envios do dia`}><div className={`h-full transition-[width] duration-500 ease-out ${tone}`} style={{ width: `${ratio * 100}%` }} /></div>
+        <p className="mt-1.5 text-2xs text-muted">{left === 0 ? 'Limite do dia atingido: os envios continuam amanhã.' : `${left === 1 ? 'Resta 1 envio' : `Restam ${numero(left!)} envios`} hoje para este número.`}</p>
+      </>}
+    </div>
+    {(warmup || quiet) && <ul className="space-y-2.5 border-t border-line pt-3 text-xs">
+      {warmup && <li className="flex items-start justify-between gap-3"><span className="text-muted">Aquecimento do número</span><span className="tabular text-right font-medium">dia {warmup.day} de {warmup.days}</span></li>}
+      {quiet && <li className="flex items-start justify-between gap-3">
+        <span className="text-muted">Horário de silêncio</span>
+        <span className="text-right">
+          <span className="tabular block font-medium">{quiet.start} às {quiet.end}</span>
+          <span className={`block text-2xs ${quiet.active ? 'text-amber-700' : 'text-slate-400'}`}>{quiet.active ? `em silêncio agora${quiet.until ? ` · volta ${quando(quiet.until, now)}` : ''}` : 'envios liberados agora'}</span>
+        </span>
+      </li>}
+    </ul>}
+  </div>;
 }
 
 // Cada barra é um botão: clicar abre os números daquele dia (DayDetails, ADR-045).
@@ -136,35 +194,25 @@ export default function DashboardPage() {
         celular. min-w-0 em cada item permite encolher abaixo do próprio conteúdo (mesma ideia do
         min-w-0 em flex, mas o grid não herda isso sozinho). */}
     <div className="grid min-w-0 grid-cols-1 min-h-0 flex-1 gap-4 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
-      <div className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-2">
-        <Card className="flex flex-col p-4">
-          <p className="flex items-baseline justify-between gap-2 text-xs text-muted">Envios nos últimos 7 dias<span className="text-2xs text-slate-400">clique num dia para ver o resumo</span></p>
-          <div className="mt-2 h-28">{d ? <WeekBars days={d.last7Days} onPick={setPickedDay} /> : <Skeleton className="h-full" />}</div>
-        </Card>
-        <Card className="flex min-h-[14rem] flex-1 flex-col lg:min-h-0">
-          <CardHeader title="Em andamento" action={<Link to="/campanhas" className="text-xs text-muted hover:text-ink">Ver todas</Link>} />
-          <ScrollArea className="flex-1">
-            {!d ? <div className="space-y-2 p-4"><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
-              : d.runningCampaigns.length === 0 ? <EmptyState title="Nenhuma campanha ativa." />
-              : <ul className="divide-y divide-line">{d.runningCampaigns.map(c => <RunningCampaign key={c.id} campaign={c} now={d.serverNow} />)}</ul>}
-          </ScrollArea>
-        </Card>
-      </div>
-
-      <Card className="flex min-h-[16rem] min-w-0 flex-col lg:min-h-0">
-        <CardHeader title="Atividade recente" />
+      <Card className="flex min-h-[16rem] min-w-0 flex-col lg:col-span-2 lg:min-h-0">
+        <CardHeader title={<span className="flex items-center gap-2">Em andamento{d && d.runningCampaigns.length > 0 && <span className="tabular text-xs font-normal text-muted">{d.runningCampaigns.length}</span>}</span>} action={<Link to="/campanhas" className="text-xs text-muted hover:text-ink">Ver todas</Link>} />
         <ScrollArea className="flex-1">
-          {!d ? <div className="space-y-2 p-4"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
-            : d.recentActivity.length === 0 ? <EmptyState title="Nenhum envio real ainda." />
-            : <ul className="divide-y divide-line">{d.recentActivity.map(event => <li key={event.id} className="flex items-start justify-between gap-3 px-4 py-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm">{event.group.name}</p>
-                <p className="truncate text-2xs text-muted">{event.campaign.deletedAt ? `${event.campaign.name} (excluída)` : <Link to={`/campanhas/${event.campaignId}`} className="hover:underline">{event.campaign.name}</Link>} · {dataHora(event.at)}</p>
-              </div>
-              {event.status === 'FAILED' ? <Badge tone="danger">Falhou</Badge> : event.deliveredAt ? <Badge tone="brand">Entregue</Badge> : <Badge tone="neutral">Enviado</Badge>}
-            </li>)}</ul>}
+          {!d ? <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2"><Skeleton className="h-36" /><Skeleton className="h-36" /></div>
+            : d.runningCampaigns.length === 0 ? <EmptyState icon={IconCampaigns} title="Nenhuma campanha em andamento." hint="Quando uma campanha estiver enviando, ela aparece aqui com a situação de cada envio." action={<ButtonLink to="/nova-campanha" size="sm" icon={IconAdd}>Nova campanha</ButtonLink>} />
+            : <ul className={`grid min-w-0 grid-cols-1 gap-3 p-4 ${d.runningCampaigns.length > 1 ? 'sm:grid-cols-2' : ''}`}>{d.runningCampaigns.map(c => <RunningCampaign key={c.id} campaign={c} now={d.serverNow} />)}</ul>}
         </ScrollArea>
       </Card>
+
+      <div className="flex min-h-0 min-w-0 flex-col gap-4">
+        <Card>
+          <CardHeader title="Hoje" />
+          {d ? <Today usage={d.usage} now={d.serverNow} /> : <div className="space-y-2 p-4"><Skeleton className="h-8 w-32" /><Skeleton className="h-4" /></div>}
+        </Card>
+        <Card className="flex flex-col p-4">
+          <p className="flex items-baseline justify-between gap-2 text-xs text-muted">Envios nos últimos 7 dias<span className="text-2xs text-slate-400">clique num dia</span></p>
+          <div className="mt-2 h-28">{d ? <WeekBars days={d.last7Days} onPick={setPickedDay} /> : <Skeleton className="h-full" />}</div>
+        </Card>
+      </div>
     </div>
   </Page>;
 }

@@ -21,6 +21,18 @@ export const NOTE_KINDS: { tipo: NoteKind; rotulo: string }[] = [
 
 export const RELEASES: Release[] = [
   {
+    versao: '26.10.4',
+    data: '2026-10-02',
+    grupos: [
+      { tipo: 'novo', itens: [
+        '**Hoje, no Início:** quantos envios o seu número já fez no dia, quanto ainda resta e se o horário de silêncio está valendo agora.',
+      ] },
+      { tipo: 'melhorado', itens: [
+        '**Em andamento:** cada campanha virou um cartão com a imagem dela, a situação do próximo envio e os números de enviados, entregues, fila e falhas.',
+      ] },
+    ],
+  },
+  {
     versao: '26.10.3',
     data: '2026-10-02',
     grupos: [

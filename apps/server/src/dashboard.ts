@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import { prisma, currentTime, TIME_ZONE } from '@campaign/database';
+import { prisma, currentTime, TIME_ZONE, paceKey, rulesFor, sendsToday, dailyLimitOn, warmupDay, inQuietHours, quietEndAfter, WARMUP_DAYS } from '@campaign/database';
 import { nextSends } from './running-forecast';
 
 // Tudo escopado pelas campanhas do usuário (ADR-018): o painel de um nunca conta o de outro.
@@ -19,7 +19,7 @@ export async function dashboardSummary(userId: string, connected = false) {
       tx.delivery.count({ where: sentToday }),
       tx.delivery.count({ where: { campaign: mine, provider: 'baileys', status: 'FAILED', updatedAt: period } }),
       tx.deliveryRead.count({ where: { readAt: period, delivery: { campaign: mine, provider: 'baileys', status: 'SENT' } } }),
-      tx.campaign.findMany({ where: { userId, status: 'ACTIVE', deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, name: true, provider: true, userId: true, status: true, accountJid: true, intervalSeconds: true, nextAvailableAt: true, deliveries: { where: { status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }], take: 1, select: { id: true, campaignId: true, provider: true, status: true, scheduledAt: true, group: { select: { name: true } } } } } }),
+      tx.campaign.findMany({ where: { userId, status: 'ACTIVE', deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, name: true, provider: true, media: { select: { id: true, kind: true, color: true } }, userId: true, status: true, accountJid: true, intervalSeconds: true, nextAvailableAt: true, deliveries: { where: { status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: [{ scheduledAt: 'asc' }, { sequence: 'asc' }], take: 1, select: { id: true, campaignId: true, provider: true, status: true, scheduledAt: true, group: { select: { name: true } } } } } }),
       tx.delivery.groupBy({ by: ['campaignId', 'status'], where: { campaign: { userId, status: 'ACTIVE', deletedAt: null } }, _count: { _all: true } }),
       tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'SENT', sentAt: { not: null } }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 20, select: { id: true, campaignId: true, sentAt: true, deliveredAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } }),
       tx.delivery.findMany({ where: { campaign: mine, provider: 'baileys', status: 'FAILED' }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 20, select: { id: true, campaignId: true, updatedAt: true, group: { select: { name: true } }, campaign: { select: { name: true, deletedAt: true } } } }),
@@ -41,7 +41,7 @@ export async function dashboardSummary(userId: string, connected = false) {
       const nextDelivery = head ? { ...head, campaign: { name: c.name }, nextAt: new Date(Math.max(head.scheduledAt.getTime(), c.nextAvailableAt?.getTime() ?? 0)) } : null;
       const count = (...statuses: string[]) => progress.filter(row => statuses.includes(row.status)).reduce((sum, row) => sum + row._count._all, 0);
       return {
-        id: c.id, name: c.name, provider: c.provider, sent: count('SENT'), total: progress.reduce((sum, row) => sum + row._count._all, 0), nextDelivery,
+        id: c.id, name: c.name, provider: c.provider, media: c.media, sent: count('SENT'), total: progress.reduce((sum, row) => sum + row._count._all, 0), nextDelivery,
         failed: count('FAILED'), pending: count('PENDING', 'PROCESSING'), delivered: deliveredByCampaign.find(row => row.campaignId === c.id)?._count._all ?? 0,
       };
     });
@@ -69,5 +69,25 @@ export async function dashboardSummary(userId: string, connected = false) {
   // limite do dia, intervalo do grupo, WhatsApp fora do ar), a mesma do detalhe da campanha.
   const { candidates, ...data } = summary;
   const next = await nextSends(candidates, connected, serverNow).catch(() => new Map());
-  return { ...data, runningCampaigns: data.runningCampaigns.map(campaign => ({ ...campaign, next: next.get(campaign.id) ?? null })) };
+  return { ...data, usage: await usageToday(userId, serverNow), runningCampaigns: data.runningCampaigns.map(campaign => ({ ...campaign, next: next.get(campaign.id) ?? null })) };
+}
+
+const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+/**
+ * Uso do dia (bloco "Hoje" do Início): quanto o número da conta já enviou hoje contra o limite que
+ * vale hoje (com o aquecimento, se houver) e a janela de silêncio. São as regras que a fila
+ * aplica (ADR-041), só para LEITURA: quem ajusta continua sendo o administrador.
+ */
+async function usageToday(userId: string, now: Date) {
+  const session = await prisma.whatsAppSession.findUnique({ where: { userId }, select: { accountJid: true } });
+  const account = session?.accountJid ? paceKey('baileys', session.accountJid) : null;
+  const rules = await rulesFor(prisma, userId, account);
+  const quiet = rules.quietStart !== null && rules.quietEnd !== null && rules.quietStart !== rules.quietEnd;
+  return {
+    used: account ? await sendsToday(prisma, account, now) : 0,
+    limit: dailyLimitOn(rules, now),
+    warmup: warmupDay(rules, now) ? { day: warmupDay(rules, now)!, days: WARMUP_DAYS } : null,
+    quiet: quiet ? { start: clock(rules.quietStart!), end: clock(rules.quietEnd!), active: inQuietHours(rules, now), until: quietEndAfter(rules, now) } : null,
+  };
 }
