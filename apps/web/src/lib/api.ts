@@ -6,12 +6,16 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized: (() => void) | undefined;
+let authorizationRevision = 0;
+/** Pedidos da sessão anterior não podem derrubar uma sessão aberta depois deles. */
+export function invalidateAuthorizationRequests() { authorizationRevision++; }
 /** Chamado quando a sessão acaba no meio do uso: o painel volta para o login. */
 export function setUnauthorizedHandler(handler: () => void) { onUnauthorized = handler; }
 
 type Options = Omit<RequestInit, 'body'> & { json?: unknown; body?: BodyInit };
 
 export async function api<T>(path: string, { json, headers, ...init }: Options = {}): Promise<T> {
+  const revision = authorizationRevision;
   const finalHeaders = new Headers(headers);
   let body = init.body;
   if (json !== undefined) {
@@ -28,7 +32,7 @@ export async function api<T>(path: string, { json, headers, ...init }: Options =
   const text = await response.text();
   let data: { error?: string } | null = null;
   try { data = text ? JSON.parse(text) : null; } catch { /* resposta não-JSON */ }
-  if (response.status === 401 && !path.startsWith('/auth/')) onUnauthorized?.();
+  if (response.status === 401 && revision === authorizationRevision && !path.startsWith('/auth/')) onUnauthorized?.();
   if (!response.ok) throw new ApiError(data?.error ?? `Falha na comunicação com o servidor (${response.status}).`, response.status);
   return data as T;
 }

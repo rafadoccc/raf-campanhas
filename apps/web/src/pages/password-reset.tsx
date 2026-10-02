@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, errorMessage } from '../lib/api';
 import { Alert, Button, Field, Logo, PasswordInput, inputClass } from '../design';
@@ -51,22 +51,31 @@ export function ResetPasswordPage() {
   const [state, setState] = useState<'checking' | 'ready' | 'invalid' | 'done'>('checking');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const revision = useRef(0);
   useEffect(() => {
-    api<{ name: string }>(`/auth/reset/${encodeURIComponent(token)}`)
-      .then(result => { setName(result.name); setState('ready'); })
-      .catch(() => setState('invalid'));
+    revision.current++;
+    const controller = new AbortController();
+    setState('checking');
+    setName('');
+    setError('');
+    setBusy(false);
+    api<{ name: string }>(`/auth/reset/${encodeURIComponent(token)}`, { signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) { setName(result.name); setState('ready'); } })
+      .catch(() => { if (!controller.signal.aborted) setState('invalid'); });
+    return () => { revision.current++; controller.abort(); };
   }, [token]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const expectedRevision = revision.current;
     const form = new FormData(event.currentTarget);
     setError('');
     if (form.get('password') !== form.get('confirm')) { setError('A confirmação não confere com a nova senha.'); return; }
     setBusy(true);
     try {
       await api(`/auth/reset/${encodeURIComponent(token)}`, { method: 'POST', json: { password: form.get('password') } });
-      setState('done');
-    } catch (e) { setError(errorMessage(e, 'Não foi possível salvar a nova senha.')); }
-    finally { setBusy(false); }
+      if (expectedRevision === revision.current) setState('done');
+    } catch (e) { if (expectedRevision === revision.current) setError(errorMessage(e, 'Não foi possível salvar a nova senha.')); }
+    finally { if (expectedRevision === revision.current) setBusy(false); }
   }
   return <Shell title={state === 'ready' && name ? `Nova senha para ${name}` : 'Criar uma nova senha'}>
     {state === 'checking' && <p className="text-sm text-muted">Conferindo o link…</p>}

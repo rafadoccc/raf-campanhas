@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, ApiError, setUnauthorizedHandler } from './api';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { api, ApiError, setUnauthorizedHandler, invalidateAuthorizationRequests } from './api';
 import { screenCache } from './cache';
 
 /** termsPending: falta aceitar a versão atual dos Termos e da Política (LGPD, ADR-040). */
@@ -20,23 +20,35 @@ let broadcast: (message: 'entrou' | 'saiu') => void = () => undefined;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setCurrentUser] = useState<User | null | undefined>(undefined);
+  const sessionRevision = useRef(0);
   // Saiu ou trocou de conta: o que as telas guardaram do usuário anterior vai embora junto.
-  const setUser = (next: User | null) => setCurrentUser(current => {
-    if (!next || next.id !== current?.id) screenCache.clear();
-    return next;
-  });
+  const setUser = (next: User | null) => {
+    sessionRevision.current++;
+    invalidateAuthorizationRequests();
+    setCurrentUser(current => {
+      if (!next || next.id !== current?.id) screenCache.clear();
+      return next;
+    });
+  };
   useEffect(() => {
-    setUnauthorizedHandler(() => setUser(null));
+    let active = true;
+    setUnauthorizedHandler(() => { if (active) setUser(null); });
     // Confere a sessão no servidor. Só um 401 tira do painel: sem rede, fica como está.
-    const check = () => api<{ user: User }>('/auth/me')
+    const check = (initial = false) => {
+      const revision = sessionRevision.current;
+      return api<{ user: User }>('/auth/me')
       // Mesma conta: não mexe no estado (a tela não é redesenhada a cada conferência).
       .then(r => setCurrentUser(current => {
+        if (!active || revision !== sessionRevision.current) return current;
         if (current && r.user && current.id === r.user.id && current.role === r.user.role && current.name === r.user.name && current.termsPending === r.user.termsPending) return current;
         if (!r.user || r.user.id !== current?.id) screenCache.clear();
         return r.user;
       }))
-      .catch(error => { if (error instanceof ApiError && error.status === 401) setUser(null); });
-    void api<{ user: User }>('/auth/me').then(r => setUser(r.user)).catch(() => setUser(null));
+      .catch(error => {
+        if (active && revision === sessionRevision.current && (initial || (error instanceof ApiError && error.status === 401))) setUser(null);
+      });
+    };
+    void check(true);
     // Uma tela aberta sem fazer pedidos (ex.: o formulário de campanha) continuava mostrando os
     // grupos e o botão de criar depois de a sessão acabar em outro lugar (Sair em outra aba ou no
     // celular, admin encerrou, login venceu). Agora a sessão é conferida ao voltar para a aba,
@@ -55,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { /* navegador sem BroadcastChannel: fica só a conferência periódica */ }
     broadcast = message => { try { channel?.postMessage(message); } catch { /* ignora */ } };
     return () => {
+      active = false;
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
       window.removeEventListener('pageshow', onPageShow);
@@ -74,7 +87,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     broadcast('saiu');
   }
   async function acceptTerms() {
+    const revision = sessionRevision.current;
     const r = await api<{ user: User }>('/account/terms', { method: 'POST', json: {} });
+    if (revision !== sessionRevision.current) return;
     setUser(r.user);
     broadcast('entrou'); // as outras abas conferem e liberam o painel também
   }

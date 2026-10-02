@@ -42,7 +42,7 @@ function ReportView({ report }: { report: Report }) {
     </header>
 
     <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Metric label="Envios feitos" value={numero(totals.sent)} hint={totals.pending ? `${numero(totals.pending)} ainda na fila` : totals.failed ? `${numero(totals.failed)} com falha` : 'todos concluídos'} />
+      <Metric label="Envios feitos" value={numero(totals.sent)} hint={totals.pending ? `${numero(totals.pending)} ainda na fila` : totals.failed ? `${numero(totals.failed)} com falha` : totals.sent ? 'todos concluídos' : 'nenhum envio realizado'} />
       <Metric label="Entregues" value={numero(totals.delivered)} hint={`${percent(totals.deliveryRate)} dos envios`} />
       <Metric label="Visualizações" value={numero(totals.reads)} hint="leituras confirmadas pelo WhatsApp" />
       <Metric label="Alcance" value={numero(totals.membersReached)} hint={`membros em ${numero(totals.groupsReached)} ${totals.groupsReached === 1 ? 'grupo' : 'grupos'}`} />
