@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { DateTime } from 'luxon';
-import { prisma, campaignReads, currentTime, completeFinished, TIME_ZONE } from '@campaign/database';
+import { prisma, campaignReads, currentTime, completeFinished, TIME_ZONE, lockCampaign, LOCKING_TRANSACTION } from '@campaign/database';
 
 // Relatório da campanha (ADR-045): os NÚMEROS, para o dono mostrar o resultado. O mesmo
 // relatório serve à tela do dono (com login) e ao link público (sem login, por um código que o
@@ -131,20 +131,27 @@ export function registerReportRoutes(app: FastifyInstance) {
 
   // Cria o link (ou devolve o que já existe: o mesmo link continua valendo).
   app.post('/api/campaigns/:id/report/share', async (request, reply) => {
-    const campaign = await owned((request.params as { id: string }).id, request.user!.id);
-    if (!campaign) return reply.code(404).send({ error: 'Campanha não encontrada.' });
-    if (campaign.reportToken) return { shareToken: campaign.reportToken };
-    const shareToken = randomBytes(24).toString('base64url');
-    await prisma.campaign.update({ where: { id: campaign.id }, data: { reportToken: shareToken } });
-    return { shareToken };
+    const { id } = request.params as { id: string };
+    const result = await prisma.$transaction(async tx => {
+      await lockCampaign(tx, id);
+      const campaign = await tx.campaign.findFirst({ where: { id, userId: request.user!.id, deletedAt: null }, select: { reportToken: true } });
+      if (!campaign) return null;
+      const shareToken = campaign.reportToken ?? randomBytes(24).toString('base64url');
+      if (!campaign.reportToken) await tx.campaign.update({ where: { id }, data: { reportToken: shareToken } });
+      return { shareToken };
+    }, LOCKING_TRANSACTION);
+    return result ?? reply.code(404).send({ error: 'Campanha não encontrada.' });
   });
 
   // Desativa o link: quem tinha o endereço deixa de ver.
   app.delete('/api/campaigns/:id/report/share', async (request, reply) => {
-    const campaign = await owned((request.params as { id: string }).id, request.user!.id);
-    if (!campaign) return reply.code(404).send({ error: 'Campanha não encontrada.' });
-    await prisma.campaign.update({ where: { id: campaign.id }, data: { reportToken: null } });
-    return { shareToken: null };
+    const { id } = request.params as { id: string };
+    const found = await prisma.$transaction(async tx => {
+      await lockCampaign(tx, id);
+      const changed = await tx.campaign.updateMany({ where: { id, userId: request.user!.id, deletedAt: null }, data: { reportToken: null } });
+      return changed.count > 0;
+    }, LOCKING_TRANSACTION);
+    return found ? { shareToken: null } : reply.code(404).send({ error: 'Campanha não encontrada.' });
   });
 
   // PÚBLICO (liberado em auth.ts): só os números, pelo código do link. Código errado, link

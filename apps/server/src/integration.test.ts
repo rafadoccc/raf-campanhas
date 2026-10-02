@@ -3933,6 +3933,20 @@ test('review: parallel group list creation and templates from different sources 
   assert.equal(await prisma.campaign.count({ where: { userId: owner.user.id, isTemplate: true } }), 50);
 });
 
+test('review: parallel report sharing returns the same link, which revocation disables', async () => {
+  const owner = await lgpdUser('review-share@teste.local');
+  const campaign = await lgpdCampaign(owner.user.id, 'Relatório concorrente');
+  const url = `/api/campaigns/${campaign.id}/report/share`;
+  const responses = await Promise.all(Array.from({ length: 4 }, () => owner.call('POST', url, {})));
+  assert.ok(responses.every(r => r.statusCode === 200));
+  const tokens = new Set(responses.map(r => r.json().shareToken));
+  assert.equal(tokens.size, 1);
+  const token = responses[0].json().shareToken;
+  assert.equal((await app.inject({ method: 'GET', url: `/api/public/report/${token}`, headers: anon })).statusCode, 200);
+  assert.equal((await owner.call('DELETE', url)).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: `/api/public/report/${token}`, headers: anon })).statusCode, 404);
+});
+
 test('bootstrapAdmin: the first automatic account is SUPER_ADMIN, and it never runs twice', async () => {
   // Contas com dados não podem ser apagadas (ADR-017): limpa os dados do banco de teste antes.
   await prisma.campaign.deleteMany(); // envios, leituras, vínculos, mensagens e horários vão junto
