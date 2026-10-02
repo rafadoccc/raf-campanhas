@@ -31,7 +31,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
-| 5t | Revisão de recuperação de senha, planos/limites simultâneos, links de relatório, avisos e respostas atrasadas de sessão (ADR-052) | ✅ na dev (T-153) · ver docs/review-2026-10-02.md |
+| 5t | Revisão de recuperação de senha, planos/limites simultâneos, links de relatório, avisos e respostas atrasadas de sessão (ADR-052) | ✅ promovida para main com autorização (T-153/T-154) · ver docs/review-2026-10-02.md |
 | 5s | Ícone e metadados do site; mensagem da campanha com imagem ampliável; "Em andamento" com a previsão real; notas de atualização mais limpas (ADR-051) | ✅ concluída (T-152) |
 | 5r | Plano por conta: vencimento, pausa e grupos por campanha; regras de envio de cada conta na Administração (ADR-050) | ✅ concluída (T-151) |
 | 5q | Regras de proteção do número visíveis e editáveis só pelo administrador; intervalo 1:30 a 3:00 sem faixa na tela (ADR-049) | ✅ concluída (T-150) |

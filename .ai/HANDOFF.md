@@ -5,6 +5,30 @@
 
 ---
 
+## 2026-10-02T04:30Z · codex
+
+**Fiz:** promoção autorizada pelo dono da revisão `8f13c4e` da dev para main por avanço
+direto, sem reescrita de histórico. Este commit acrescenta apenas o registro da promoção;
+o código funcional é exatamente o já validado em Windows e no CI Linux da dev.
+**Arquivos:** .ai/{STATE,TASKS,HANDOFF}.md; promoção dos commits existentes da ADR-052.
+**Tarefas:** T-154 (concluída). Pendências da revisão T-153 preservadas, sem novas features.
+**Estado:** código de `8f13c4e`: build/lint e 268 testes aprovados; CI da dev aprovado
+(GitHub Actions 36963222950). Protocolo e lint conferidos antes deste commit documental.
+**Armadilhas:**
+- Autorização desta sessão: "se tiver funcionando tudo certinho pode subir pra main tranquilo".
+- Nenhuma migration/dependência nova no delta main→dev; tags estáveis preservadas.
+- Não parei, compilei ou reiniciei a produção local; somente atualizei seus arquivos rastreados
+  por fast-forward, após conferir que a pasta estava limpa. O processo que já estava aberto
+  permanece com o código compilado anterior até reiniciar pelo inicializador habitual.
+- O push na main pode disparar deploy automático se a hospedagem estiver conectada à branch.
+  O repositório não comprova o estado de pareamento ou dos serviços externos da hospedagem.
+- Avisos/recibos com WhatsApp real e restauração de backup ainda dependem de validação operacional;
+  T-049/T-126 e decisões de banco/contrato do relatório continuam pendentes. Não foram encobertas.
+**Próximo passo sugerido:** conferir o deploy da hospedagem; na instalação local, aplicar pelo
+inicializador fora de uma rodada de campanha e validar avisos/recibos reais (T-149).
+
+---
+
 ## 2026-10-02T04:00Z · codex
 
 **Fiz:** revisão incremental de segurança/concorrência (ADR-052). Links antigos de senha são

@@ -12,6 +12,7 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[x] T-154  Promover a revisão validada da dev para main com autorização do dono  owner: —   since: —
 [x] T-153  Revisar segurança e concorrência dos planos, recuperação de senha e operações recentes (ADR-052)  owner: —   since: —
 [x] T-152  Polimento do painel: ícone e metadados do site, mensagem da campanha com imagem ampliável, notas de atualização, Em andamento com situação real (ADR-051)  owner: —   since: —
 [x] T-151  Planos por cliente (plano, vencimento, pausa, grupos por campanha) e regras de envio de cada conta na Administração (ADR-050)  owner: —   since: —
