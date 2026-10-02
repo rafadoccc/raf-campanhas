@@ -170,6 +170,11 @@ andamento antes de fechar o banco. A limpeza usa a mesma referência de horário
 A exclusão de conta confere senha e papel sob trava: se mudarem durante a confirmação,
 a operação é recusada sem apagar os dados. Veja a [revisão de robustez](docs/review-2026-10-01.md).
 
+A [revisão de 02/10](docs/review-2026-10-02.md) cobre recuperação de senha, planos e
+limites sob concorrência, compartilhamento de relatórios e encerramento dos serviços.
+Trocar a senha invalida links anteriores de recuperação. Antes de promover a `dev`,
+consulte as pendências operacionais desse relatório; os testes não enviam WhatsApp real.
+
 ## Mídia opcional
 
 Na criação/edição de rascunhos, use **Adicionar mídia** para escolher uma imagem JPEG/PNG (até 16 MB) ou um vídeo de até 200 MB em MP4, MOV (inclusive o HEVC "Alta eficiência" do iPhone), WebM, MKV, 3GP ou AVI. Vídeo fora do padrão do WhatsApp é convertido automaticamente para MP4 H.264/AAC (até 1280 px, resultado de até 64 MB) ao salvar; MP4 H.264 já no padrão vai intacto. É possível visualizar, trocar e remover antes de salvar. A mídia fica no MySQL e acompanha o backup do banco. Aplique migrations com `npm run db:deploy` após atualizar. Consulte [formatos, limites e validação](docs/campaign-media.md).

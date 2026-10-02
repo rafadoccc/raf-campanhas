@@ -3,7 +3,7 @@
 > Atualize este arquivo sempre que a arquitetura, a fase ou o conjunto de serviços mudar.
 > Ele responde a uma pergunta: *se eu chegasse agora, o que eu precisaria saber?*
 
-**Última atualização:** 2026-09-27 · por `claude`
+**Última atualização:** 2026-10-02 · por `codex`
 
 ---
 
@@ -31,6 +31,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5d | Sync automático de grupos, piso de 2 min, "Atrasado" preciso, UI enxuta | ✅ concluída (ADR-035) |
 | 5e | Sessão do WhatsApp à prova de queda e de deploy | ✅ concluída (ADR-036) |
 | 5f | Painel 100% responsivo (320–1440 px) e sem trava de rolagem no Android | ✅ concluída (T-123) |
+| 5t | Revisão de recuperação de senha, planos/limites simultâneos, links de relatório, avisos e respostas atrasadas de sessão (ADR-052) | ✅ na dev (T-153) · ver docs/review-2026-10-02.md |
 | 5s | Ícone e metadados do site; mensagem da campanha com imagem ampliável; "Em andamento" com a previsão real; notas de atualização mais limpas (ADR-051) | ✅ concluída (T-152) |
 | 5r | Plano por conta: vencimento, pausa e grupos por campanha; regras de envio de cada conta na Administração (ADR-050) | ✅ concluída (T-151) |
 | 5q | Regras de proteção do número visíveis e editáveis só pelo administrador; intervalo 1:30 a 3:00 sem faixa na tela (ADR-049) | ✅ concluída (T-150) |
@@ -44,7 +45,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 | 5i | Proteção do número: silêncio, limite diário, intervalo por grupo, pausa automática (ADR-041) | ✅ concluída (T-131, T-132, T-135, T-136) · T-133/T-134 aguardam o dono |
 | 5h | Nome DocDrop e LGPD: termos, aceite, baixar/excluir dados, 6 meses (ADR-040) | ✅ concluída (T-129, T-130) |
 | 5g | Revisão do codex (ADR-037), animações (ADR-038), @todos nativo (ADR-039) | ✅ código pronto · @todos validado pelo dono num grupo real em 2026-10-01 (T-127) |
-| 6 | Observabilidade além do painel de admin (logs estruturados, CI) | ⬜ não iniciada |
+| 6 | CI com lint, build, testes e MySQL descartável (T-006); observabilidade externa | ✅ CI · observabilidade externa não implementada |
 
 ---
 
@@ -92,8 +93,9 @@ verificações de senha, uploads simultâneos.
 
 ### Fluxo de uma campanha
 
-1. Usuário cria campanha (`DRAFT`) escolhendo grupos, mensagens, intervalo (mínimo 2 min,
-   ADR-028/035), modo e, opcionalmente, "marcar todos os membros" (ADR-029).
+1. Usuário cria campanha (`DRAFT`) escolhendo grupos, mensagens, modo e, opcionalmente,
+   "marcar todos os membros" (ADR-029). Intervalo de produção é sorteado por envio
+   (90–180 s, ADR-042/049), não escolhido pelo cliente; `intervalSeconds` continua por compatibilidade.
 2. Ao ativar, `apps/server/src/schedule.ts::planDeliveries` materializa **todas** as
    entregas no MySQL com `sequence` fixa. Isso só acontece na primeira ativação.
 3. O despachante interno de `apps/server` varre o MySQL a cada 5 s, por **faixa** (uma por
@@ -101,8 +103,8 @@ verificações de senha, uploads simultâneos.
 4. `claimDelivery` reserva PENDING→PROCESSING sob lock (número, depois campanha —
    `LOCKING_TRANSACTION`, READ COMMITTED, ADR-010).
 5. Envio pela conexão do DONO da campanha (baileys) ou simulador. `finishDelivery` grava
-   SENT/FAILED e empurra `nextAvailableAt` em `effectiveInterval(intervalSeconds)` — nunca
-   abaixo do piso de 120 s, mesmo que o valor gravado seja menor (ADR-028/035).
+   SENT/FAILED e empurra `nextAvailableAt` pelo intervalo sorteado para o número.
+   `effectiveInterval` é a média usada nas previsões, não o sorteio do envio (ADR-042/049).
 
 ### Invariantes que NÃO podem ser quebradas
 
@@ -112,8 +114,9 @@ verificações de senha, uploads simultâneos.
 - Falha de resultado **incerto** (pode ter chegado) nunca é reenviada sem confirmação explícita
   do usuário — risco de duplicar mensagem (`isUncertainFailure`, `send-context.ts`).
 - Só o primeiro pendente (`sequence` mínima) de uma campanha pode ser reservado.
-- O intervalo é contado a partir do **fim** da tentativa anterior, nunca abaixo de 120 s
-  (`MIN_INTERVAL_SECONDS`, `packages/database/src/queue.ts`).
+- O intervalo é contado a partir do **fim** da tentativa anterior: 90–180 s em produção.
+  `MIN_INTERVAL_SECONDS = 120` é compatibilidade da API; piso reduzido só vale no banco
+  descartável de testes (ADR-042/049, `packages/database/src/queue.ts`).
 - `Delivery` tem `@@unique([campaignId, sequence])` e `@@unique([campaignId, groupId, scheduledAt])`.
 - Um envio nunca sai pela conexão de um usuário que não é o dono da campanha (ADR-022).
 
@@ -121,6 +124,10 @@ verificações de senha, uploads simultâneos.
 
 ## Trabalho recente (branch dev, 2026-09-24)
 
+- **ADR-052 / T-153:** revisão integrada até `fafff92`, sem migration nem contrato novo.
+  Operações de conta travam usuário antes de campanha; links antigos de senha são revogados;
+  avisos pendentes não bloqueiam contas diferentes; respostas antigas não encerram um login novo.
+  Relatório e pendências: `docs/review-2026-10-02.md`. Nenhum envio real ou reinício da produção.
 - **ADR-028:** piso entre grupos (3 minutos; 2 minutos desde a ADR-035) garantido no banco (não só na API) — protege
   campanhas antigas e qualquer escrita direta.
 - **ADR-029:** marcar todos os membros do grupo (@todos oculto), por campanha.
@@ -168,9 +175,8 @@ verificações de senha, uploads simultâneos.
 | # | Ausente | Observação |
 |---|---|---|
 | 1 | Login social (Google) | Avaliado a pedido do dono; ver a seção correspondente no handoff mais recente para o resumo de viabilidade. Não implementado. |
-| 2 | Validação declarativa (Zod) | Validação manual e espalhada; funciona, mas divergir é fácil (T-004). |
+| 2 | Validação declarativa (Zod) | T-004 descartada: validação manual consolidada e testada, sem dependência nova. |
 | 3 | Logs estruturados, métricas externas, tracing | O painel de admin cobre métricas operacionais básicas; não há exportação para uma ferramenta externa (T-005). |
-| 4 | CI (GitHub Actions) | Nada impede um merge quebrado além da disciplina manual (T-006). |
 | 5 | Mídia como `Bytes` no MySQL, sem cota (órfãs saem em 1 dia desde a ADR-040) | Cresce sem limite (T-030/T-052). |
 
 ---

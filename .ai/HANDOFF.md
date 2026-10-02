@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-10-02T04:00Z · codex
+
+**Fiz:** revisão incremental de segurança/concorrência (ADR-052). Links antigos de senha são
+revogados; plano/cotas revalidados sob trava da conta; link do relatório serializado; avisos
+distribuídos por dono; parada da fila começa junto com os serviços. Interface ignora respostas
+antigas de sessão/link e não diz "todos concluídos" num relatório sem envios. Corrigido EPERM
+intermitente do Windows na gravação simultânea do mesmo arquivo de sessão. Relatório completo
+em `docs/review-2026-10-02.md`; notas 26.10.3. Commits `8b05be1`, `ebc4ea5`, `b5a320d`,
+`577f2a1`, `82ee0f0`, `42ea7c4`, `f7c0ff2`.
+**Arquivos:** apps/server/src/{auth,admin-routes,password-reset,plans,app,campaign-routes,
+feedback-routes,group-lists,report,main,owner-alerts,integration.test}.ts,
+apps/server/src/{auth-state,auth-state.test}.ts,
+apps/web/src/{lib/{api,api.test,release-notes}.ts,lib/auth.tsx,pages/{password-reset,report}.tsx},
+package.json, README.md, docs/review-2026-10-02.md, .ai/{STATE,TASKS,DECISIONS,HANDOFF}.md.
+**Tarefas:** T-153 (concluída); T-049, T-126, T-068 e T-149 continuam pendentes.
+**Estado:** build e lint ok · 94 testes do servidor + 9 do painel + 165 de integração em
+MySQL descartável (268, incluindo 15 novos). Partida compilada/health/SPA/autorização por HTTP
+testadas em porta aleatória sem pareamento. Migrations existentes exercitadas só no banco de teste.
+Regressão de sessão reforçada e repetida dez vezes no Windows (7 testes por rodada).
+**Armadilhas:**
+- Trabalho isolado na revisão e publicado na dev; nenhuma promoção, build, migration, restart,
+  sessão ou envio na produção. A main e as tags não foram tocadas. O dono escolhe a promoção.
+- Integrei os commits simultâneos do claude até `fafff92` e reexecutei as suítes. T-152 foi
+  reivindicada simultaneamente: preservei a dele e renumerei esta revisão para T-153.
+- Entramos pontualmente em rotas/serviços (área sugerida do claude), sem reformatar o restante.
+  Mesmos contratos HTTP/schema; nenhuma dependência nova. `queue.ts`/`schedule.ts` preservados.
+- `writeAtomic` tem uma trava separada das operações de leitura/credenciais: não juntar as duas,
+  senão `saveCreds` e a cifra em repouso esperam pela própria trava. Formato dos arquivos mantido.
+- Ordem dos comandos de conta: usuário → campanha; nunca adicionar usuário depois de campanha.
+  A fila continua número → campanha; a checagem periódica do vencimento mantém ADR-050.
+- T-126: eventos de entrega/recusa precoces ainda em memória; leituras já persistem.
+  Migração para esses eventos continua exigindo autorização. `OwnerAlert.sentAt` ainda é reserva
+  e confirmação: uma queda na janela pode marcar um aviso sem confirmação externa; não repetir.
+- Resumo diário inclui soft-deleted nos totais mas não na lista: precisa decisão/contrato antes
+  de corrigir. Previsão por campanha é sequencial; sem benchmark real, não refatorei.
+- Audit: 3 entradas altas da mesma cadeia Prisma CLI/deepmerge-ts (T-049, ADR-023/034/037),
+  nenhuma atualização/override incompatível forçada. QR, mídia, avisos e restauração na VPS
+  continuam precisando do ambiente real; nenhum WhatsApp real foi conectado durante a revisão.
+- STATE tinha CI/intervalo de produção antigos; atualizei a documentação conforme ADR-042/049
+  e o workflow existente, sem alterar regras funcionais. LGPD mantida (aceite/exportação/exclusão/retenção).
+**Próximo passo sugerido:** o dono valida avisos/recibos reais em dev (T-149) e decide sobre
+T-126, confirmação dos avisos e resumo diário de excluídas antes de qualquer migration/contrato.
+
+---
+
 ## 2026-10-02T03:40Z · claude
 
 **Fiz:** polimento pedido pelo dono (ADR-051, commits `cc1f744` e `b7204b2`): ícone e metadados

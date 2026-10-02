@@ -1435,3 +1435,35 @@ precisava de ícone e de metadados para busca e compartilhamento.
 - **Limite:** o painel fica atrás de login. Estas tags deixam o link correto ao ser compartilhado
   e legível para buscadores, mas posição no Google depende de página pública com conteúdo
   (uma página de apresentação), que não existe.
+
+---
+
+## ADR-052 · Serializar comandos de conta e preservar a revisão sem alterar a fila
+
+**Data:** 2026-10-02 · **Status:** aceita · **Autor:** codex · **Branch:** dev · **Fecha:** T-153
+
+Revisão solicitada pelo dono, incremental, sem stack nova, schema novo ou contrato HTTP novo.
+
+- Comandos que dependem do plano ou de uma cota por conta travam `User` ANTES de `Campaign`,
+  e revalidam dentro de `LOCKING_TRANSACTION` (READ COMMITTED). Atualizar plano e pausar suas
+  campanhas é uma transação; a varredura revalida o candidato após a trava. A fila continua
+  travando número → campanha e não passa a consultar o plano a cada envio. A tolerância de
+  até um minuto no vencimento da ADR-050 permanece; `queue.ts` e `schedule.ts` não mudaram.
+- Links de senha: emissão/consumo serializados por usuário, nova checagem de vencimento ao
+  consumir, revogação na troca própria/administrativa e conta ativa revalidada ao emitir.
+- Link público de relatório: criação e revogação serializadas por campanha; pedidos
+  simultâneos recebem o mesmo código. Mesmos campos e mesmas permissões anteriores.
+- Avisos: uma rodada pega no máximo um pendente por dono (até 50 donos), com ordem estável.
+  Expirados são descartados antes. A reserva continua impedindo reenvio incerto. Não se
+  acrescentou reconexão, retentativa automática nem alteração em `OwnerAlert.sentAt`.
+- Parada: despachante e tarefas periódicas começam a encerrar juntos, antes das conexões
+  e do banco. O teste de partida usa porta/pasta de sessões temporárias, sem WhatsApp real.
+- Sessão no painel: revisão de autorização ignora 401 de pedidos anteriores a uma troca
+  de sessão. Consulta da sessão e página de redefinir senha ignoram respostas obsoletas.
+- Sessão em disco: `writeAtomic` serializa chamadas pelo caminho numa fila separada das
+  travas de credencial/leitura, para não esperar pela própria trava. Resolve EPERM observado
+  em substituições simultâneas no Windows e preserva formato, fsync, rename e limpeza;
+  a última chamada vence. Regressão existente reforçada e repetida dez vezes no Windows.
+- Sem migration, dependência nova ou alteração da LGPD. Limitações que exigem decisão
+  (eventos precoces T-126, reserva dos avisos, resumo diário de campanhas excluídas), auditoria
+  de dependências T-049 e validações reais estão em `docs/review-2026-10-02.md`.

@@ -21,6 +21,24 @@ export const NOTE_KINDS: { tipo: NoteKind; rotulo: string }[] = [
 
 export const RELEASES: Release[] = [
   {
+    versao: '26.10.3',
+    data: '2026-10-02',
+    grupos: [
+      { tipo: 'corrigido', itens: [
+        'Criar um link de relatório em duas abas agora devolve o mesmo endereço.',
+        'Pedidos simultâneos respeitam os limites de listas, modelos e sugestões.',
+        'Avisos pendentes de uma conta desconectada não atrasam os avisos de outras contas.',
+        'Gravações simultâneas da sessão do WhatsApp não disputam mais o mesmo arquivo no Windows.',
+        'Um relatório sem mensagens enviadas não aparece como concluído.',
+      ] },
+      { tipo: 'seguranca', itens: [
+        'Trocar a senha invalida os links antigos de recuperação; um link vencido não consegue alterar a senha.',
+        'Iniciar ou retomar uma campanha confere o plano novamente se ele estiver sendo atualizado.',
+        'Respostas atrasadas da sessão anterior não restauram o painel nem derrubam um login novo.',
+      ] },
+    ],
+  },
+  {
     versao: '26.10.2',
     data: '2026-10-02',
     grupos: [
