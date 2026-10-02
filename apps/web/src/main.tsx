@@ -103,6 +103,25 @@ function RequireAuth() {
   </div>;
 }
 
+// Título da aba por tela: quem tem várias abas abertas acha a certa, e o histórico do navegador
+// fica legível. Telas com título próprio (notas, relatório, termos) definem o delas por cima.
+const SITE_TITLE = 'DocDrop · Campanhas para grupos de WhatsApp';
+// Do caminho mais específico para o mais geral: vale o primeiro que casar com o começo do endereço.
+const TITLES: [string, string][] = [
+  ['/nova-campanha', 'Nova campanha'], ['/campanhas/', 'Campanha'], ['/campanhas', 'Campanhas'],
+  ['/configuracoes', 'WhatsApp'], ['/historico', 'Histórico'], ['/conta', 'Minha conta'],
+  ['/sugestoes', 'Sugestões e críticas'], ['/admin', 'Administração'],
+  ['/login', 'Entrar'], ['/esqueci-senha', 'Esqueci minha senha'], ['/redefinir-senha/', 'Nova senha'],
+];
+function PageTitle() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const title = pathname === '/' ? 'Início' : TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1];
+    document.title = title ? `${title} · DocDrop` : SITE_TITLE;
+  }, [pathname]);
+  return null;
+}
+
 /** Só SUPER_ADMIN (o servidor também recusa; aqui é só para não mostrar a tela). */
 function RequireAdmin() {
   const { user } = useAuth();
@@ -119,6 +138,7 @@ createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <AuthProvider>
         <ConfirmProvider>
+          <PageTitle />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/esqueci-senha" element={<Suspense fallback={<Pending />}><ForgotPasswordPage /></Suspense>} />

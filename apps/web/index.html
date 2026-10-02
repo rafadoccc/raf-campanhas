@@ -3,12 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Gerenciador de campanhas" />
-    <link rel="icon" href="data:," />
-    <title>DocDrop</title>
+    <title>DocDrop · Campanhas para grupos de WhatsApp</title>
+    <meta name="description" content="DocDrop agenda e envia campanhas para os seus grupos de WhatsApp, com proteção do número, relatório de entregas e visualizações." />
+    <meta name="application-name" content="DocDrop" />
+    <meta name="theme-color" content="#161b22" />
+    <meta name="color-scheme" content="light" />
+    <meta name="robots" content="index, follow" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- Ícone da aba, do atalho no celular e do aplicativo instalado. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Como o link aparece ao ser compartilhado (WhatsApp, redes sociais). O servidor troca
+         __PUBLIC_URL__ pelo endereço público: quem monta a prévia só aceita endereço completo. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DocDrop" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:url" content="__PUBLIC_URL__/" />
+    <meta property="og:title" content="DocDrop · Campanhas para grupos de WhatsApp" />
+    <meta property="og:description" content="Agende e envie campanhas para os seus grupos de WhatsApp, com proteção do número e relatório de entregas." />
+    <meta property="og:image" content="__PUBLIC_URL__/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="DocDrop: campanhas para grupos de WhatsApp" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DocDrop · Campanhas para grupos de WhatsApp" />
+    <meta name="twitter:description" content="Agende e envie campanhas para os seus grupos de WhatsApp, com proteção do número e relatório de entregas." />
+    <meta name="twitter:image" content="__PUBLIC_URL__/og.png" />
+
+    <!-- Dados estruturados para buscadores (bloco de dados, não é script executável). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "DocDrop",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "inLanguage": "pt-BR",
+        "url": "__PUBLIC_URL__/",
+        "image": "__PUBLIC_URL__/og.png",
+        "description": "Agenda e envia campanhas para grupos de WhatsApp, com proteção do número, relatório de entregas e visualizações."
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>O DocDrop precisa de JavaScript ligado no navegador para funcionar.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

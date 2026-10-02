@@ -1,6 +1,7 @@
 import type { FastifyError, FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 import type { AppConfig } from './config';
 import { ServerBusyError } from './auth';
 import { RateLimiter } from './rate-limit';
@@ -66,7 +67,23 @@ export function registerSecurity(app: FastifyInstance, config: AppConfig, limite
 // Painel compilado (apps/web/dist) na mesma porta da API. Qualquer rota que não seja da
 // API devolve o index.html, e o React Router decide a tela.
 export function registerWeb(app: FastifyInstance, config: AppConfig) {
+  // O index.html sai sempre por aqui, com o endereço público no lugar de __PUBLIC_URL__: quem
+  // monta a prévia de um link (WhatsApp, buscadores) só aceita endereço completo na imagem.
+  // Relido quando o arquivo muda (recompilar com o sistema ligado continua valendo na hora).
+  let cached: { mtimeMs: number; html: string } | null = null;
+  async function panel() {
+    const file = path.join(config.webDist!, 'index.html');
+    const { mtimeMs } = await stat(file);
+    if (cached?.mtimeMs !== mtimeMs) cached = { mtimeMs, html: (await readFile(file, 'utf8')).replaceAll('__PUBLIC_URL__', config.publicUrl.origin) };
+    return cached.html;
+  }
   if (config.webDist) {
+    // Antes do plugin de arquivos: a raiz também passa pela troca do endereço.
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.method === 'GET' && ['/', '/index.html'].includes(request.url.split('?')[0])) {
+        return reply.header('Cache-Control', 'no-cache').type('text/html; charset=utf-8').send(await panel());
+      }
+    });
     void app.register(fastifyStatic, {
       root: config.webDist,
       // wildcard: procura o arquivo a cada pedido. Com false, a lista era lida só na partida e
@@ -84,13 +101,13 @@ export function registerWeb(app: FastifyInstance, config: AppConfig) {
       }
     });
   }
-  app.setNotFoundHandler((request, reply) => {
+  app.setNotFoundHandler(async (request, reply) => {
     if (apiPath(request).startsWith('/api/') || request.method !== 'GET') return reply.code(404).send({ error: 'Rota não encontrada.' });
     if (!config.webDist) return reply.code(503).send({ error: 'Painel não compilado. Rode npm run build.' });
     // Arquivo do painel que não existe (ex.: aba aberta antes de uma recompilação) é 404 de
     // verdade: devolver o index.html no lugar de um .js deixa a tela em branco sem erro nenhum.
     if (request.url.startsWith('/assets/')) return reply.code(404).type('text/plain; charset=utf-8').send('Arquivo não encontrado.');
-    return reply.header('Cache-Control', 'no-cache').type('text/html; charset=utf-8').sendFile('index.html');
+    return reply.header('Cache-Control', 'no-cache').type('text/html; charset=utf-8').send(await panel());
   });
 }
 
