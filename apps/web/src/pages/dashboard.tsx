@@ -208,9 +208,10 @@ export default function DashboardPage() {
           <CardHeader title="Hoje" />
           {d ? <Today usage={d.usage} now={d.serverNow} /> : <div className="space-y-2 p-4"><Skeleton className="h-8 w-32" /><Skeleton className="h-4" /></div>}
         </Card>
-        <Card className="flex flex-col p-4">
+        {/* flex-1: o gráfico cresce e as duas colunas terminam na mesma linha. */}
+        <Card className="flex min-h-[11rem] flex-1 flex-col p-4">
           <p className="flex items-baseline justify-between gap-2 text-xs text-muted">Envios nos últimos 7 dias<span className="text-2xs text-slate-400">clique num dia</span></p>
-          <div className="mt-2 h-28">{d ? <WeekBars days={d.last7Days} onPick={setPickedDay} /> : <Skeleton className="h-full" />}</div>
+          <div className="mt-2 min-h-28 flex-1">{d ? <WeekBars days={d.last7Days} onPick={setPickedDay} /> : <Skeleton className="h-full" />}</div>
         </Card>
       </div>
     </div>

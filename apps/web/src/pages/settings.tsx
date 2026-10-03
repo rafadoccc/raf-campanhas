@@ -117,8 +117,7 @@ export default function Settings() {
           {connected && cooldown > 0 && <p className="tabular text-2xs text-slate-400" aria-live="polite">Sincronizar de novo disponível em {Math.ceil(cooldown / 1000)} s.</p>}
         </div>
       </Card>
-      <OwnerAlerts connected={connected} />
-      <p className="text-2xs text-muted">As campanhas rodam com o navegador fechado, desde que o sistema fique ligado.</p>
+      <OwnerAlerts />
     </div>
   </Page>;
 }

@@ -19,7 +19,6 @@ export {
   Search as IconSearch,
   LayoutDashboard as IconHome,
   Megaphone as IconCampaigns,
-  History as IconHistory,
   MessageCircle as IconWhatsApp,
   ShieldCheck as IconAdmin,
   UserRound as IconAccount,

@@ -3,12 +3,11 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/api';
 import { hasUnseenReleaseNotes } from '../lib/release-notes-seen';
-import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHistory, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, IconFeedback, Logo, Menu } from '../design';
+import { IconAccount, IconAdmin, IconCampaigns, IconChevron, IconHome, IconLogout, IconPassword, IconWhatsApp, IconPrivacy, IconDocument, IconNotes, IconFeedback, Logo, Menu } from '../design';
 
 const items = [
   { label: 'Início', to: '/', icon: IconHome },
   { label: 'Campanhas', to: '/campanhas', icon: IconCampaigns },
-  { label: 'Histórico', to: '/historico', icon: IconHistory },
   { label: 'WhatsApp', to: '/configuracoes', icon: IconWhatsApp },
 ];
 

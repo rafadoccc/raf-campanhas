@@ -52,7 +52,6 @@ const CampaignsPage = page(() => import('./pages/campaigns'));
 const CampaignPage = page(() => import('./pages/campaign-detail'));
 const CampaignForm = page<{ campaignId?: string }>(() => import('./components/campaign-form'));
 const SettingsPage = page(() => import('./pages/settings'));
-const HistoryPage = page(() => import('./pages/history'));
 const AccountPage = page(() => import('./pages/account'));
 const AdminPage = page(() => import('./pages/admin'));
 const FeedbackPage = page(() => import('./pages/feedback'));
@@ -111,7 +110,7 @@ const SITE_TITLE = 'DocDrop · Campanhas para grupos de WhatsApp';
 // Do caminho mais específico para o mais geral: vale o primeiro que casar com o começo do endereço.
 const TITLES: [string, string][] = [
   ['/nova-campanha', 'Nova campanha'], ['/campanhas/', 'Campanha'], ['/campanhas', 'Campanhas'],
-  ['/configuracoes', 'WhatsApp'], ['/historico', 'Histórico'], ['/conta', 'Minha conta'],
+  ['/configuracoes', 'WhatsApp'], ['/conta', 'Minha conta'],
   ['/sugestoes', 'Sugestões e críticas'], ['/admin', 'Administração'],
   ['/login', 'Entrar'], ['/esqueci-senha', 'Esqueci minha senha'], ['/redefinir-senha/', 'Nova senha'],
 ];
@@ -158,7 +157,8 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/campanhas/:id/editar" element={<EditCampaign />} />
               <Route path="/nova-campanha" element={<CampaignForm />} />
               <Route path="/configuracoes" element={<SettingsPage />} />
-              <Route path="/historico" element={<HistoryPage />} />
+              {/* A tela Histórico saiu (2026-10-03): o endereço antigo cai nas campanhas, onde cada uma tem os próprios envios. */}
+              <Route path="/historico" element={<Navigate to="/campanhas" replace />} />
               <Route path="/conta" element={<AccountPage />} />
               <Route path="/sugestoes" element={<FeedbackPage />} />
               <Route element={<RequireAdmin />}><Route path="/admin" element={<AdminPage />} /></Route>
