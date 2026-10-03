@@ -54,7 +54,7 @@ export function TemplateList() {
                 : null}
             <div className="min-w-0 flex-1">
               <h2 className="truncate font-semibold" title={template.name}>{template.name}</h2>
-              <div className="mt-1.5"><CampaignMeta groups={template.groupCount} mode={template.mode} schedules={template.schedules} mentionAll={template.mentionAll} /></div>
+              <div className="mt-1.5"><CampaignMeta groups={template.groupCount} mode={template.mode} schedules={template.schedules} /></div>
             </div>
           </div>
           <p className="mt-3 line-clamp-2 text-xs text-muted">{plainSummary(template.preview) || 'Sem texto'}</p>

@@ -93,7 +93,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
     const generation = screenCache.generation();
     api<CampaignDraft>(`/campaigns/${campaignId}`, { signal: controller.signal }).then(data => {
       if (controller.signal.aborted || screenCache.generation() !== generation) return;
-      if (data.status !== 'DRAFT') throw Error('Somente rascunhos podem ser editados.');
+      if (data.status !== 'DRAFT') throw Error('Só dá para editar uma campanha antes de iniciar.');
       setMedia(data.media ?? null); setIsTemplate(data.isTemplate === true);
       setInitial({ name: data.name, startsAt: data.startsAt.slice(0, 10), endsAt: data.endsAt.slice(0, 10), messages: data.messages.map(m => m.content) });
       setSelected(data.groups.map(g => g.groupId)); setMode(data.mode === 'SCHEDULED' ? 'SCHEDULED' : 'IMMEDIATE'); setMentionAll(data.mentionAll ?? false);
@@ -155,7 +155,7 @@ export default function CampaignForm({ campaignId }: { campaignId?: string }) {
           </div>
           <Checkbox checked={mentionAll} onChange={setMentionAll}
             label="Marcar todos os membros (@todos)"
-            hint="Envia com o @todos do WhatsApp: aparece destacado e todos recebem notificação, até quem silenciou o grupo. Se você escrever @todos no texto, ele fica nesse lugar; senão, vai no começo. Em grupos com mais de 32 membros o WhatsApp só deixa admins usarem: se você não for admin, a marcação vai oculta (notifica igual, sem o destaque)." />
+            hint="Notifica todos os membros, até quem silenciou o grupo. Em grupos com mais de 32 membros, só aparece destacado se você for admin." />
           {mode === 'SCHEDULED' && <div className="animate-fade-in space-y-4">
             {isTemplate
               ? <p className="rounded border border-line bg-slate-50 px-2.5 py-2 text-xs text-muted">As datas são escolhidas quando você usa o modelo. Aqui ficam só os horários.</p>

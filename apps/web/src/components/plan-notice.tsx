@@ -6,11 +6,12 @@ import { Badge, Card, IconAlert } from '../design';
 // assinatura está para vencer, venceu ou a conta foi pausada, e o cartão "Seu plano" em Minha conta.
 // Quem define o plano é o administrador; aqui é só leitura.
 
-type MyPlan = { plan: string | null; dueDate: string | null; daysLeft: number | null; state: 'active' | 'paused' | 'expired'; maxGroups: number | null; message: string | null; dueSoonDays: number };
+type MyPlan = { plan: string | null; dueDate: string | null; daysLeft: number | null; state: 'active' | 'paused' | 'expired'; maxGroups: number | null; maxCampaigns: number | null; campaigns: number; message: string | null; dueSoonDays: number };
 
 const brDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 // Uma resposta guardada para as duas telas; confere de novo a cada 5 minutos.
-const usePlan = () => usePolling(signal => api<MyPlan>('/plan', { signal }), [], 300_000, 'plano').data;
+export const usePlanPolling = () => usePolling(signal => api<MyPlan>('/plan', { signal }), [], 300_000, 'plano');
+const usePlan = () => usePlanPolling().data;
 
 function dueText(plan: MyPlan) {
   if (plan.daysLeft === 0) return 'vence hoje';
@@ -34,11 +35,13 @@ export function PlanNotice() {
 /** Cartão "Seu plano" em Minha conta. Sem plano definido pelo administrador, não aparece. */
 export function PlanCard() {
   const plan = usePlan();
-  if (!plan || (!plan.plan && !plan.dueDate && plan.maxGroups === null && plan.state === 'active')) return null;
+  // Administrador não tem plano nem limite: para ele o cartão não aparece.
+  if (!plan || (!plan.plan && !plan.dueDate && plan.maxGroups === null && plan.maxCampaigns === null && plan.state === 'active')) return null;
   const status = plan.state === 'paused' ? { label: 'Pausada', tone: 'warning' as const } : plan.state === 'expired' ? { label: 'Vencida', tone: 'danger' as const } : { label: 'Ativa', tone: 'brand' as const };
   const rows: [string, string][] = [
-    ['Plano', plan.plan ?? 'Sem nome'],
+    ...(plan.plan ? [['Plano', plan.plan] as [string, string]] : []),
     ['Pago até', plan.dueDate ? brDate(plan.dueDate) : 'Sem vencimento'],
+    ['Campanhas', plan.maxCampaigns === null ? 'Sem limite' : `${plan.campaigns} de ${plan.maxCampaigns}`],
     ['Grupos por campanha', plan.maxGroups === null ? 'Sem limite' : `Até ${plan.maxGroups}`],
   ];
   return <Card as="div" className="space-y-3 p-5">

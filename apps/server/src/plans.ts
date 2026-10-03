@@ -4,7 +4,7 @@ import { prisma, currentTime, lockCampaign, LOCKING_TRANSACTION, TIME_ZONE } fro
 import { requireSuperAdmin } from './auth';
 import type { Prisma } from '@prisma/client';
 
-type PlanDb = Pick<Prisma.TransactionClient, 'user'>;
+type PlanDb = Pick<Prisma.TransactionClient, 'user' | 'campaign'>;
 
 // Plano da conta (ADR-050). O administrador define, por conta: nome do plano, valor combinado,
 // vencimento, pausa e quantos grupos cabem numa campanha. A cobrança acontece fora do sistema
@@ -15,11 +15,19 @@ type PlanDb = Pick<Prisma.TransactionClient, 'user'>;
 // retomadas até o administrador renovar. Administrador não tem plano: nunca é bloqueado.
 
 export type PlanState = 'active' | 'paused' | 'expired';
-export const PLAN_LIMITS = { maxGroups: { min: 1, max: 500 }, priceCents: { max: 10_000_000 }, plan: { max: 40 } } as const;
+export const PLAN_LIMITS = { maxGroups: { min: 1, max: 500 }, maxCampaigns: { min: 1, max: 500 }, priceCents: { max: 10_000_000 }, plan: { max: 40 } } as const;
+/** Campanhas que uma conta mantém quando o administrador não definiu outro número (ADR-054). */
+export const DEFAULT_MAX_CAMPAIGNS = 8;
+/**
+ * O padrão que a fila de pedidos aplica. No banco de teste descartável fica desligado (como as
+ * regras de envio padrão): os testes criam dezenas de campanhas na mesma conta. Limite definido
+ * pelo administrador vale em qualquer banco.
+ */
+const defaultMaxCampaigns = () => (process.env.CAMPAIGN_TEST_DATABASE ? null : DEFAULT_MAX_CAMPAIGNS);
 /** Faltando este tanto de dias (ou menos), o painel avisa o cliente do vencimento. */
 export const DUE_SOON_DAYS = 5;
 
-type Row = { plan: string | null; priceCents: number | null; dueDate: Date | null; pausedAt: Date | null; maxGroups: number | null };
+type Row = { plan: string | null; priceCents: number | null; dueDate: Date | null; pausedAt: Date | null; maxGroups: number | null; maxCampaigns: number | null };
 
 /** Dia de hoje no calendário de São Paulo, "AAAA-MM-DD" (o vencimento é uma data, não um instante). */
 export const todayOf = (now: Date) => DateTime.fromJSDate(now, { zone: TIME_ZONE }).toISODate()!;
@@ -41,13 +49,16 @@ const BLOCK = {
 /** O plano como a conta enxerga (sem o valor, que é controle do administrador). */
 export async function planOf(userId: string, now: Date, db: PlanDb = prisma) {
   const user = await db.user.findUnique({ where: { id: userId }, select: { role: true, subscription: true } });
-  const row = user?.role === 'SUPER_ADMIN' ? null : user?.subscription ?? null;
+  const admin = user?.role === 'SUPER_ADMIN';
+  const row = admin ? null : user?.subscription ?? null;
   const today = todayOf(now);
   const state = planState(row, today);
   const dueDate = isoDate(row?.dueDate ?? null);
   const daysLeft = dueDate ? Math.round((Date.parse(dueDate) - Date.parse(today)) / 86_400_000) : null;
   const blocked = state === 'paused' ? BLOCK.paused() : state === 'expired' ? BLOCK.expired(dueDate!) : null;
-  return { plan: row?.plan ?? null, dueDate, daysLeft, state, maxGroups: row?.maxGroups ?? null, blocked };
+  // Administrador não tem limite; conta sem número definido usa o padrão do sistema.
+  const maxCampaigns = admin ? null : row?.maxCampaigns ?? defaultMaxCampaigns();
+  return { plan: row?.plan ?? null, dueDate, daysLeft, state, maxGroups: row?.maxGroups ?? null, maxCampaigns, blocked };
 }
 
 /** Recusa (com a mensagem para a tela) se a conta não pode enviar agora. */
@@ -61,6 +72,22 @@ export async function assertGroupLimit(userId: string, groups: number, now: Date
   const { maxGroups } = await planOf(userId, now, db);
   if (maxGroups !== null && groups > maxGroups) {
     throw new Error(`Seu plano permite até ${maxGroups} ${maxGroups === 1 ? 'grupo' : 'grupos'} por campanha (esta tem ${groups}). Tire alguns grupos ou fale com o administrador.`);
+  }
+}
+
+/** As campanhas que contam no limite: as da lista principal (fora arquivadas, excluídas e modelos). */
+export const countedCampaigns = (userId: string) => ({ userId, deletedAt: null, isTemplate: false, archivedAt: null });
+
+/**
+ * Recusa se a conta já está no limite de campanhas (ADR-054). Chame DENTRO da transação que cria,
+ * copia ou desarquiva, depois da trava da conta (`SELECT … FOR UPDATE` em User): dois pedidos ao
+ * mesmo tempo não passam os dois.
+ */
+export async function assertCampaignLimit(userId: string, now: Date, db: PlanDb) {
+  const { maxCampaigns } = await planOf(userId, now, db);
+  if (maxCampaigns === null) return;
+  if (await db.campaign.count({ where: countedCampaigns(userId) }) >= maxCampaigns) {
+    throw new Error(`Você chegou ao limite de ${maxCampaigns} ${maxCampaigns === 1 ? 'campanha' : 'campanhas'}. Arquive ou exclua uma para criar outra.`);
   }
 }
 
@@ -131,7 +158,7 @@ class PlanError extends Error {
 }
 
 function parse(body: unknown) {
-  const b = (body ?? {}) as { plan?: unknown; priceCents?: unknown; dueDate?: unknown; paused?: unknown; maxGroups?: unknown };
+  const b = (body ?? {}) as { plan?: unknown; priceCents?: unknown; dueDate?: unknown; paused?: unknown; maxGroups?: unknown; maxCampaigns?: unknown };
   const plan = b.plan === null || b.plan === undefined ? null : typeof b.plan === 'string' ? b.plan.trim() || null : undefined;
   if (plan === undefined || (plan && plan.length > PLAN_LIMITS.plan.max)) throw new PlanError(`Nome do plano: até ${PLAN_LIMITS.plan.max} caracteres.`);
   const whole = (value: unknown, min: number, max: number, message: string) => {
@@ -142,19 +169,24 @@ function parse(body: unknown) {
   const priceCents = whole(b.priceCents, 0, PLAN_LIMITS.priceCents.max, 'Valor inválido.');
   const { min, max } = PLAN_LIMITS.maxGroups;
   const maxGroups = whole(b.maxGroups, min, max, `Grupos por campanha: use um número entre ${min} e ${max}, ou deixe sem limite.`);
+  const campaigns = PLAN_LIMITS.maxCampaigns;
+  // null = volta ao padrão do sistema (campo que versões antigas da tela não enviam).
+  const maxCampaigns = whole(b.maxCampaigns, campaigns.min, campaigns.max, `Campanhas por conta: use um número entre ${campaigns.min} e ${campaigns.max}.`);
   let dueDate: Date | null = null;
   if (b.dueDate !== null && b.dueDate !== undefined) {
     if (typeof b.dueDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.dueDate) || !DateTime.fromISO(b.dueDate).isValid) throw new PlanError('Vencimento inválido.');
     dueDate = new Date(`${b.dueDate}T00:00:00.000Z`);
   }
   if (typeof b.paused !== 'boolean') throw new PlanError('Diga se a conta fica pausada.');
-  return { plan, priceCents, dueDate, maxGroups, paused: b.paused };
+  return { plan, priceCents, dueDate, maxGroups, maxCampaigns, paused: b.paused };
 }
 
 /** O plano como o administrador enxerga (com o valor). */
 const adminView = (row: Row | null, today: string) => ({
   plan: row?.plan ?? null, priceCents: row?.priceCents ?? null, dueDate: isoDate(row?.dueDate ?? null),
   paused: Boolean(row?.pausedAt), maxGroups: row?.maxGroups ?? null, state: planState(row, today),
+  // O número que vale para a conta (o definido ou o padrão) e se é o padrão.
+  maxCampaigns: row?.maxCampaigns ?? DEFAULT_MAX_CAMPAIGNS, maxCampaignsIsDefault: row?.maxCampaigns == null,
 });
 export const subscriptionSummary = adminView;
 
@@ -162,7 +194,8 @@ export function registerPlanRoutes(app: FastifyInstance) {
   // O plano da própria conta: o painel avisa do vencimento e a tela Minha conta mostra os limites.
   app.get('/api/plan', async request => {
     const { blocked, ...plan } = await planOf(request.user!.id, await currentTime());
-    return { ...plan, message: blocked, dueSoonDays: DUE_SOON_DAYS };
+    const campaigns = await prisma.campaign.count({ where: countedCampaigns(request.user!.id) });
+    return { ...plan, campaigns, message: blocked, dueSoonDays: DUE_SOON_DAYS };
   });
 
   const guard = { preHandler: requireSuperAdmin };

@@ -3693,6 +3693,65 @@ test('dashboard: each running campaign shows the real state of its next send (qu
   await pauseEverything();
 });
 
+// ─── Arquivar e limite de campanhas (ADR-054) ───────────────────────────────────
+test('campaigns (054): archiving hides a campaign and frees the account limit; using a finished campaign again archives the old run', async () => {
+  await pauseEverything();
+  const admin = await lgpdUser('arquivo-admin@teste.local', 'SUPER_ADMIN');
+  const client = await lgpdUser('arquivo-cliente@teste.local');
+  const group = await prisma.group.create({ data: { name: 'Arquivo', userId: client.user.id, externalId: `arquivo-${Date.now()}@g.us` } });
+  const create = (name: string) => client.call('POST', '/api/campaigns', { name, mode: 'IMMEDIATE', messages: ['oi'], groupIds: [group.id] });
+  const list = async (query = '') => ((await client.call('GET', `/api/campaigns${query}`)).json().items as { name: string }[]).map(c => c.name).sort();
+  const archive = (id: string, archived: boolean, who = client) => who.call('POST', `/api/campaigns/${id}/archive`, { archived });
+  const status = (id: string, next: string) => app.inject({ method: 'PATCH', url: `/api/campaigns/${id}/status`, payload: { status: next, provider: 'simulator' }, headers: as(client.session) });
+  const limit = await app.inject({ method: 'PUT', url: `/api/admin/users/${client.user.id}/plan`, payload: { plan: null, priceCents: null, dueDate: null, paused: false, maxGroups: null, maxCampaigns: 2 }, headers: as(admin.session) });
+  assert.deepEqual([limit.statusCode, limit.json().maxCampaigns, limit.json().maxCampaignsIsDefault], [200, 2, false]);
+
+  // Limite de campanhas na lista principal.
+  const a = (await create('A')).json().id as string;
+  const b = (await create('B')).json().id as string;
+  const refused = await create('C');
+  assert.equal(refused.statusCode, 400);
+  assert.match(refused.json().error, /limite de 2 campanhas/);
+
+  // Arquivar tira da lista e libera a vaga; a arquivada fica na outra lista, inteira.
+  assert.deepEqual((await archive(a, true)).json(), { archived: true });
+  assert.deepEqual([await list(), await list('?archived=1')], [['B'], ['A']]);
+  assert.equal((await client.call('GET', `/api/campaigns/${a}`)).statusCode, 200, 'a arquivada continua abrindo');
+  const c = (await create('C')).json().id as string;
+  assert.ok(c);
+  // Desarquivar ocupa uma vaga: com a lista cheia, é recusado.
+  const back = await archive(a, false);
+  assert.equal(back.statusCode, 400);
+  assert.match(back.json().error, /limite de 2 campanhas/);
+  assert.equal((await archive(b, true, admin)).statusCode, 404, 'campanha de outra conta responde como inexistente');
+  assert.equal((await archive(b, 'sim' as unknown as boolean)).statusCode, 400);
+
+  // Em andamento não é arquivada: os envios dela não podem ficar escondidos.
+  assert.equal((await status(b, 'ACTIVE')).statusCode, 200);
+  const running = await archive(b, true);
+  assert.equal(running.statusCode, 400);
+  assert.match(running.json().error, /em andamento/);
+
+  // Usar de novo uma campanha que terminou: a rodada antiga vai para as arquivadas e a nova
+  // entra no lugar, sem estourar o limite (a lista estava cheia).
+  assert.equal((await status(b, 'CANCELLED')).statusCode, 200);
+  const again = await client.call('POST', `/api/campaigns/${b}/duplicate`, {});
+  assert.equal(again.statusCode, 201, again.body);
+  assert.deepEqual([await list(), await list('?archived=1')], [['B (2)', 'C'], ['A', 'B']]);
+  assert.deepEqual((await client.call('GET', `/api/campaigns?archived=1&status=COMPLETED,CANCELLED`)).json().items.map((x: { name: string }) => x.name), ['B'], 'o filtro de situação vale nas arquivadas');
+
+  // O cliente vê o uso; modelos não contam no limite; administrador não tem limite.
+  const plan = (await client.call('GET', '/api/plan')).json();
+  assert.deepEqual([plan.campaigns, plan.maxCampaigns], [2, 2]);
+  assert.equal((await client.call('POST', `/api/campaigns/${c}/duplicate`, { asTemplate: true })).statusCode, 201);
+  assert.equal((await planOf(admin.user.id, new Date())).maxCampaigns, null);
+  // Desarquivar volta a caber quando há vaga.
+  assert.equal((await client.call('DELETE', `/api/campaigns/${c}`)).statusCode, 200);
+  assert.deepEqual((await archive(a, false)).json(), { archived: false });
+  assert.deepEqual(await list(), ['A', 'B (2)']);
+  await pauseEverything();
+});
+
 // ─── Planos por cliente (ADR-050) ───────────────────────────────────────────────
 test('plans (050): the administrator sets plan, due date, pause and groups per campaign; an expired or paused account keeps its data but cannot send', async () => {
   await pauseEverything();
@@ -3705,7 +3764,8 @@ test('plans (050): the administrator sets plan, due date, pause and groups per c
   const mine = async () => (await client.call('GET', '/api/plan')).json();
 
   // Sem plano definido, nada vence e nada limita.
-  assert.deepEqual(await mine(), { plan: null, dueDate: null, daysLeft: null, state: 'active', maxGroups: null, message: null, dueSoonDays: 5 });
+  // (No banco de teste o limite padrão de campanhas fica desligado; em produção é 8.)
+  assert.deepEqual(await mine(), { plan: null, dueDate: null, daysLeft: null, state: 'active', maxGroups: null, maxCampaigns: null, campaigns: 0, message: null, dueSoonDays: 5 });
   // Só o administrador define; o cliente nem lê pela rota do administrador.
   assert.equal((await put(base, client)).statusCode, 403);
   assert.equal((await client.call('GET', planUrl)).statusCode, 403);
@@ -3730,7 +3790,7 @@ test('plans (050): the administrator sets plan, due date, pause and groups per c
   const stateOf = async () => (await prisma.campaign.findUniqueOrThrow({ where: { id } })).status;
 
   // O cliente vê o próprio plano, sem o valor combinado.
-  assert.deepEqual(await mine(), { plan: 'Mensal', dueDate: day(10), daysLeft: 10, state: 'active', maxGroups: 2, message: null, dueSoonDays: 5 });
+  assert.deepEqual(await mine(), { plan: 'Mensal', dueDate: day(10), daysLeft: 10, state: 'active', maxGroups: 2, maxCampaigns: null, campaigns: 1, message: null, dueSoonDays: 5 });
   assert.equal((await status('ACTIVE')).statusCode, 200);
 
   // Vencida: salvar já pausa as campanhas, e a conta não retoma até renovar.

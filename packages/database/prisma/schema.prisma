@@ -109,6 +109,9 @@ model Campaign {
   // Modelo (ADR-047): uma campanha guardada para reaproveitar. Fica sempre em rascunho, fora da
   // lista de campanhas, nunca é enviada e não entra no prazo de guarda; "usar" cria uma cópia.
   isTemplate      Boolean            @default(false)
+  // Arquivada pelo dono (ADR-054): sai da lista principal e do limite de campanhas da conta, mas
+  // guarda envios e relatório. Dá para desarquivar. Campanha em andamento não é arquivada.
+  archivedAt      DateTime?
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   messages        CampaignMessage[]
@@ -296,6 +299,9 @@ model Subscription {
   pausedAt   DateTime?
   // Grupos por campanha que o plano permite. null = sem limite do plano.
   maxGroups  Int?
+  // Campanhas que a conta pode manter (fora arquivadas, excluídas e modelos). null = o padrão do
+  // sistema (DEFAULT_MAX_CAMPAIGNS em plans.ts).
+  maxCampaigns Int?
   updatedAt  DateTime  @updatedAt
 }
 

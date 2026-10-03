@@ -21,6 +21,24 @@ export const NOTE_KINDS: { tipo: NoteKind; rotulo: string }[] = [
 
 export const RELEASES: Release[] = [
   {
+    versao: '26.10.5',
+    data: '2026-10-03',
+    grupos: [
+      { tipo: 'novo', itens: [
+        '**Arquivar campanha:** quando não for mais usar uma campanha, arquive pelo menu do cartão. Ela sai da frente e fica guardada, com os envios e o relatório, na aba Arquivadas.',
+        'Usar de novo uma campanha que terminou guarda a rodada antiga nas arquivadas e abre a nova no lugar.',
+      ] },
+      { tipo: 'melhorado', itens: [
+        '**Campanhas mais fáceis de achar:** abas Ativas, Arquivadas e Modelos, e um filtro por situação (não iniciadas, pendentes e concluídas).',
+        'Cartões de campanha mais limpos: a situação aparece junto dos números, e Arquivar e Excluir ficam no menu de três pontos.',
+        'O aceite dos termos e a tela Seus dados ficaram mais curtos.',
+      ] },
+      { tipo: 'removido', itens: [
+        'A tela Histórico saiu: os envios de cada campanha continuam dentro da própria campanha.',
+      ] },
+    ],
+  },
+  {
     versao: '26.10.4',
     data: '2026-10-02',
     grupos: [

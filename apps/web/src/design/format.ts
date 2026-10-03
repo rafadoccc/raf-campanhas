@@ -25,8 +25,9 @@ export const tempoRelativo = (at: string | Date, agora = Date.now()) => {
 };
 
 export const campaignStatus: Record<string, { label: string; tone: Tone }> = {
-  DRAFT: { label: 'Rascunho', tone: 'neutral' },
-  ACTIVE: { label: 'Ativa', tone: 'brand' },
+  // Não existe "rascunho" na tela (ADR-054): campanha criada e ainda não iniciada.
+  DRAFT: { label: 'Não iniciada', tone: 'neutral' },
+  ACTIVE: { label: 'Em andamento', tone: 'brand' },
   PAUSED: { label: 'Pausada', tone: 'warning' },
   COMPLETED: { label: 'Concluída', tone: 'info' },
   CANCELLED: { label: 'Encerrada', tone: 'muted' },

@@ -21,7 +21,7 @@ import { registerFeedbackRoutes } from './feedback-routes';
 import { registerPasswordReset } from './password-reset';
 import { registerGroupListRoutes } from './group-lists';
 import { registerAlertRoutes } from './owner-alerts';
-import { registerPlanRoutes, assertCanSend, assertGroupLimit } from './plans';
+import { registerPlanRoutes, assertCanSend, assertGroupLimit, assertCampaignLimit } from './plans';
 
 export type WhatsAppConnection = Pick<WhatsAppProvider, 'status' | 'connect' | 'disconnect' | 'sync' | 'hasPairedSession'>;
 
@@ -131,7 +131,9 @@ registerAdminRoutes(app, { manager, legacy: { ...legacyBridge, legacyProvider: p
 // mensagens, lista de grupos ou mídia inteira.
 app.get('/api/campaigns', async request => {
   await completeFinished(prisma);
-  const query = request.query as { cursor?: string; limit?: string; status?: string; q?: string };
+  const query = request.query as { cursor?: string; limit?: string; status?: string; q?: string; archived?: string };
+  // Arquivadas têm a própria lista (ADR-054): por padrão só vêm as da lista principal.
+  const archived = query.archived === '1' || query.archived === 'true';
   const take = Math.min(50, Math.max(1, parseInt(query.limit ?? '24') || 24));
   // Filtros opcionais: situação (uma ou várias, separadas por vírgula) e parte do nome.
   const allowed = ['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'] as const;
@@ -139,12 +141,12 @@ app.get('/api/campaigns', async request => {
   const search = typeof query.q === 'string' ? query.q.trim().slice(0, 100) : '';
   const page = await prisma.campaign.findMany({
     // Modelos (ADR-047) têm a própria lista (/api/templates): não entram aqui.
-    where: { deletedAt: null, isTemplate: false, userId: request.user!.id, ...(statuses.length ? { status: { in: statuses } } : {}), ...(search ? { name: { contains: search } } : {}) },
+    where: { deletedAt: null, isTemplate: false, archivedAt: archived ? { not: null } : null, userId: request.user!.id, ...(statuses.length ? { status: { in: statuses } } : {}), ...(search ? { name: { contains: search } } : {}) },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: take + 1,
     ...(typeof query.cursor === 'string' && query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     select: {
-      id: true, name: true, startsAt: true, endsAt: true, status: true, provider: true, intervalSeconds: true, mode: true, mentionAll: true, createdAt: true,
+      id: true, name: true, startsAt: true, endsAt: true, status: true, provider: true, intervalSeconds: true, mode: true, mentionAll: true, createdAt: true, archivedAt: true,
       schedules: { orderBy: { time: 'asc' }, select: { time: true } },
       media: { select: { id: true, kind: true, color: true } },
       _count: { select: { groups: true } },
@@ -251,7 +253,7 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
         await lockCampaign(tx, id);
         const campaign = await tx.campaign.findUnique({ where: { id } });
         if (!campaign || campaign.deletedAt || campaign.userId !== request.user!.id) throw new NotFoundError('Campanha não encontrada.');
-        if (campaign.status !== 'DRAFT') throw new Error('Somente rascunhos podem ser editados.');
+        if (campaign.status !== 'DRAFT') throw new Error('Só dá para editar uma campanha antes de iniciar.');
         return tx.campaign.update({ where: { id }, data: {
           name, startsAt, endsAt, mode: String(mode), intervalSeconds, mentionAll, updatedAt: now, mediaId,
           groups: { deleteMany: {}, create: groupIds.map((groupId, position) => ({ groupId, position })) },
@@ -265,16 +267,26 @@ for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method
       return reply.code(400).send({ error: publicMessage(error, 'Não foi possível salvar.') });
     }
   }
-  return reply.status(201).send(await prisma.campaign.create({
-    data: {
-      userId: request.user!.id, // dono = sessão; body.userId é ignorado (ADR-017)
-      name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, mentionAll, createdAt: now, updatedAt: now, mediaId,
-      groups: { create: [...new Set(groupIds)].map((groupId, position) => ({ groupId, position })) },
-      messages: { create: messages.map((content, position) => ({ content, position })) },
-      schedules: { create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }
-    },
-    include: { groups: { include: { group: true } }, messages: true, schedules: true }
-  }));
+  // Limite de campanhas da conta (ADR-054), conferido sob a trava da conta.
+  try {
+    const created = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${request.user!.id} FOR UPDATE`;
+      await assertCampaignLimit(request.user!.id, now, tx);
+      return tx.campaign.create({
+        data: {
+          userId: request.user!.id, // dono = sessão; body.userId é ignorado (ADR-017)
+          name, startsAt, endsAt, status: 'DRAFT', mode: String(mode), intervalSeconds, mentionAll, createdAt: now, updatedAt: now, mediaId,
+          groups: { create: [...new Set(groupIds)].map((groupId, position) => ({ groupId, position })) },
+          messages: { create: messages.map((content, position) => ({ content, position })) },
+          schedules: { create: mode === 'SCHEDULED' ? [...new Set(times)].map(time => ({ time })) : [] }
+        },
+        include: { groups: { include: { group: true } }, messages: true, schedules: true }
+      });
+    }, LOCKING_TRANSACTION);
+    return reply.status(201).send(created);
+  } catch (error) {
+    return reply.code(400).send({ error: publicMessage(error, 'Não foi possível criar a campanha.') });
+  }
 } });
 
 app.patch('/api/campaigns/:id/status', async (request, reply) => {

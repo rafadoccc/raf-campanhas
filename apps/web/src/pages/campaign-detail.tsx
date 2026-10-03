@@ -15,7 +15,7 @@ import { CampaignMeta } from '../components/campaign-meta';
 
 type Group = { name: string; participants: number | null };
 type Campaign = {
-  id: string; name: string; status: string; isTemplate?: boolean; provider: string; mode: string; mentionAll: boolean; startsAt: string; endsAt: string;
+  id: string; name: string; status: string; isTemplate?: boolean; archivedAt?: string | null; provider: string; mode: string; mentionAll: boolean; startsAt: string; endsAt: string;
   media: (CampaignMedia & { color?: string | null }) | null; readsTotal: number; delivered: number; progress: Record<string, number>;
   readsByGroup: { groupId: string; name: string; participants: number | null; count: number }[];
   groups: { group: Group }[]; messages: { content: string }[]; schedules: { time: string }[];
@@ -157,10 +157,13 @@ export default function CampaignPage() {
                 <h1 className="truncate text-lg font-semibold" title={campaign.name}>{campaign.name}</h1>
                 <div className="mt-2">
                   <CampaignMeta detailed groups={campaign.groups.length} mode={campaign.mode} schedules={campaign.schedules} startsAt={campaign.startsAt} endsAt={campaign.endsAt}
-                    mentionAll={campaign.mentionAll} status={campaign.status} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
+                    status={campaign.status} simulated={campaign.status !== 'DRAFT' && campaign.provider === 'simulator'} />
                 </div>
               </div>
-              <Badge tone={status.tone}>{status.label}</Badge>
+              <span className="flex shrink-0 flex-col items-end gap-1">
+                <Badge tone={status.tone}>{status.label}</Badge>
+                {campaign.archivedAt && <Badge tone="muted" title="Esta campanha está nas arquivadas. Desarquive pelo menu do cartão, em Campanhas.">Arquivada</Badge>}
+              </span>
             </div>
             {total > 0 && <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">

@@ -6,7 +6,7 @@ type Campaign = { id: string; name: string; status: string };
 
 /** Qual "editar" faz sentido agora (ADR-026). */
 export function editAction(status: string): { kind: 'edit' | 'reuse' | 'reschedule'; label: string; title: string } {
-  if (status === 'DRAFT') return { kind: 'edit', label: 'Editar', title: 'Editar o rascunho' };
+  if (status === 'DRAFT') return { kind: 'edit', label: 'Editar', title: 'Editar a campanha antes de iniciar' };
   if (status === 'ACTIVE' || status === 'PAUSED') return { kind: 'reschedule', label: 'Reagendar', title: 'Para os envios pendentes e abre uma nova rodada para escolher outro horário' };
   return { kind: 'reuse', label: 'Usar de novo', title: 'Nova rodada com os mesmos grupos, mensagem e mídia; o histórico desta fica guardado' };
 }
@@ -26,6 +26,9 @@ export async function editCampaign(campaign: Campaign, confirm: Confirm): Promis
   const copy = await api<{ id: string }>(`/campaigns/${campaign.id}/duplicate`, { method: 'POST', json: { reschedule: action.kind === 'reschedule' } });
   return copy.id;
 }
+
+/** Arquivar ou desarquivar (ADR-054). Arquivada sai da lista principal e do limite da conta, com envios e relatório guardados. */
+export const archiveCampaign = (id: string, archived: boolean) => api<{ archived: boolean }>(`/campaigns/${id}/archive`, { method: 'POST', json: { archived } });
 
 /** Excluir com confirmação. Campanha ativa ou pausada é encerrada antes (envios pendentes cancelados). */
 export async function deleteCampaign(campaign: Campaign, confirm: Confirm): Promise<boolean> {

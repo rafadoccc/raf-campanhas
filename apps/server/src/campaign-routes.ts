@@ -5,7 +5,7 @@ import { publicMessage, NotFoundError } from './security';
 import { mediaMetadata } from './media';
 import { isUncertainFailure } from './send-context';
 import { prisma, completeFinished, lockCampaign, currentTime, TIME_ZONE, campaignReads, LOCKING_TRANSACTION, dueOrRunning } from '@campaign/database';
-import { assertCanSend } from './plans';
+import { assertCanSend, assertCampaignLimit } from './plans';
 
 // Reabre somente entregas ainda FAILED. O horário original já venceu quando o envio falhou;
 // mantê-lo preserva a chave única (campanha + grupo + horário) entre rodadas do mesmo grupo.
@@ -63,6 +63,34 @@ export function registerCampaignRoutes(app: FastifyInstance, connectedOf: (userI
       return reply.code(400).send({ error: publicMessage(error, 'Falha ao excluir.') });
     }
   });
+  // Arquivar e desarquivar (ADR-054). Arquivada sai da lista principal e do limite da conta, mas
+  // continua com envios e relatório. Campanha em andamento não é arquivada: os envios dela não
+  // podem ficar escondidos.
+  app.post('/api/campaigns/:id/archive', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const archived = (request.body as { archived?: unknown } | null)?.archived;
+    if (typeof archived !== 'boolean') return reply.code(400).send({ error: 'Diga se a campanha fica arquivada.' });
+    const userId = request.user!.id;
+    try {
+      return await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+        await lockCampaign(tx, id);
+        const campaign = await tx.campaign.findFirst({ where: { id, userId, deletedAt: null, isTemplate: false }, select: { status: true, archivedAt: true } });
+        if (!campaign) throw new NotFoundError('Campanha não encontrada.');
+        if (Boolean(campaign.archivedAt) === archived) return { archived };
+        const now = await currentTime();
+        if (archived && ['ACTIVE', 'PAUSED'].includes(campaign.status)) throw new Error('Esta campanha está em andamento. Encerre antes de arquivar.');
+        // Voltar para a lista principal ocupa uma vaga do limite.
+        if (!archived) await assertCampaignLimit(userId, now, tx);
+        await tx.campaign.update({ where: { id }, data: { archivedAt: archived ? now : null } });
+        return { archived };
+      }, LOCKING_TRANSACTION);
+    } catch (error) {
+      if (error instanceof NotFoundError) return reply.code(404).send({ error: error.message });
+      return reply.code(400).send({ error: publicMessage(error, 'Não foi possível arquivar.') });
+    }
+  });
+
   app.get('/api/dashboard', async request => dashboardSummary(request.user!.id, await connectedOf(request.user!.id)));
 
   // Modelos de campanha (ADR-047): só o que o cartão mostra. Editar e excluir usam as rotas da
@@ -118,6 +146,14 @@ export function registerCampaignRoutes(app: FastifyInstance, connectedOf: (userI
         const groups = source.groups.filter(g => g.group.active);
         if (!groups.length) throw new Error('Nenhum grupo desta campanha está ativo. Sincronize os grupos.');
         const now = await currentTime();
+        if (!asTemplate) {
+          // Usar de novo uma campanha que já terminou (ou foi reagendada): a rodada antiga vai para
+          // as arquivadas, com os envios e o relatório dela, e a nova toma o lugar na lista. Assim
+          // reusar não gasta o limite de campanhas da conta (ADR-054).
+          const ended = reschedule || source.status === 'COMPLETED' || source.status === 'CANCELLED';
+          if (ended && !source.isTemplate && !source.archivedAt) await tx.campaign.update({ where: { id }, data: { archivedAt: now } });
+          await assertCampaignLimit(userId, now, tx);
+        }
         // Datas que já passaram viram "a partir de hoje", mantendo a duração do período. As de um
         // modelo sempre: elas são só as da campanha de onde ele saiu, não um agendamento.
         const today = new Date(`${DateTime.fromJSDate(now, { zone: TIME_ZONE }).toISODate()}T00:00:00.000Z`);
