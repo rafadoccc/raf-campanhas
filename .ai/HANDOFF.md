@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-10-03T02:31Z · codex
+
+**Fiz:** corrigi o falso positivo da proteção que contava recusas com entrega/leitura confirmada. Recibos são aplicados antes da conferência; a pausa revalida os sinais sob locks. Acrescentei recuperação conservadora de falso alarme comprovado, somente dos pendentes e mantendo `resumeAt`, planos e proteção contra duplicidade. Avisos pendentes da pausa resolvida são cancelados, sem apagar avisos já enviados/reservados.
+**Arquivos:** apps/server/src/safety.ts, apps/server/src/dispatcher.ts, apps/server/src/owner-alerts.ts, apps/server/src/integration.test.ts, README.md, .ai/DECISIONS.md, .ai/STATE.md, .ai/TASKS.md
+**Tarefas:** T-157 (concluída). Base `44cb93a`; trabalho na cópia isolada `review-20261002`, sem alterações concorrentes em main/dev.
+**Estado:** lint, build e ai:check passam; 94 testes do servidor, 9 do painel e 173 de integração passam (276 no total, incluindo 8 novas regressões). 17 testes direcionados também passaram. Integração no banco MySQL descartável; partida compilada verificada em porta/pasta de sessões temporárias.
+**Armadilhas:** ADR-053 ajusta a ADR-041 com autorização explícita do dono: NÃO retomar restrição real, pausa manual, conta bloqueada ou resultado incerto. Sem provas suficientes da origem da pausa antiga, retomada manual. Não reabrir campanhas encerradas, não reconstruir fila e não repetir envios. Não alterei schema/migrations, queue.ts, schedule.ts, dependências, LGPD ou tags. O horário dos recibos fictícios antecede a varredura porque a referência HTTP simulada tem precisão de segundos; não há ajuste manual de horário em produção. Nenhum envio real ou conexão real foi feito; não há acesso autenticado aos logs/banco do Railway, portanto o código específico da recusa do print não foi confirmado.
+**Próximo passo sugerido:** depois do deploy, conferir com o dono uma campanha e os recibos reais. Uma pausa antiga sem provas suficientes deve ser retomada pelo botão existente, nunca recriando a campanha.
+
 ## 2026-10-02T05:35Z · claude
 
 **Fiz:** página de apresentação de EXEMPLO em `/conheca` (commit `ae48631`), pública, no estilo
@@ -1172,4 +1181,3 @@ não foi executado porque o daemon do Docker está parado.
 **Próximo passo sugerido:** T-042 (token de autenticação obrigatório na API). É a correção
 de maior alavancagem: resolve ou reduz C1, C2, A1, A4 e A5 de uma vez, e é pré-requisito
 de toda a Fase 2.
-

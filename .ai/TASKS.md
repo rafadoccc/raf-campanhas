@@ -12,6 +12,7 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[x] T-157  Corrigir recusas com entrega confirmada e retomar somente falsos alarmes comprovados, sem duplicar envios  owner: —   since: —
 [x] T-156  Página de apresentação de exemplo (/conheca) com desenhos à mão, estilo divertido para público jovem  owner: —   since: —
 [x] T-155  Início: Em andamento em cartões com a imagem da campanha e bloco Hoje (uso do dia) no lugar de Atividade recente  owner: —   since: —
 [x] T-154  Promover a revisão validada da dev para main com autorização do dono  owner: —   since: —

@@ -83,7 +83,7 @@ export async function collectAlerts(origin: string, now: Date, settleMs = ALERT_
   }
 
   // Pausa automática por sinal de restrição (ADR-041).
-  const paused = await prisma.whatsAppSession.findMany({ where: { userId: { in: userIds }, safetyPausedAt: { gte: since } }, select: { userId: true, safetyPausedAt: true, safetyReason: true } });
+  const paused = await prisma.whatsAppSession.findMany({ where: { userId: { in: userIds }, safetyPausedAt: { gte: since }, safetyReason: { not: null } }, select: { userId: true, safetyPausedAt: true, safetyReason: true } });
   for (const session of paused) {
     if (!session.safetyPausedAt || !fresh(session.userId, session.safetyPausedAt)) continue;
     alerts.push({
@@ -141,6 +141,13 @@ export async function deliverAlerts(router: AlertRouter, now: Date) {
     if (handled.has(alert.userId)) continue;
     const settings = await prisma.alertSettings.findUnique({ where: { userId: alert.userId } });
     if (!settings?.enabled) { await giveUp('Não enviado: os avisos foram desligados.'); continue; }
+    if (alert.key.startsWith('pausa:')) {
+      const session = await prisma.whatsAppSession.findUnique({ where: { userId: alert.userId } });
+      if (!session?.safetyReason || alert.key !== `pausa:${alert.userId}:${session.safetyPausedAt?.getTime()}`) {
+        await giveUp('Não enviado: o aviso de pausa não está mais ativo.');
+        continue;
+      }
+    }
     const target = await router.forOwner(alert.userId);
     if (target?.status().state !== 'connected' || !target.notify) continue;
     if (await prisma.delivery.count({ where: { status: 'PROCESSING', campaign: { userId: alert.userId } } })) continue;

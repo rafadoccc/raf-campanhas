@@ -91,6 +91,14 @@ com outro é bloqueado.
 - Só o primeiro item pendente da campanha pode ser reservado; existe uma espera mínima
   entre a finalização de uma tentativa e o início da próxima, inclusive após falhas.
 - Pausa conserva os pendentes e o restante do intervalo. Retomar não recria entregas.
+- Recusas com entrega/leitura confirmada não disparam a proteção do número. Se todos os
+  recibos comprovarem que uma pausa por recusas foi um falso alarme, o sistema retoma somente
+  as campanhas ainda naquela pausa automática, com o mesmo número conectado e sem alterar
+  os envios existentes. Conserva intervalos e regras do plano/número. Pausa manual, restrição
+  403/429, resultado incerto ou falta de provas continuam exigindo revisão manual; o simples
+  passar do tempo não libera uma pausa de segurança.
+  Pausas antigas sem provas suficientes da origem também ficam manuais: use Retomar,
+  que continua somente os pendentes sem recriar a campanha.
 - Fechar o navegador não interrompe. Desligar o computador interrompe: ao voltar, inicie
   os serviços e conecte WhatsApp; os pendentes continuam em ordem, sem rajada de atrasados.
 - Encerrar cancela pendentes definitivamente. Um envio já reservado/em andamento pode terminar.

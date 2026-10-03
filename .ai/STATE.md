@@ -3,7 +3,7 @@
 > Atualize este arquivo sempre que a arquitetura, a fase ou o conjunto de serviços mudar.
 > Ele responde a uma pergunta: *se eu chegasse agora, o que eu precisaria saber?*
 
-**Última atualização:** 2026-10-02 · por `codex`
+**Última atualização:** 2026-10-03 · por `codex`
 
 ---
 
@@ -20,6 +20,7 @@ trabalho atual — ver "Trabalho recente" abaixo para o que já saiu):
 
 | Fase | Objetivo | Status |
 |---|---|---|
+| 5u | Proteção ignora recusas com confirmação de entrega/leitura; falso alarme comprovado retoma somente pendentes, sem desfazer restrições reais (ADR-053) | ✅ concluída (T-157) |
 | 0 | Protótipo local funcional | ✅ concluída |
 | 1 | Protocolo multi-agente, limpeza, auditoria de segurança | ✅ concluída (ADR-023) |
 | 2 | Autenticação + papéis + isolamento por dono | ✅ concluída (ADR-016/017/018) |

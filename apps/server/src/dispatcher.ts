@@ -19,7 +19,7 @@ import {
 import type { WhatsAppProvider } from './whatsapp';
 import type { SendingRouter } from './sending-router';
 import { isNotSent, notSent } from './send-context';
-import { checkRejections, isRateLimit, safetyPause, SAFETY_REASONS } from './safety';
+import { checkRejections, recoverConfirmedRejections, isRateLimit, safetyPause, SAFETY_REASONS } from './safety';
 
 // O que o despachante usa do conector. Permite testar o fluxo inteiro com um conector falso.
 export type SendingProvider = Pick<WhatsAppProvider, 'status' | 'send' | 'flushReads' | 'flushDeliveryEvents'>;
@@ -172,17 +172,9 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
     try {
       for (const [id, until] of holds) if (until <= Date.now()) holds.delete(id);
       await completeFinished(prisma);
-      // Recusas do servidor em série = sinal de restrição (ADR-041). Uma conferência por minuto.
-      if (Date.now() - lastRejectionCheck >= 60_000) {
-        lastRejectionCheck = Date.now();
-        // Faxina (ADR-044): "em andamento" órfão (travou fora do vigia, ou de outro processo) não
-        // pode segurar a fila para sempre.
-        const released = await releaseStuckSends(prisma, sendTimeoutMs + STUCK_GRACE_MS, inFlight).catch(() => 0);
-        if (released) console.warn('[Fila] Envios travados liberados:', released);
-        await checkRejections().catch(error => console.warn('[Proteção] Falha ao conferir recusas:', error instanceof Error ? error.message : error));
-      }
       // Recibos e eventos de CADA conexão, aplicados só aos dados do dono dela.
-      for (const { ownerId, provider: connection } of await router.entries()) {
+      const connections = await router.entries();
+      for (const { ownerId, provider: connection } of connections) {
         await connection.flushReads().catch(() => {
           console.warn('[WhatsApp] Não foi possível registrar leituras de', ownerId, '; nova tentativa no próximo ciclo.');
         });
@@ -191,6 +183,17 @@ export async function startDispatcher(router: SendingRouter, options: { scanInte
         });
       }
       const now = await currentTime();
+      // Primeiro grava os recibos; só então avalia recusas ou desfaz um falso alarme.
+      if (Date.now() - lastRejectionCheck >= 60_000) {
+        lastRejectionCheck = Date.now();
+        const released = await releaseStuckSends(prisma, sendTimeoutMs + STUCK_GRACE_MS, inFlight).catch(() => 0);
+        if (released) console.warn('[Fila] Envios travados liberados:', released);
+        await checkRejections(now).catch(error => console.warn('[Proteção] Falha ao conferir recusas:', error instanceof Error ? error.message : error));
+        await recoverConfirmedRejections(ownerId => {
+          const status = connections.find(entry => entry.ownerId === ownerId)?.provider.status();
+          return status?.state === 'connected' ? status.accountJid ?? null : null;
+        }, now).catch(error => console.warn('[Proteção] Falha ao conferir falso alarme:', error instanceof Error ? error.message : error));
+      }
       const campaigns = await prisma.campaign.findMany({
         where: {
           status: 'ACTIVE',

@@ -19,7 +19,7 @@ import sharp from 'sharp';
 import { videoFixture } from './media-fixture';
 import { validateMedia, IMAGE_LIMIT, VIDEO_LIMIT, backfillMediaPreviews } from './media';
 import { deleteAccount, purgeExpiredData } from './legal';
-import { checkRejections, safetyPause, SAFETY_REASONS, REJECTIONS_TO_PAUSE } from './safety';
+import { checkRejections, recoverConfirmedRejections, safetyPause, SAFETY_REASONS, REJECTIONS_TO_PAUSE } from './safety';
 import Fastify from 'fastify';
 import { registerAuth } from './auth';
 import { registerPasswordReset } from './password-reset';
@@ -3801,6 +3801,160 @@ test('number protection: a restriction signal pauses every active campaign of th
   await prisma.sendingPolicy.update({ where: { userId: other.user.id }, data: { autoPause: false } });
   assert.equal(await safetyPause(other.user.id, SAFETY_REASONS.forbidden), 0);
   assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: other.campaign.id } })).status, 'ACTIVE');
+});
+
+async function rejectedProtectionQueue(email: string) {
+  const world = await protectedQueue(email, {});
+  // Os recibos fictícios já chegaram antes da varredura. A referência HTTPS dos testes
+  // tem precisão de segundos; não cria um recibo ligeiramente "futuro" por arredondamento.
+  const now = new Date(Date.now() - 2000);
+  const rows: Awaited<ReturnType<typeof world.delivery>>[] = [];
+  for (let i = 0; i < REJECTIONS_TO_PAUSE; i++) {
+    const row = await world.delivery(i, { scheduledAt: new Date(now.getTime() - 600_000 - i * 1000), status: 'SENT', sentAt: new Date(now.getTime() - 600_000) });
+    rows.push(await prisma.delivery.update({ where: { id: row.id }, data: { providerId: `${world.user.id}-${i}`, serverRejectedAt: new Date(now.getTime() - 60_000) } }));
+  }
+  const pending = await world.delivery(3, { scheduledAt: new Date(now.getTime() - 1000) });
+  const event = (i: number) => ({ kind: 'delivered' as const, messageId: rows[i].providerId!, groupJid: world.group.externalId!, accountJid: world.campaign.accountJid!, ownerId: world.user.id, at: now });
+  const pause = async () => {
+    await checkRejections(now);
+    await prisma.whatsAppSession.update({ where: { userId: world.user.id }, data: { accountJid: world.campaign.accountJid } });
+  };
+  const connected = (id: string) => id === world.user.id ? world.campaign.accountJid : null;
+  return { ...world, rows, pending, now, event, pause, connected };
+}
+
+test('number protection: confirmed deliveries and reads are not refusals for the safety threshold', async () => {
+  const world = await rejectedProtectionQueue('falso-alarme-confirmado@teste.local');
+  await applyServerEvent(prisma, world.event(0));
+  await applyServerEvent(prisma, world.event(1));
+  await prisma.deliveryRead.create({ data: { deliveryId: world.rows[2].id, recipientHash: 'leitura-confirmada-teste', readAt: world.now } });
+  await checkRejections(world.now);
+  assert.equal(await safetyPause(world.user.id, SAFETY_REASONS.rejections(3), world.now, true), 0, 'revalidação antes de pausar também descarta o falso alarme');
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: world.campaign.id } })).status, 'ACTIVE');
+  assert.equal(await prisma.whatsAppSession.findUnique({ where: { userId: world.user.id } }), null);
+});
+
+test('number protection: false alarm recovery preserves pending work and interval, is idempotent and survives a database reconnect', async () => {
+  const world = await rejectedProtectionQueue('falso-alarme-retoma@teste.local');
+  await prisma.campaign.update({ where: { id: world.campaign.id }, data: { nextAvailableAt: new Date(world.now.getTime() + 120_000) } });
+  await world.pause();
+  assert.equal(await recoverConfirmedRejections(world.connected, new Date(world.now.getTime() + 86_400_000)), 0, 'passar um dia não resolve a recusa');
+  await prisma.alertSettings.create({ data: { userId: world.user.id, enabled: true, enabledAt: new Date(world.now.getTime() - 1000) } });
+  await collectAlerts('http://localhost', world.now);
+  const alertKey = `pausa:${world.user.id}:${world.now.getTime()}`;
+  assert.equal(await prisma.ownerAlert.count({ where: { userId: world.user.id, key: alertKey, sentAt: null, error: null } }), 1);
+  for (let i = 0; i < world.rows.length; i++) await applyServerEvent(prisma, world.event(i));
+  assert.equal(await recoverConfirmedRejections(() => null, world.now), 0, 'desconectado não retoma');
+  assert.equal(await recoverConfirmedRejections(() => 'outro-numero@s.whatsapp.net', world.now), 0, 'outro número não retoma');
+  await prisma.$disconnect();
+  const later = new Date(world.now.getTime() + 300_000);
+  assert.equal(await recoverConfirmedRejections(world.connected, later), 1);
+  const campaign = await prisma.campaign.findUniqueOrThrow({ where: { id: world.campaign.id } });
+  assert.deepEqual([campaign.status, campaign.pausedAt, campaign.nextAvailableAt?.getTime()], ['ACTIVE', null, later.getTime() + 120_000]);
+  assert.equal((await fresh(world.pending.id)).status, 'PENDING');
+  for (const row of world.rows) {
+    const saved = await fresh(row.id);
+    assert.deepEqual([saved.status, saved.providerId, saved.attempts], ['SENT', row.providerId, row.attempts], 'não recria nem reenvia o que chegou');
+  }
+  assert.equal(await recoverConfirmedRejections(world.connected, later), 0, 'repetir não retoma novamente');
+  assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: world.user.id } })).safetyReason, null);
+  assert.match((await prisma.ownerAlert.findFirstOrThrow({ where: { userId: world.user.id, key: alertKey } })).error ?? '', /falso alarme resolvido/);
+  await collectAlerts('http://localhost', later);
+  assert.equal(await prisma.ownerAlert.count({ where: { userId: world.user.id, key: alertKey, error: null } }), 0, 'não recria aviso da pausa já resolvida');
+});
+
+test('number protection: false alarm recovery never overrides manual changes, cancellation or disabled accounts', async () => {
+  for (const mode of ['manual', 'cancelled', 'disabled'] as const) {
+    const world = await rejectedProtectionQueue(`falso-alarme-${mode}@teste.local`);
+    await world.pause();
+    for (let i = 0; i < world.rows.length; i++) await applyServerEvent(prisma, world.event(i));
+    if (mode === 'manual') await prisma.campaign.update({ where: { id: world.campaign.id }, data: { pausedAt: new Date(world.now.getTime() + 1000), updatedAt: new Date(world.now.getTime() + 1000) } });
+    if (mode === 'cancelled') await prisma.campaign.update({ where: { id: world.campaign.id }, data: { status: 'CANCELLED' } });
+    if (mode === 'disabled') await prisma.user.update({ where: { id: world.user.id }, data: { disabledAt: world.now } });
+    assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, mode);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: world.campaign.id } })).status, mode === 'cancelled' ? 'CANCELLED' : 'PAUSED');
+  }
+});
+
+test('number protection: restriction notices, incomplete proof and uncertain outcomes never resume automatically', async () => {
+  const world = await rejectedProtectionQueue('falso-alarme-restricao@teste.local');
+  await world.pause();
+  for (let i = 0; i < world.rows.length - 1; i++) await applyServerEvent(prisma, world.event(i));
+  assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, 'uma recusa ainda não foi resolvida');
+  await applyServerEvent(prisma, world.event(2));
+  await prisma.delivery.update({ where: { id: world.rows[2].id }, data: { status: 'FAILED' } });
+  assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, 'resultado ainda marcado como falha não é retomado');
+  await prisma.delivery.update({ where: { id: world.rows[2].id }, data: { status: 'SENT' } });
+  for (const reason of [SAFETY_REASONS.forbidden, SAFETY_REASONS.rateLimited]) {
+    await prisma.whatsAppSession.update({ where: { userId: world.user.id }, data: { safetyReason: reason } });
+    assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, reason);
+    await safetyPause(world.user.id, SAFETY_REASONS.rejections(3), world.now, true);
+    assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: world.user.id } })).safetyReason, reason, 'não substitui aviso de restrição por recusa genérica');
+  }
+});
+
+test('number protection: false alarm recovery respects a paused subscription and the campaign group limit', async () => {
+  const world = await rejectedProtectionQueue('falso-alarme-plano@teste.local');
+  await world.pause();
+  for (let i = 0; i < world.rows.length; i++) await applyServerEvent(prisma, world.event(i));
+  await prisma.subscription.create({ data: { userId: world.user.id, pausedAt: world.now } });
+  assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0);
+  await prisma.subscription.update({ where: { userId: world.user.id }, data: { pausedAt: null, maxGroups: 1 } });
+  const group = await prisma.group.create({ data: { userId: world.user.id, name: 'Outro', externalId: `${world.user.id}-outro@g.us` } });
+  await prisma.campaignGroup.create({ data: { campaignId: world.campaign.id, groupId: group.id, userId: world.user.id, position: 1 } });
+  assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, 'não contorna limite do plano');
+});
+
+test('number protection: a concurrent explicit restriction always wins over false alarm recovery', async () => {
+  const world = await rejectedProtectionQueue('falso-alarme-concorrente@teste.local');
+  await world.pause();
+  for (let i = 0; i < world.rows.length; i++) await applyServerEvent(prisma, world.event(i));
+  await Promise.all([
+    recoverConfirmedRejections(world.connected, world.now),
+    safetyPause(world.user.id, SAFETY_REASONS.forbidden, world.now),
+  ]);
+  assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: world.campaign.id } })).status, 'PAUSED');
+  assert.equal((await prisma.whatsAppSession.findUniqueOrThrow({ where: { userId: world.user.id } })).safetyReason, SAFETY_REASONS.forbidden);
+});
+
+test('number protection: a new refusal and explicit restriction codes prevent false alarm recovery', async () => {
+  const world = await rejectedProtectionQueue('falso-alarme-nova-recusa@teste.local');
+  await world.pause();
+  for (let i = 0; i < world.rows.length; i++) await applyServerEvent(prisma, world.event(i));
+  for (const code of ['servidor:403', 'servidor:429']) {
+    await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { errorCode: code } });
+    assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, code);
+  }
+  await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { errorCode: 'servidor:500' } });
+  await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { serverRejectedAt: new Date(world.now.getTime() + 1000) } });
+  assert.equal(await recoverConfirmedRejections(world.connected, new Date(world.now.getTime() + 2000)), 0, 'uma recusa posterior confirmada não substitui a prova de um sinal original perdido');
+  await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { serverRejectedAt: new Date(world.now.getTime() - 60_000), deliveredAt: new Date(world.now.getTime() - 1000) } });
+  assert.equal(await recoverConfirmedRejections(world.connected, world.now), 0, 'recibo anterior à pausa não prova resolução de um sinal original sem identificação');
+  await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { deliveredAt: world.now } });
+  await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { sentAt: new Date(world.now.getTime() + 1000) } });
+  assert.equal(await recoverConfirmedRejections(world.connected, new Date(world.now.getTime() + 2000)), 0, 'uma nova tentativa após a pausa deixa a origem dos sinais incerta');
+  await prisma.delivery.update({ where: { id: world.rows[0].id }, data: { sentAt: new Date(world.now.getTime() - 600_000) } });
+  await prisma.delivery.update({ where: { id: world.pending.id }, data: { serverRejectedAt: new Date(world.now.getTime() + 1000) } });
+  assert.equal(await recoverConfirmedRejections(world.connected, new Date(world.now.getTime() + 2000)), 0, 'uma recusa nova não desaparece por causa de recibos antigos');
+});
+
+test('number protection: the dispatcher applies confirmations before checking refusals and sends only the remaining delivery', async () => {
+  await pauseEverything();
+  const world = await rejectedProtectionQueue('falso-alarme-despachante@teste.local');
+  await world.pause();
+  let calls = 0;
+  const provider = {
+    status: () => ({ state: 'connected', accountJid: world.campaign.accountJid! }),
+    send: async () => { calls++; return { messageId: 'somente-o-pendente', context: 'conector de teste' }; },
+    flushReads: async () => undefined,
+    flushDeliveryEvents: async () => { for (let i = 0; i < world.rows.length; i++) await applyServerEvent(prisma, world.event(i)); },
+  } as SendingProvider;
+  const dispatcher = await startDispatcher(staticRouter([{ ownerId: world.user.id, provider }]), { scanIntervalMs: 50 });
+  try { await waitFor(async () => (await fresh(world.pending.id)).status === 'SENT', 'retomada do único pendente'); }
+  finally { await dispatcher.stop(); }
+  assert.equal(calls, 1);
+  assert.equal(await prisma.delivery.count({ where: { campaignId: world.campaign.id } }), 4, 'sem reconstruir a fila');
+  for (const row of world.rows) assert.equal((await fresh(row.id)).providerId, row.providerId);
 });
 
 test('number protection: the pause notice shows in the WhatsApp status until dismissed', async () => {

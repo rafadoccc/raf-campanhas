@@ -1472,3 +1472,42 @@ Revisão solicitada pelo dono, incremental, sem stack nova, schema novo ou contr
 - Sem migration, dependência nova ou alteração da LGPD. Limitações que exigem decisão
   (eventos precoces T-126, reserva dos avisos, resumo diário de campanhas excluídas), auditoria
   de dependências T-049 e validações reais estão em `docs/review-2026-10-02.md`.
+
+---
+
+## ADR-053 · Recusas confirmadas como entregues não são sinal de restrição
+
+**Data:** 2026-10-03 · **Status:** aceita · **Autor:** codex · **Fecha:** T-157 · **Ajusta:** ADR-041
+
+O dono pediu corrigir o falso alarme investigado e continuar de onde a campanha parou.
+A consulta de proteção contava `serverRejectedAt` mesmo com `deliveredAt` confirmado;
+três mensagens entregues podiam pausar campanhas sem falhas finais no resumo.
+
+- A contagem exclui entrega ou leitura confirmada e timestamps futuros; revalida sob locks
+  antes de pausar. O despachante aplica os recibos antes da conferência de proteção.
+- Restrição explícita 403/429 nunca é substituída por um aviso genérico de recusas.
+- A única retomada nova é desfazer **falso alarme comprovado**: aviso de recusas, mesma conta
+  e número conectados; pelo menos a quantidade de recusas registrada, na janela ORIGINAL
+  da pausa, com recusa anterior à pausa e entrega confirmada entre a pausa e agora, todas
+  ainda `SENT`, sem códigos 403/429 ou nova recusa
+  não resolvida. Ausência de registros, expiração da janela ou retentativa que apagou o
+  sinal antigo não são prova. Casos sem prova continuam manuais.
+  Recibos já confirmados antes de uma pausa antiga não bastam para identificar quais sinais
+  a dispararam; a retomada dessa pausa fica manual, mesmo que o falso positivo seja plausível.
+  Novo envio/tentativa concluído após a pausa também torna a retomada manual: pode ter
+  substituído a identidade de um sinal original, que não pode ser reconstruído por contagem.
+- Só campanhas `PAUSED` com `pausedAt` e `updatedAt` iguais à pausa automática, não excluídas,
+  não modelos e com pendentes/sem processamento são retomadas. Plano, grupos ativos/cota,
+  usuário habilitado e conexão são revalidados. Usa `resumeAt`, sem recriar ou reenviar
+  entregas. Marca temporal da proteção permanece; o falso aviso é dispensado.
+- Aviso de WhatsApp ainda não reservado daquele falso alarme é cancelado; coletor não cria
+  aviso sem motivo ativo e envio confere se a mesma pausa ainda existe. Aviso já enviado ou
+  reservado/em andamento não é apagado nem reenviado.
+- Proteção e recuperação serializam dono → campanhas em ordem de id, como ADR-052. Pausas
+  manuais, encerramento, desativação e restrições reais não são desfeitos. Uma mudança
+  posterior durante a pausa (inclusive finalização de envio em andamento) deixa a retomada
+  conservadoramente manual. Queda técnica já continua com os pendentes ao reconectar;
+  falha incerta nunca ganha retentativa automática (ADR-003/014).
+- Sem migration, dependência, alteração HTTP ou mudança em `queue.ts`/`schedule.ts`.
+  Testes usam recibos e conector fictícios em banco descartável; não confirmam o código
+  específico que o WhatsApp retornou no Railway. Não houve envio real nesta revisão.
