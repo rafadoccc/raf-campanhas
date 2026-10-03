@@ -21,17 +21,11 @@ export function TermsGate() {
       <header className="space-y-1">
         <IconPrivacy className="h-5 w-5 text-brand-700" aria-hidden />
         <h1 className="text-lg font-semibold leading-tight">Antes de continuar, {user?.name?.split(' ')[0] ?? 'bem-vindo'}</h1>
-        <p className="text-sm text-muted">Leia os pontos principais dos nossos termos:</p>
       </header>
-      <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
-        <li>Envie só para grupos em que você <strong>tem autorização</strong> para divulgar. Spam é proibido.</li>
-        <li>A conexão com o WhatsApp é <strong>não oficial</strong>: existe risco de o WhatsApp restringir o número.</li>
-        <li>Mensagens e mídias de campanhas encerradas são <strong>apagadas depois de 6 meses</strong>.</li>
-        <li>Você pode <strong>baixar ou excluir seus dados</strong> quando quiser, em Minha conta.</li>
-      </ul>
-      <p className="text-sm">Íntegra: <Link className={link} to="/termos" target="_blank">Termos de Uso</Link> e <Link className={link} to="/privacidade" target="_blank">Política de Privacidade</Link>.</p>
+      {/* O essencial em duas frases; a íntegra fica nos dois links do aceite. */}
+      <p className="text-sm text-muted">Envie só para grupos em que você tem autorização para divulgar. A conexão com o WhatsApp é não oficial: existe o risco de o WhatsApp restringir o número.</p>
       {error && <Alert>{error}</Alert>}
-      <Checkbox checked={agreed} onChange={setAgreed} label="Li e aceito os Termos de Uso e a Política de Privacidade" />
+      <Checkbox checked={agreed} onChange={setAgreed} label={<>Li e aceito os <Link className={link} to="/termos" target="_blank">Termos de Uso</Link> e a <Link className={link} to="/privacidade" target="_blank">Política de Privacidade</Link></>} />
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" loading={busy} disabled={!agreed || busy} onClick={() => void accept()}>Aceitar e continuar</Button>
         <Button variant="ghost" disabled={busy} onClick={() => void signOut().catch(() => undefined)}>Sair</Button>
