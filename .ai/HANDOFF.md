@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-10-03T04:45Z · claude
+
+**Fiz:** ajustes pedidos pelo dono (commit `13c8317`): no Início a coluna da direita cresce até a
+altura do "Em andamento"; a tela Histórico saiu (página, menu, rota e ícone; `/historico` leva a
+`/campanhas`); cartão de avisos enxuto, sem o botão "Enviar aviso de teste"; saiu a frase do
+navegador fechado. Entreguei ao dono, no chat, estudos de logo e de ícone em PNG (nada no repo).
+**Arquivos:** apps/web/src/{pages/{dashboard,settings}.tsx,components/{owner-alerts,navigation}.tsx,design/icons.ts,main.tsx}; removido apps/web/src/pages/history.tsx
+**Tarefas:** T-157 (concluída).
+**Estado:** compila · lint ok · unitários e testes do painel passam (nenhuma mudança no servidor).
+Conferido no navegador (dev).
+**Armadilhas:**
+- Só a TELA do Histórico saiu. `GET /api/deliveries` sem `campaignId` continua no servidor (o
+  detalhe da campanha usa a mesma rota com `campaignId`, e vários testes dependem dela).
+- `POST /api/alerts/test` continua no servidor, sem botão na tela. T-149 (validar os avisos num
+  número real) agora depende de uma campanha real terminar, ou de chamar a rota à mão.
+- A logo e o ícone do site NÃO mudaram: o dono vai escolher entre os estudos.
+- Só na dev.
+**Próximo passo sugerido:** o dono escolhe a logo e o ícone; aplicar em `design/logo.tsx`,
+`public/favicon.svg` e rodar `node scripts/make-icons.cjs`.
+
+---
+
 ## 2026-10-03T02:31Z · codex
 
 **Fiz:** corrigi o falso positivo da proteção que contava recusas com entrega/leitura confirmada. Recibos são aplicados antes da conferência; a pausa revalida os sinais sob locks. Acrescentei recuperação conservadora de falso alarme comprovado, somente dos pendentes e mantendo `resumeAt`, planos e proteção contra duplicidade. Avisos pendentes da pausa resolvida são cancelados, sem apagar avisos já enviados/reservados.
