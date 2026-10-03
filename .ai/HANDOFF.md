@@ -12,7 +12,7 @@ altura do "Em andamento"; a tela Histórico saiu (página, menu, rota e ícone; 
 `/campanhas`); cartão de avisos enxuto, sem o botão "Enviar aviso de teste"; saiu a frase do
 navegador fechado. Entreguei ao dono, no chat, estudos de logo e de ícone em PNG (nada no repo).
 **Arquivos:** apps/web/src/{pages/{dashboard,settings}.tsx,components/{owner-alerts,navigation}.tsx,design/icons.ts,main.tsx}; removido apps/web/src/pages/history.tsx
-**Tarefas:** T-157 (concluída).
+**Tarefas:** T-158 (concluída; nasceu como T-157, renumerada porque o codex já usava esse ID).
 **Estado:** compila · lint ok · unitários e testes do painel passam (nenhuma mudança no servidor).
 Conferido no navegador (dev).
 **Armadilhas:**
