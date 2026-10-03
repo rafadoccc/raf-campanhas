@@ -117,7 +117,7 @@ function Health({ overview: o }: { overview: Overview | null }) {
           <Dot tone={o.dispatcher.active ? 'ok' : 'warn'} />{o.dispatcher.active ? 'Funcionando' : 'Parada'}
         </HealthRow>
         <HealthRow icon={IconCampaigns} label="Outras campanhas" detail={plural(o.campaigns.completed + o.campaigns.cancelled, 'encerrada', 'encerradas')}>
-          {plural(o.campaigns.paused, 'pausada', 'pausadas')} · {plural(o.campaigns.draft, 'rascunho', 'rascunhos')}
+          {plural(o.campaigns.paused, 'pausada', 'pausadas')} · {plural(o.campaigns.draft, 'não iniciada', 'não iniciadas')}
         </HealthRow>
         <HealthRow icon={IconSystem} label="Servidor" detail={`${o.process.memoryMb.rss} MB de memória`}>
           no ar há {uptime(o.process.uptimeSeconds)}
@@ -211,7 +211,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
   // sabendo a senha, só entrega o link (pelo WhatsApp, por exemplo).
   const [resetLink, setResetLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  // Janela "Plano e regras" (ADR-050): vencimento, pausa, grupos por campanha e regras de envio.
+  // Janela "Parâmetros" (ADR-050/054): plano, limites de campanhas, regras de envio e WhatsApp.
   const [planning, setPlanning] = useState(false);
   const badge = planBadge(user.plan);
   const createResetLink = () => run(async () => {
@@ -219,7 +219,7 @@ function UserRow({ user, self, onChanged }: { user: AdminUser; self: boolean; on
     setResetLink(await api<{ url: string; expiresAt: string }>(`/admin/users/${user.id}/reset-link`, { method: 'POST', json: {} }));
   });
   const actions: MenuItem[] = [
-    { label: user.role === 'SUPER_ADMIN' ? 'Regras de envio' : 'Plano e regras', icon: IconPlan, onSelect: () => setPlanning(true) },
+    { label: 'Editar parâmetros', icon: IconPlan, onSelect: () => setPlanning(true) },
     { label: 'Gerar link de nova senha', icon: IconShare, onSelect: () => void createResetLink() },
     { label: 'Encerrar sessões', icon: IconLogout, onSelect: () => void forceLogout() },
     ...(wa.state === 'connected' ? [{ label: 'Desconectar WhatsApp', icon: IconDisconnect, onSelect: () => void stopWhatsApp() }] : []),
