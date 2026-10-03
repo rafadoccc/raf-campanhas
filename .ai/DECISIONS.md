@@ -1511,3 +1511,43 @@ três mensagens entregues podiam pausar campanhas sem falhas finais no resumo.
 - Sem migration, dependência, alteração HTTP ou mudança em `queue.ts`/`schedule.ts`.
   Testes usam recibos e conector fictícios em banco descartável; não confirmam o código
   específico que o WhatsApp retornou no Railway. Não houve envio real nesta revisão.
+
+---
+
+## ADR-054 · Arquivar campanhas, limite de campanhas por conta e fim do "rascunho" na tela
+
+**Data:** 2026-10-03 · **Status:** aceita · **Autor:** claude · **Branch:** dev · **Fecha:** T-159
+
+Pedido do dono: a campanha é usada várias vezes; a lista deve separar o que está em uso do que foi
+guardado, sem "rascunho", e cada conta deve ter um teto de campanhas (padrão 8).
+
+- **Arquivar.** Coluna aditiva `Campaign.archivedAt`. `POST /api/campaigns/:id/archive`
+  `{ archived }` arquiva e desarquiva (dono da campanha; modelo não se aplica). Arquivada sai da
+  lista principal e do limite, mas continua abrindo, com envios e relatório. Campanha em andamento
+  (ativa ou pausada) NÃO é arquivada: os envios dela não podem ficar escondidos.
+  - `GET /api/campaigns` ganha `?archived=1`; sem ele, só as não arquivadas (mudança de
+    comportamento: antes vinham todas). O filtro `status` vale nas duas listas.
+  - O prazo de guarda (ADR-040) não muda: arquivada concluída ou encerrada também é apagada aos 6
+    meses. Arquivar não é guardar para sempre.
+- **Usar de novo arquiva a rodada antiga.** `POST /api/campaigns/:id/duplicate` de uma campanha
+  concluída, encerrada ou reagendada marca a ORIGEM como arquivada e cria a nova no lugar. Cada
+  rodada continua sendo uma campanha, com o próprio relatório; a lista principal fica só com a
+  rodada atual. Modelo como origem e "salvar como modelo" não arquivam nada.
+- **Limite de campanhas.** Coluna aditiva `Subscription.maxCampaigns` (null = padrão do sistema,
+  `DEFAULT_MAX_CAMPAIGNS` = 8). Contam as campanhas da lista principal: fora arquivadas,
+  excluídas e modelos. `assertCampaignLimit` é chamado DENTRO da transação, depois da trava da
+  conta (`SELECT … FOR UPDATE` em User, ADR-052), ao criar, ao copiar e ao desarquivar.
+  Administrador não tem limite. No banco de teste descartável o padrão fica desligado (como as
+  regras de envio); limite definido pelo administrador vale em qualquer banco.
+  - `GET /api/plan` ganha `maxCampaigns` e `campaigns` (uso); `GET/PUT
+    /api/admin/users/:id/plan` ganham `maxCampaigns` (e `maxCampaignsIsDefault` na leitura).
+  - `POST /api/campaigns` passa a criar dentro de uma transação com a trava da conta.
+- **Sem "rascunho" na tela.** O status `DRAFT` continua no banco e na API; a tela chama de "Não
+  iniciada", e `ACTIVE` de "Em andamento". A lista tem abas Ativas / Arquivadas / Modelos e um
+  filtro: Não iniciadas (DRAFT), Pendentes (ACTIVE, PAUSED), Concluídas (COMPLETED, CANCELLED).
+- **Parâmetros da conta.** A janela do administrador virou "Editar parâmetros", com seções na
+  lateral (Plano, Campanhas, Envios, WhatsApp) e um Salvar só. As rotas são as mesmas da ADR-050.
+- **Fora desta decisão (proposto ao dono):** guardar as rodadas DENTRO de uma campanha só
+  (`Delivery.round`), com relatório por rodada. Mexe em como a campanha é ativada e relatada, e
+  por isso espera aprovação.
+- Migration aditiva `20261003000000_archive_and_campaign_limit`.

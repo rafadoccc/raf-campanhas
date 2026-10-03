@@ -12,6 +12,7 @@
 ## Revisão de robustez de 2026-09-28
 
 ```text
+[x] T-159  Campanhas: arquivar, filtros por situação, cartões novos e limite de campanhas por conta; parâmetros da conta em janela com seções; revisão de LGPD (ADR-054)  owner: —   since: —
 [x] T-157  Corrigir recusas com entrega confirmada e retomar somente falsos alarmes comprovados, sem duplicar envios  owner: —   since: —
 [x] T-158  Início com colunas da mesma altura; tela Histórico removida; cartão de avisos enxuto, sem botão de teste  owner: —   since: —
 [x] T-156  Página de apresentação de exemplo (/conheca) com desenhos à mão, estilo divertido para público jovem  owner: —   since: —

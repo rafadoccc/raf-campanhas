@@ -5,6 +5,36 @@
 
 ---
 
+## 2026-10-03T06:20Z · claude
+
+**Fiz:** a pedido do dono (ADR-054, commits `b26ba1b`, `dddf497`, `ebc4be7`): (1) arquivar e
+desarquivar campanhas; lista com abas Ativas / Arquivadas / Modelos e filtro por situação; cartões
+sem o selo no canto, com menu de três pontos (Salvar como modelo, Arquivar, Excluir); "rascunho"
+virou "Não iniciada"; saiu a etiqueta "Marca todos"; (2) limite de campanhas por conta, padrão 8;
+(3) janela "Editar parâmetros" do administrador com seções na lateral; (4) aceite dos termos e
+exclusão de conta mais curtos. Validei, sem mudar código, o link público e o PDF do relatório.
+Entreguei ao dono estudos de logo em PNG (nada no repo). O dono pediu para levar à main.
+**Arquivos:** packages/database/prisma/{schema.prisma,migrations/20261003000000_archive_and_campaign_limit}, apps/server/src/{plans,app,campaign-routes,integration.test}.ts, apps/web/src/{pages/{campaigns,campaign-detail,admin,account,legal}.tsx,components/{account-plan,number-protection,campaign-meta,campaign-form,templates,terms-gate,plan-notice}.tsx,design/{icons,format}.ts,lib/{campaign-ops,release-notes}.ts}
+**Tarefas:** T-159 (concluída).
+**Estado:** compila · lint ok · unitários 94/94 + 9 do painel · integração 174/174. Conferido no
+navegador (dev): lista nova, arquivar pelo menu, aba Arquivadas, janela de parâmetros e salvar o limite.
+**Armadilhas:**
+- **Limite padrão de 8 vale para TODA conta comum já existente.** Quem tem mais de 8 campanhas na
+  lista não cria outra até arquivar ou excluir. Administrador não tem limite.
+- `GET /api/campaigns` sem `archived=1` NÃO devolve arquivadas. Toda consulta nova que conta
+  "campanhas da lista" usa `countedCampaigns` (plans.ts).
+- "Usar de novo" arquiva a campanha de origem quando ela já terminou. É de propósito (a lista fica
+  com a rodada atual); o relatório da antiga continua em Arquivadas.
+- No banco de teste o limite padrão fica DESLIGADO (`defaultMaxCampaigns`), como as regras de
+  envio: os testes criam dezenas de campanhas na conta compartilhada.
+- `NumberProtection` (cartão de regras) não existe mais: as regras estão em account-plan.tsx.
+- A tela diz "Não iniciada", mas o status no banco e na API continua `DRAFT`.
+- Mexi em `apps/web/` (área do codex) em várias telas.
+**Próximo passo sugerido:** o dono decide sobre as rodadas dentro de uma campanha só (proposta na
+ADR-054) e escolhe a logo; definir `CONTACT_EMAIL` e o nome do responsável na política.
+
+---
+
 ## 2026-10-03T04:45Z · claude
 
 **Fiz:** ajustes pedidos pelo dono (commit `13c8317`): no Início a coluna da direita cresce até a
